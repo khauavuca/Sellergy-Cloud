@@ -16,6 +16,7 @@ const {
   ETAPAS_CATALOGO,
   buscarEtapaCatalogo,
 } = require('../constants/etapasCatalogo');
+const { normalizarTelefone } = require('../utils/telefone');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -279,6 +280,7 @@ roteador.post('/leads', requerPermissao('CRM', 'criar'), async (req, res) => {
       const novo = await tx.lead.create({
         data: {
           clienteId, etapaId, nome, telefone, email, valor: 0,
+          telefoneNormalizado: normalizarTelefone(telefone),
           tags, prioridade, origem, observacoes,
           cpf: normalizarCpf(cpf),
           dataNascimento: normalizarDataNasc(dataNascimento),
@@ -341,6 +343,8 @@ roteador.put('/leads/:id', requerPermissao('CRM', 'editar'), async (req, res) =>
         where: { id },
         data: {
           etapaId, nome, telefone, email,
+          // undefined no body = nao mexe no telefone (nem na forma normalizada).
+          ...(telefone !== undefined ? { telefoneNormalizado: normalizarTelefone(telefone) } : {}),
           tags, prioridade, origem, observacoes,
           clienteId: clienteIdEfetivo,
           // CPF/nascimento: undefined no body = nao atualiza; null/'' = limpa.

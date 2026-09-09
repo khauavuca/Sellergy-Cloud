@@ -3,6 +3,7 @@ const { helpers: caixaHelpers } = require('./CaixaController');
 const { criarVenda } = require('../services/vendaService');
 const { validarCpf } = require('../utils/validacaoFiscal');
 const { buscarCupom, validarCupom } = require('../services/cupomService');
+const { normalizarTelefone } = require('../utils/telefone');
 
 // Limites sanitarios de entrada — defesa em profundidade contra valores
 // absurdos/negativos (fat-finger ou abuso). Preco negativo viraria receita
@@ -187,10 +188,13 @@ class VendaController {
             campos: [campoClienteFinal],
           });
         }
+        const telefoneNormalizado = normalizarTelefone(telefone);
         let lead = await prisma.lead.findFirst({ where: { clienteId, cpf } });
-        if (!lead) lead = await prisma.lead.findFirst({ where: { clienteId, telefone } });
+        // Busca pela forma normalizada (indexada) — casa mesmo se o lead foi
+        // cadastrado com mascara no CRM.
+        if (!lead && telefoneNormalizado) lead = await prisma.lead.findFirst({ where: { clienteId, telefoneNormalizado } });
         if (!lead) {
-          lead = await prisma.lead.create({ data: { clienteId, nome, telefone, cpf, origem: 'VENDA', valor: 0 } });
+          lead = await prisma.lead.create({ data: { clienteId, nome, telefone, telefoneNormalizado, cpf, origem: 'VENDA', valor: 0 } });
         }
         leadIdEfetivo = lead.id;
       }

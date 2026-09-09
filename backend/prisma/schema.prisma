@@ -1,6 +1,9 @@
 generator client {
   provider      = "prisma-client-js"
-  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  // native cobre a maquina de build; os dois explicitos garantem que a imagem
+  // Docker (Alpine/musl) funcione tanto em x86-64 quanto em ARM64 (Oracle A1),
+  // mesmo se alguem buildar com buildx de uma arquitetura diferente.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-musl-arm64-openssl-3.0.x"]
 }
 
 datasource db {
@@ -31,6 +34,7 @@ model Usuario {
   preferenciasNotif  PreferenciaNotificacao[]
   especialista       Especialista?
 
+  @@index([clienteId])
   @@map("usuarios")
 }
 
@@ -116,6 +120,7 @@ model SaldoHistorico {
   sessao  SessaoCaixa? @relation(fields: [sessaoCaixaId], references: [id], onDelete: SetNull)
 
   @@index([sessaoCaixaId, data])
+  @@index([clienteId, data])
   @@map("saldo_historico")
 }
 
@@ -206,9 +211,6 @@ model Bot {
   qrCodeAtual           String?               @db.Text
   baileysNumeroConectado String?
   baileysAtualizadoEm   DateTime?
-  // Configuracao do menu fixo do bot (sem IA) — roteador de atendimento/
-  // agendamento por opcoes. Formato livre (JSON), preenchido pela Frente 4.
-  menuConfig         Json?
   // Atendimento com IA (DeepSeek) — complementa o motor de FAQ, nao substitui:
   // iaAtiva=false mantem o bot 100% no menu/FAQ de hoje. A credencial NAO fica
   // aqui (e uma so, de plataforma — ver Credencial.clienteId=null); so o
@@ -236,6 +238,11 @@ model Bot {
   variaveis          VariavelBot[]
   cliente            Cliente       @relation(fields: [clienteId], references: [id], onDelete: Cascade)
 
+  // identificadorCanal/verifyTokenCanal: o webhook da Meta acha o bot por
+  // eles a CADA mensagem recebida (routes/webhooksWhatsapp.routes.js).
+  @@index([clienteId])
+  @@index([identificadorCanal])
+  @@index([verifyTokenCanal])
   @@map("bots")
 }
 
@@ -315,6 +322,11 @@ model Lead {
   etapaId                String?
   nome                   String
   telefone               String?
+  // Copia de `telefone` so com digitos e sem o DDI 55 (DDD + numero), mantida
+  // pelo backend em todo create/update (utils/telefone.js). Existe pra busca
+  // por indice: o remetente de uma mensagem do WhatsApp chega como
+  // 55 + DDD + numero e precisa casar com o lead sem varrer a tabela.
+  telefoneNormalizado    String?
   email                  String?
   // CPF do cliente — armazenado so com digitos (sem mascara). Nullable
   // porque lead inicial pode chegar sem. Nao e unique: cliente recorrente
@@ -341,6 +353,8 @@ model Lead {
   devolucoes             Devolucao[]
   campanhaEnvios         CampanhaEnvio[]
 
+  @@index([clienteId, etapaId])
+  @@index([clienteId, telefoneNormalizado])
   @@map("leads")
 }
 
@@ -354,6 +368,7 @@ model HistoricoLead {
   criadoEm    DateTime @default(now())
   lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
+  @@index([leadId, criadoEm])
   @@map("lead_historico")
 }
 
@@ -365,6 +380,7 @@ model Mensagem {
   criadoEm DateTime @default(now())
   lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
+  @@index([leadId, criadoEm])
   @@map("mensagens")
 }
 
@@ -395,6 +411,7 @@ model Agendamento {
   historico    HistoricoAgendamento[]
 
   @@index([especialistaId, data])
+  @@index([clienteId, data])
   @@map("agendamentos")
 }
 
@@ -513,6 +530,7 @@ model Venda {
 
   @@unique([clienteId, numero])
   @@index([sessaoCaixaId])
+  @@index([clienteId, status, data])
   @@map("vendas")
 }
 
@@ -544,6 +562,7 @@ model Produto {
   variacoes     VariacaoProduto[]
   especialistas EspecialistaServico[]
 
+  @@index([clienteId, visibilidade])
   @@map("produtos")
 }
 
@@ -577,6 +596,7 @@ model VariacaoProduto {
   vinculosLead  LeadVariacao[]
   devolucoes    Devolucao[]
 
+  @@index([produtoId])
   @@map("variacoes_produto")
 }
 
@@ -700,6 +720,7 @@ model Campanha {
   cupom   Cupom?          @relation(fields: [cupomId], references: [id])
   envios  CampanhaEnvio[]
 
+  @@index([clienteId])
   @@map("campanhas")
 }
 
@@ -744,6 +765,8 @@ model MovimentacaoEstoque {
   venda      Venda?          @relation(fields: [vendaId], references: [id])
   notaCompra NotaCompra?     @relation(fields: [notaCompraId], references: [id])
 
+  @@index([variacaoId, tipo, data])
+  @@index([vendaId])
   @@map("movimentacoes_estoque")
 }
 
@@ -845,6 +868,10 @@ model LancamentoFinanceiro {
 
   @@index([sessaoCaixaId])
   @@index([contaPagarId])
+  // Os KPIs financeiros filtram por tenant + status + data (paga ou de
+  // vencimento) — sem isto era Seq Scan em toda consulta de relatorio.
+  @@index([clienteId, status, dataPagamento])
+  @@index([clienteId, tipo, status, dataVencimento])
   @@map("lancamentos_financeiros")
 }
 
@@ -891,6 +918,7 @@ model CategoriaFinanceira {
   produtos    Produto[]
   contasPagar ContaPagar[]
 
+  @@index([clienteId])
   @@map("categorias_financeiras")
 }
 
@@ -973,44 +1001,8 @@ model Alerta {
   cliente      Cliente      @relation(fields: [clienteId], references: [id], onDelete: Cascade)
   usuario      Usuario?     @relation(fields: [usuarioId], references: [id])
 
+  @@index([clienteId, status])
   @@map("alertas")
-}
-
-// ==========================================
-// CONVERSAS E MENSAGENS (cifradas em repouso)
-// ==========================================
-
-model AuditoriaMensagem {
-  id         String   @id @default(uuid())
-  mensagemId String
-  usuarioId  String?
-  acao       String // 'LEITURA', 'CRIACAO', 'EXCLUSAO'
-  ip         String?
-  userAgent  String?
-  criadoEm   DateTime @default(now())
-
-  @@index([mensagemId, criadoEm(sort: Desc)])
-  @@index([usuarioId])
-  @@map("auditoria_mensagens")
-}
-
-// Audit append-only de toda chamada de tool feita por agentes IA.
-// Permite auditar "o que o bot fez" em cada execucao.
-model AuditoriaAcaoAgente {
-  id         String   @id @default(uuid())
-  execucaoId String
-  noId       String?
-  toolNome   String
-  args       Json?
-  sucesso    Boolean
-  resultado  Json?
-  erro       String?
-  duracaoMs  Int?
-  criadoEm   DateTime @default(now())
-
-  @@index([execucaoId, criadoEm])
-  @@index([toolNome])
-  @@map("auditoria_acoes_agente")
 }
 
 // Credenciais cifradas (chaves de API de provedores externos: OpenAI,
