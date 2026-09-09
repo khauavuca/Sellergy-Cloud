@@ -27,8 +27,20 @@ const limitadorRegistro = rateLimit({
   message: { erro: 'Muitas tentativas de registro. Tente novamente mais tarde.' }
 });
 
+// BOOTSTRAP do primeiro ADMIN — e SO isso. Esta rota e publica (nao tem
+// sessao antes do primeiro usuario existir) e cria um ADMIN da plataforma,
+// com acesso a todos os tenants. Deixada aberta, qualquer pessoa na internet
+// se cadastrava como ADMIN (Usuario.perfil tem @default(ADMIN) e o rate limit
+// por IP nao e defesa). Por isso ela se fecha sozinha: existindo um ADMIN, vira
+// 404. Tenants e colaboradores entram por convite (clientes.routes.js e
+// CrmUsuariosController), nunca por aqui.
 roteador.post('/registrar', limitadorRegistro, async (req, res) => {
   try {
+    const jaTemAdmin = await prisma.usuario.count({ where: { perfil: 'ADMIN' } });
+    if (jaTemAdmin > 0) {
+      return res.status(404).json({ erro: 'Rota nao disponivel.' });
+    }
+
     const { nome, email, senha } = req.body;
 
     if (!nome || !email || !senha) {
@@ -51,9 +63,11 @@ roteador.post('/registrar', limitadorRegistro, async (req, res) => {
         nome,
         email,
         senha: senhaHasheada,
+        perfil: 'ADMIN', // explicito — e o unico lugar que cria ADMIN de proposito
       },
     });
 
+    console.log(`[auth/registrar] ADMIN inicial criado (${usuario.email}) — rota fechada a partir de agora.`);
     res.status(201).json({ id: usuario.id, nome: usuario.nome, email: usuario.email });
   } catch (erro) {
     console.error('[auth/registrar]', erro);

@@ -12,8 +12,61 @@
  */
 
 const prisma = require('../prisma');
+const { chaveTenant, ler, gravar, invalidarPrefixo } = require('../utils/cache');
 
 const PERFIS_TENANT = ['CLIENT', 'ADMINISTRADOR', 'VENDEDOR'];
+
+// ---------------------------------------------------------------------
+// Cache (Redis, utils/cache.js) do que estes middlewares leem do banco em
+// TODA requisicao de TODO modulo: modulos liberados + status do tenant, e as
+// permissoes granulares do VENDEDOR. Sao dados que mudam raramente e so pela
+// mao do admin/dono — as rotas que os alteram chamam invalidar*() abaixo,
+// entao a mudanca vale na hora; o TTL e so rede de seguranca. Fail-open:
+// Redis fora = volta a bater no banco como antes.
+// ---------------------------------------------------------------------
+const TTL_ACESSO_S = 60;
+const NS_TENANT = 'tenant:acesso';
+const NS_USUARIO = 'usuario:permissoes';
+
+async function carregarAcessoTenant(clienteId) {
+  let chave = null;
+  try { chave = chaveTenant(NS_TENANT, { clienteId }); } catch { /* sem chave segura = sem cache */ }
+  if (chave) {
+    const emCache = await ler(chave);
+    if (emCache) return emCache;
+  }
+  const cliente = await prisma.cliente.findUnique({
+    where: { id: clienteId },
+    select: { modulosLiberados: true, status: true },
+  });
+  if (cliente && chave) gravar(chave, cliente, TTL_ACESSO_S); // fire-and-forget
+  return cliente;
+}
+
+async function carregarPermissoesUsuario(usuario) {
+  let chave = null;
+  try { chave = chaveTenant(NS_USUARIO, { clienteId: usuario.clienteId, usuarioId: usuario.id }); } catch { /* idem */ }
+  if (chave) {
+    const emCache = await ler(chave);
+    if (emCache) return emCache.permissoes || {};
+  }
+  const registro = await prisma.usuario.findUnique({ where: { id: usuario.id }, select: { permissoes: true } });
+  const permissoes = registro?.permissoes || {};
+  if (chave) gravar(chave, { permissoes }, TTL_ACESSO_S);
+  return permissoes;
+}
+
+/** Chamar depois de alterar modulosLiberados/status de um cliente. */
+async function invalidarAcessoTenant(clienteId) {
+  if (!clienteId) return;
+  await invalidarPrefixo(`cache:${NS_TENANT}:${clienteId}:`);
+}
+
+/** Chamar depois de alterar as permissoes de um usuario do tenant. */
+async function invalidarPermissoesUsuario(clienteId, usuarioId) {
+  if (!clienteId || !usuarioId) return;
+  await invalidarPrefixo(`cache:${NS_USUARIO}:${clienteId}:${usuarioId}:`);
+}
 
 const ehAdmin = (usuario) => usuario?.perfil === 'ADMIN';
 const ehDonoTenant = (usuario) => usuario?.perfil === 'CLIENT';
@@ -54,10 +107,7 @@ function requerModuloLiberado(modulo) {
         return res.status(403).json({ erro: 'Acesso negado: usuario sem tenant.' });
       }
 
-      const cliente = await prisma.cliente.findUnique({
-        where: { id: req.usuario.clienteId },
-        select: { modulosLiberados: true, status: true }
-      });
+      const cliente = await carregarAcessoTenant(req.usuario.clienteId);
 
       if (!cliente) {
         return res.status(403).json({ erro: 'Tenant nao encontrado.' });
@@ -105,12 +155,7 @@ function requerPermissao(modulo, acao) {
       if (req.usuario?.perfil === 'ADMINISTRADOR') return next();
 
       // VENDEDOR (e qualquer outro perfil de tenant): verifica permissoes JSON.
-      const usuario = await prisma.usuario.findUnique({
-        where: { id: req.usuario.id },
-        select: { permissoes: true }
-      });
-
-      const permissoes = usuario?.permissoes || {};
+      const permissoes = await carregarPermissoesUsuario(req.usuario);
       const permissoesModulo = permissoes[modulo] || {};
 
       if (permissoesModulo[acao] !== true) {
@@ -169,5 +214,7 @@ module.exports = {
   requerPermissao,
   requerPapelPrivilegiado,
   escopoDoUsuario,
+  invalidarAcessoTenant,
+  invalidarPermissoesUsuario,
   PERFIS_TENANT,
 };

@@ -4,6 +4,7 @@ const {
   modulosPorSegmento,
   segmentoPermiteEspecialista,
 } = require('../utils/modulosSegmento');
+const { invalidarPermissoesUsuario } = require('../middlewares/permissoes.middleware');
 
 // Perfis que um colaborador de tenant pode ter (o Prisma só conhece estes).
 // "Especialista" e "Recepção" são TIPOS de UI que persistem como VENDEDOR:
@@ -400,6 +401,10 @@ class CrmUsuariosController {
           }
         }
       });
+
+      // requerPermissao cacheia as permissoes do VENDEDOR (60s) — derruba o
+      // cache pra a mudanca (concessao OU revogacao) valer na proxima request.
+      await invalidarPermissoesUsuario(clienteId, id);
 
       const atualizado = await prisma.usuario.findUnique({
         where: { id },

@@ -65,6 +65,8 @@ roteador.post('/whatsapp', async (req, res) => {
             id: true, clienteId: true, credencialCanalId: true, provedorCanal: true,
             iaAtiva: true, iaModelo: true, iaPromptSistema: true,
             iaTokensIncluidosMes: true, iaPrecoPorMilTokensExcedenteCentavos: true,
+            // Sem isto, ferramentasDoBot(undefined) => IA sem nenhuma ferramenta.
+            acoesPermitidas: true,
           },
         });
         if (!bot) continue;
@@ -103,7 +105,11 @@ roteador.post('/whatsapp', async (req, res) => {
         // Estatistica leve do bot (best-effort, nao bloqueia).
         prisma.bot.update({
           where: { id: bot.id },
-          data: { totalMensagens: { increment: mensagens.length }, ultimaAtividadeEm: new Date() },
+          data: {
+            totalMensagens: { increment: mensagens.length },
+            mensagensHoje: { increment: mensagens.length }, // zerado as 00:01 (jobs/cronCaixaDiario.js)
+            ultimaAtividadeEm: new Date(),
+          },
         }).catch((e) => console.error('[webhook/whatsapp stats]', e?.message));
       }
     }

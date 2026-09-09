@@ -26,6 +26,7 @@ const {
 
 const prisma = require('../../prisma');
 const { criarAuthState, limparAuthState } = require('./authStateStore');
+const { calcularAtrasoReconexao, deveDesistir, atrasoNoBoot } = require('./reconexao');
 const { processarMensagemRecebida } = require('../whatsappInbound');
 const { criarProvedorWhatsapp } = require('../../adapters/whatsapp');
 
@@ -36,8 +37,42 @@ const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'warn' });
 // campanha) conseguirem mandar mensagem.
 const conexoes = new Map();
 
+// Estado da reconexao automatica (ver reconexao.js): quantas vezes seguidas
+// caiu sem voltar, e o timer da proxima tentativa (pra `desconectar` cancelar
+// uma reconexao ja agendada — antes, o timer religava o bot mesmo depois do
+// usuario mandar desconectar).
+const tentativasReconexao = new Map(); // botId -> n
+const reconexoesAgendadas = new Map(); // botId -> timeout
+
 function obterSocket(botId) {
   return conexoes.get(botId)?.sock || null;
+}
+
+// Campos do bot que o atendimento usa. Uma lista so, pra iniciarPareamento e
+// obterBotAtualizado nao divergirem (o webhook da Meta seleciona o mesmo
+// conjunto em routes/webhooksWhatsapp.routes.js).
+const CAMPOS_BOT = {
+  id: true, clienteId: true, credencialCanalId: true, provedorCanal: true,
+  iaAtiva: true, iaModelo: true, iaPromptSistema: true,
+  iaTokensIncluidosMes: true, iaPrecoPorMilTokensExcedenteCentavos: true,
+  acoesPermitidas: true,
+};
+
+// A conexao dura dias, mas a configuracao do bot nao: o tenant liga/desliga
+// a IA, troca o prompt, muda as ferramentas. O objeto carregado no pareamento
+// so serve pra identidade (id/clienteId/credencial); o que o atendimento le e
+// relido aqui, com cache curto pra nao ser 1 query por mensagem.
+const cacheBots = new Map(); // botId -> { bot, expiraEm }
+const CACHE_BOT_MS = 30_000;
+
+async function obterBotAtualizado(botPareado) {
+  const emCache = cacheBots.get(botPareado.id);
+  if (emCache && emCache.expiraEm > Date.now()) return emCache.bot;
+  const bot = await prisma.bot.findUnique({ where: { id: botPareado.id }, select: CAMPOS_BOT })
+    .catch((e) => { console.error(`[baileys] falha ao reler bot ${botPareado.id}:`, e?.message); return null; });
+  const efetivo = bot || botPareado;
+  cacheBots.set(botPareado.id, { bot: efetivo, expiraEm: Date.now() + CACHE_BOT_MS });
+  return efetivo;
 }
 
 async function publicarEvento(botId, tipo, dados) {
@@ -66,15 +101,16 @@ async function atualizarStatus(botId, dados) {
   return bot;
 }
 
-async function tratarMensagemRecebida(bot, upsert) {
+async function tratarMensagemRecebida(botPareado, upsert) {
   if (upsert.type !== 'notify') return;
-  const sock = obterSocket(bot.id);
+  const sock = obterSocket(botPareado.id);
   if (!sock) {
-    console.error(`[baileys/mensagem] bot ${bot.id}: evento chegou mas nao ha socket vivo registrado.`);
+    console.error(`[baileys/mensagem] bot ${botPareado.id}: evento chegou mas nao ha socket vivo registrado.`);
     return;
   }
-  console.log(`[baileys/mensagem] bot ${bot.id}: ${upsert.messages?.length || 0} mensagem(ns) recebida(s).`);
+  console.log(`[baileys/mensagem] bot ${botPareado.id}: ${upsert.messages?.length || 0} mensagem(ns) recebida(s).`);
 
+  const bot = await obterBotAtualizado(botPareado);
   const faqs = bot.iaAtiva ? [] : await prisma.faq.findMany({
     where: { clienteId: bot.clienteId, ativo: true },
     orderBy: { ordem: 'asc' },
@@ -114,23 +150,21 @@ async function tratarMensagemRecebida(bot, upsert) {
       .catch((e) => console.error(`[baileys/mensagem] falha ao processar (bot ${bot.id}):`, e?.message));
   }
 
+  const recebidas = upsert.messages?.length || 0;
   prisma.bot.update({
     where: { id: bot.id },
-    data: { totalMensagens: { increment: upsert.messages?.length || 0 }, ultimaAtividadeEm: new Date() },
+    data: {
+      totalMensagens: { increment: recebidas },
+      mensagensHoje: { increment: recebidas }, // zerado as 00:01 (jobs/cronCaixaDiario.js)
+      ultimaAtividadeEm: new Date(),
+    },
   }).catch((e) => console.error('[baileys/stats]', e?.message));
 }
 
 async function iniciarPareamento(botId) {
   if (conexoes.has(botId)) return; // ja conectado/conectando — no-op
 
-  const bot = await prisma.bot.findUnique({
-    where: { id: botId },
-    select: {
-      id: true, clienteId: true, credencialCanalId: true, provedorCanal: true,
-      iaAtiva: true, iaModelo: true, iaPromptSistema: true,
-      iaTokensIncluidosMes: true, iaPrecoPorMilTokensExcedenteCentavos: true,
-    },
-  });
+  const bot = await prisma.bot.findUnique({ where: { id: botId }, select: CAMPOS_BOT });
   if (!bot || bot.provedorCanal !== 'BAILEYS' || !bot.credencialCanalId) {
     console.error(`[baileys] iniciarPareamento: bot ${botId} invalido ou sem credencial associada.`);
     return;
@@ -171,6 +205,7 @@ async function iniciarPareamento(botId) {
     }
 
     if (connection === 'open') {
+      tentativasReconexao.delete(botId); // voltou: zera o backoff
       const numero = sock.user?.id?.split(':')[0] || null;
       console.log(`[baileys] bot ${botId} conectado como +${numero}.`);
       await atualizarStatus(botId, { statusConexaoBaileys: 'CONECTADO', qrCodeAtual: null, baileysNumeroConectado: numero, identificadorCanal: numero });
@@ -191,14 +226,36 @@ async function iniciarPareamento(botId) {
       }
 
       // Desconexao transitoria (rede, restart) — tenta de novo com a mesma
-      // sessao, sem exigir acao do usuario.
+      // sessao, sem exigir acao do usuario. Backoff exponencial com teto e
+      // jitter (reconexao.js); depois de MAX_TENTATIVAS seguidas desiste e
+      // marca DESCONECTADO — ai so o "Conectar" manual religa.
+      const tentativa = (tentativasReconexao.get(botId) || 0) + 1;
+      if (deveDesistir(tentativa)) {
+        tentativasReconexao.delete(botId);
+        console.error(`[baileys] bot ${botId}: ${tentativa - 1} reconexoes seguidas falharam — desistindo ate acao manual.`);
+        await atualizarStatus(botId, { statusConexaoBaileys: 'DESCONECTADO', qrCodeAtual: null });
+        return;
+      }
+      tentativasReconexao.set(botId, tentativa);
+      const atraso = calcularAtrasoReconexao(tentativa);
+      console.log(`[baileys] bot ${botId}: reconexao ${tentativa} em ${Math.round(atraso / 1000)}s.`);
       await atualizarStatus(botId, { statusConexaoBaileys: 'CONECTANDO' });
-      setTimeout(() => iniciarPareamento(botId).catch((e) => console.error(`[baileys] falha ao reconectar bot ${botId}:`, e?.message)), 3000);
+      reconexoesAgendadas.set(botId, setTimeout(() => {
+        reconexoesAgendadas.delete(botId);
+        iniciarPareamento(botId).catch((e) => console.error(`[baileys] falha ao reconectar bot ${botId}:`, e?.message));
+      }, atraso));
     }
   });
 }
 
 async function desconectar(botId) {
+  // Cancela reconexao pendente e limpa o estado — desconectar e definitivo
+  // ate o usuario mandar conectar de novo.
+  clearTimeout(reconexoesAgendadas.get(botId));
+  reconexoesAgendadas.delete(botId);
+  tentativasReconexao.delete(botId);
+  cacheBots.delete(botId);
+
   const conexao = conexoes.get(botId);
   if (conexao?.sock) {
     await conexao.sock.logout().catch(() => {});
@@ -211,16 +268,27 @@ async function desconectar(botId) {
   await atualizarStatus(botId, { statusConexaoBaileys: 'DESCONECTADO', qrCodeAtual: null, baileysNumeroConectado: null });
 }
 
-/** Chamado 1x no boot do worker.js — reconecta sozinho os bots ja pareados. */
+/**
+ * Chamado 1x no boot do worker.js — reconecta sozinho os bots ja pareados.
+ * Em lotes pequenos com folga entre eles (reconexao.js), nao todos de uma vez:
+ * N handshakes simultaneos do mesmo IP a cada deploy e pico de CPU/RAM e
+ * sinal de automacao pro WhatsApp.
+ */
 async function reconectarBotsPareados() {
   const bots = await prisma.bot.findMany({
     where: { provedorCanal: 'BAILEYS', statusConexaoBaileys: 'CONECTADO' },
     select: { id: true },
+    orderBy: { baileysAtualizadoEm: 'asc' },
   });
-  for (const bot of bots) {
-    iniciarPareamento(bot.id).catch((e) => console.error(`[baileys] falha ao reconectar bot ${bot.id} no boot:`, e?.message));
+  bots.forEach((bot, indice) => {
+    setTimeout(() => {
+      iniciarPareamento(bot.id).catch((e) => console.error(`[baileys] falha ao reconectar bot ${bot.id} no boot:`, e?.message));
+    }, atrasoNoBoot(indice));
+  });
+  if (bots.length > 0) {
+    const ultimo = atrasoNoBoot(bots.length - 1) / 1000;
+    console.log(`[baileys] reconectando ${bots.length} bot(s) pareado(s) do boot em lotes (ultimo em ~${ultimo}s).`);
   }
-  if (bots.length > 0) console.log(`[baileys] reconectando ${bots.length} bot(s) pareado(s) do boot.`);
 }
 
 module.exports = { iniciarPareamento, desconectar, reconectarBotsPareados, obterSocket };

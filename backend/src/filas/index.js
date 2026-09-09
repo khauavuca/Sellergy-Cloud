@@ -53,6 +53,16 @@ async function enfileirarEnvioCampanha(campanhaEnvioId) {
   await obterFilaCampanhaDisparo().add('enviar', { campanhaEnvioId }, { jobId: campanhaEnvioId });
 }
 
+// Mesma coisa pra um lote inteiro numa ida so ao Redis (addBulk) — um disparo
+// de campanha tem centenas/milhares de envios; 1 round-trip por envio era
+// segundos segurando a resposta HTTP.
+async function enfileirarEnviosCampanhaEmLote(campanhaEnvioIds) {
+  if (!campanhaEnvioIds?.length) return;
+  await obterFilaCampanhaDisparo().addBulk(
+    campanhaEnvioIds.map((campanhaEnvioId) => ({ name: 'enviar', data: { campanhaEnvioId }, opts: { jobId: campanhaEnvioId } })),
+  );
+}
+
 // ==========================================
 // CAMPANHA-DISPARO-BAILEYS — fila PROPRIA (nao a de cima), pra poder ter um
 // espacamento MUITO mais conservador entre envios do que a Meta precisa.
@@ -89,10 +99,24 @@ function obterFilaCampanhaDisparoBaileys() {
  * @param {number} indiceNoLote  posicao do lead dentro deste disparo (0, 1, 2...)
  *   — cada indice espera mais que o anterior, nao todos ao mesmo tempo.
  */
-async function enfileirarEnvioCampanhaBaileys(campanhaEnvioId, indiceNoLote) {
+function atrasoBaileys(indiceNoLote) {
   const jitter = Math.floor(Math.random() * BAILEYS_JITTER_MS);
-  const delay = indiceNoLote * BAILEYS_INTERVALO_BASE_MS + jitter;
-  await obterFilaCampanhaDisparoBaileys().add('enviar', { campanhaEnvioId }, { jobId: campanhaEnvioId, delay });
+  return indiceNoLote * BAILEYS_INTERVALO_BASE_MS + jitter;
+}
+
+async function enfileirarEnvioCampanhaBaileys(campanhaEnvioId, indiceNoLote) {
+  await obterFilaCampanhaDisparoBaileys().add('enviar', { campanhaEnvioId }, { jobId: campanhaEnvioId, delay: atrasoBaileys(indiceNoLote) });
+}
+
+// Lote inteiro em 1 ida ao Redis; o indice no array e a posicao no lote (o
+// espacamento por job continua o mesmo do enfileiramento unitario).
+async function enfileirarEnviosCampanhaBaileysEmLote(campanhaEnvioIds) {
+  if (!campanhaEnvioIds?.length) return;
+  await obterFilaCampanhaDisparoBaileys().addBulk(
+    campanhaEnvioIds.map((campanhaEnvioId, indice) => ({
+      name: 'enviar', data: { campanhaEnvioId }, opts: { jobId: campanhaEnvioId, delay: atrasoBaileys(indice) },
+    })),
+  );
 }
 
 // ==========================================
@@ -140,7 +164,9 @@ module.exports = {
   criarConexaoRedis,
   fecharFilas,
   enfileirarEnvioCampanha,
+  enfileirarEnviosCampanhaEmLote,
   enfileirarEnvioCampanhaBaileys,
+  enfileirarEnviosCampanhaBaileysEmLote,
   enfileirarComandoBaileys,
   NOME_FILA_CAMPANHA,
   NOME_FILA_CAMPANHA_BAILEYS,

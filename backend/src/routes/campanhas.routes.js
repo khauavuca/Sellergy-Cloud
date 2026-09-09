@@ -18,7 +18,7 @@ const {
 } = require('../middlewares/permissoes.middleware');
 const { mesclarConversoes, formatarListaLeads, LIMITE_RECORRENTE, DIAS_MIN_LEAD_NOVO } = require('../services/segmentacaoLeads');
 const { normalizarCodigo } = require('../services/cupomService');
-const { enfileirarEnvioCampanha, enfileirarEnvioCampanhaBaileys } = require('../filas');
+const { enfileirarEnviosCampanhaEmLote, enfileirarEnviosCampanhaBaileysEmLote } = require('../filas');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -383,28 +383,29 @@ roteador.post('/:id/disparar', requerPermissao('CRM', 'editar'), async (req, res
       });
     }
 
-    const envios = await prisma.$transaction(
-      leadIds.map((leadId) => prisma.campanhaEnvio.upsert({
-        where: { campanhaId_leadId: { campanhaId: campanha.id, leadId } },
-        create: { campanhaId: campanha.id, leadId },
-        update: {},
-      })),
-    );
+    // 1 INSERT pro lote inteiro (skipDuplicates = idempotente: re-disparar
+    // nao duplica envio). Antes era 1 upsert por lead dentro de UMA
+    // transacao — milhares de statements segurando uma conexao do pool.
+    await prisma.campanhaEnvio.createMany({
+      data: leadIds.map((leadId) => ({ campanhaId: campanha.id, leadId })),
+      skipDuplicates: true,
+    });
+    const envios = await prisma.campanhaEnvio.findMany({
+      where: { campanhaId: campanha.id, leadId: { in: leadIds } },
+      select: { id: true, status: true },
+    });
 
     await prisma.campanha.update({
       where: { id: campanha.id },
       data: { status: 'ENVIANDO', totalAlvo: envios.length },
     });
 
-    let indiceNoLote = 0;
-    for (const envio of envios) {
-      if (envio.status !== 'PENDENTE') continue;
-      if (usaBaileys) {
-        await enfileirarEnvioCampanhaBaileys(envio.id, indiceNoLote);
-        indiceNoLote += 1;
-      } else {
-        await enfileirarEnvioCampanha(envio.id);
-      }
+    // So o que ainda nao saiu; tudo numa ida so ao Redis.
+    const pendentes = envios.filter((e) => e.status === 'PENDENTE').map((e) => e.id);
+    if (usaBaileys) {
+      await enfileirarEnviosCampanhaBaileysEmLote(pendentes);
+    } else {
+      await enfileirarEnviosCampanhaEmLote(pendentes);
     }
 
     res.json({ ok: true, totalAlvo: envios.length });

@@ -14,7 +14,7 @@
 //   - Sem leaks: URL nao funciona pra terceiros, expira sozinha.
 //   - Performance: MinIO serve direto (sem proxy), só o backend assina.
 
-const { S3Client, PutObjectCommand, DeleteObjectCommand, HeadBucketCommand, CreateBucketCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, DeleteObjectCommand, HeadBucketCommand, HeadObjectCommand, CreateBucketCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 // ENDPOINT = como o BACKEND conecta no MinIO. Dentro do Docker precisa ser o
@@ -60,7 +60,14 @@ const clientePublico = PUBLIC_ENDPOINT === ENDPOINT
       tls: PUBLIC_ENDPOINT.startsWith('https'),
     });
 
-async function upload({ key, body, contentType, cacheControl = 'public, max-age=31536000, immutable' }) {
+/**
+ * @param {object} p
+ * @param {Record<string,string>} [p.metadata] metadados de usuario do S3 (chaves
+ *   minusculas, valores string) — lidos de volta por metadadosObjeto(). Usado
+ *   pra guardar a "versao" de um objeto derivado (ex.: PDF do catalogo) e
+ *   poder reusa-lo sem regerar.
+ */
+async function upload({ key, body, contentType, cacheControl = 'public, max-age=31536000, immutable', metadata }) {
   if (!key || !body) throw new Error('upload: `key` e `body` sao obrigatorios.');
   await cliente.send(new PutObjectCommand({
     Bucket: BUCKET,
@@ -68,8 +75,25 @@ async function upload({ key, body, contentType, cacheControl = 'public, max-age=
     Body: body,
     ContentType: contentType,
     CacheControl: cacheControl,
+    ...(metadata ? { Metadata: metadata } : {}),
   }));
   return urlPublica(key);
+}
+
+/**
+ * HEAD do objeto: metadados de usuario, tamanho e data. `null` se nao existe.
+ * Outros erros (rede, credencial) sobem — quem chama decide se tolera.
+ */
+async function metadadosObjeto(key) {
+  if (!key) return null;
+  try {
+    const r = await cliente.send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }));
+    return { metadata: r.Metadata || {}, tamanho: r.ContentLength, modificadoEm: r.LastModified };
+  } catch (err) {
+    const codigo = err?.$metadata?.httpStatusCode;
+    if (codigo === 404 || err?.name === 'NotFound' || err?.name === 'NoSuchKey') return null;
+    throw err;
+  }
 }
 
 async function remover(key) {
@@ -114,7 +138,13 @@ async function pingar() {
 // Cache em memoria pra evitar regerar a mesma URL N vezes na mesma sessao.
 // Chave: key do objeto. Valor: { url, expiraEm (timestamp ms) }.
 // Quando a URL ainda tem >5min de vida, reusa.
+//
+// LRU com teto: o Map preserva ordem de insercao, entao a entrada mais
+// antiga e sempre a primeira. Sem teto, toda imagem distinta ja assinada
+// ficava aqui pra sempre (entradas de 24h que nunca eram removidas) — num
+// backend que fica semanas no ar, isso e um vazamento lento.
 const cacheUrlsAssinadas = new Map();
+const MAX_URLS_EM_CACHE = 5_000;
 const TTL_PRE_SIGNED_SEGUNDOS = 60 * 60 * 24; // 24h
 const MARGEM_REUSO_MS = 5 * 60 * 1000; // 5min — se a URL expira em <5min, regera
 
@@ -133,6 +163,9 @@ async function urlAssinada(key, { expiraEm = TTL_PRE_SIGNED_SEGUNDOS } = {}) {
   const agora = Date.now();
   const cache = cacheUrlsAssinadas.get(key);
   if (cache && cache.expiraEm - agora > MARGEM_REUSO_MS) {
+    // Reinsere pra virar a mais recente (LRU de verdade, nao so FIFO).
+    cacheUrlsAssinadas.delete(key);
+    cacheUrlsAssinadas.set(key, cache);
     return cache.url;
   }
 
@@ -140,10 +173,14 @@ async function urlAssinada(key, { expiraEm = TTL_PRE_SIGNED_SEGUNDOS } = {}) {
   // Assina com o cliente PUBLICO -> a URL aponta pro host que o navegador acessa.
   const url = await getSignedUrl(clientePublico, command, { expiresIn: expiraEm });
 
+  cacheUrlsAssinadas.delete(key);
   cacheUrlsAssinadas.set(key, {
     url,
     expiraEm: agora + expiraEm * 1000,
   });
+  while (cacheUrlsAssinadas.size > MAX_URLS_EM_CACHE) {
+    cacheUrlsAssinadas.delete(cacheUrlsAssinadas.keys().next().value);
+  }
   return url;
 }
 
@@ -224,6 +261,7 @@ module.exports = {
   cliente,
   upload,
   remover,
+  metadadosObjeto,
   urlPublica,
   chaveDeUrl,
   pingar,

@@ -1,7 +1,7 @@
 const express = require('express');
 const prisma = require('../prisma');
 const middlewareAutenticacao = require('../middlewares/auth.middleware');
-const { requerAdmin } = require('../middlewares/permissoes.middleware');
+const { requerAdmin, invalidarAcessoTenant } = require('../middlewares/permissoes.middleware');
 const { modulosLiberadosPorSegmento } = require('../utils/modulosSegmento');
 const bcrypt = require('bcryptjs');
 
@@ -141,6 +141,7 @@ roteador.put('/:id', async (req, res) => {
       where: { id },
       data: { nome, email, telefone, segmento: segmentoNormalizado, plano, status, mensalidade: Number(mensalidade || 0) }
     });
+    await invalidarAcessoTenant(id); // status pode ter mudado
     res.json(cliente);
   } catch (erro) {
     console.error('[clientes/update]', erro);
@@ -169,6 +170,7 @@ roteador.put('/:id/modulos', async (req, res) => {
       data: { modulosLiberados: limpo },
       select: { id: true, nome: true, modulosLiberados: true }
     });
+    await invalidarAcessoTenant(id);
 
     res.json(cliente);
   } catch (erro) {
@@ -191,6 +193,7 @@ roteador.patch('/:id/status', async (req, res) => {
       where: { id },
       data: { status }
     });
+    await invalidarAcessoTenant(id);
     res.json(cliente);
   } catch (erro) {
     console.error('[clientes/status]', erro);
@@ -202,6 +205,7 @@ roteador.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     await prisma.cliente.delete({ where: { id } });
+    await invalidarAcessoTenant(id);
     res.json({ message: 'Cliente excluido com sucesso' });
   } catch (error) {
     console.error('[clientes/delete]', error);

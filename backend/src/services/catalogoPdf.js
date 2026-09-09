@@ -138,28 +138,44 @@ function montarHtml({ nomeNegocio, produtos, config }) {
   </body></html>`;
 }
 
+// Um Chromium por vez. Cada renderizacao sobe um browser inteiro (~500 MB) e
+// isso roda DENTRO do worker — o mesmo processo que segura todas as conexoes
+// Baileys. Varios tenants pedindo catalogo ao mesmo tempo = varios Chromium ao
+// mesmo tempo = OOM que derruba o WhatsApp de todo mundo. A fila abaixo
+// serializa: quem chega enquanto um esta rodando espera a vez (segundos), em
+// vez de competir por memoria. Encadeamento de promises, sem dependencia nova.
+let filaRenderizacao = Promise.resolve();
+function serializar(fn) {
+  const proxima = filaRenderizacao.then(fn, fn);
+  filaRenderizacao = proxima.catch(() => {}); // falha de um nao trava os seguintes
+  return proxima;
+}
+
 /**
  * Renderiza o HTML montado em PDF (buffer). Abre/fecha o browser a cada
  * chamada — gerar catalogo nao e operacao de alta frequencia (poucas vezes
- * por dia por tenant); manter um browser aberto o tempo todo custaria mais
- * memoria do que economizaria tempo.
- * `--no-sandbox`: necessario porque o container roda como root (Chromium
- * recusa o proprio sandbox interno rodando como root) — o isolamento aqui e
- * o container em si, nao o sandbox do Chromium.
+ * por dia por tenant, e o resultado e reusado enquanto o catalogo nao muda —
+ * ver iaFerramentas/enviarCatalogo.js); manter um browser aberto o tempo
+ * todo custaria mais memoria do que economizaria tempo.
+ * `--no-sandbox`: o container roda como usuario `node` (sem root), mas o
+ * sandbox do Chromium precisa de user namespaces, que o seccomp padrao do
+ * Docker bloqueia. O isolamento aqui e o container em si.
  */
-async function renderizarPdf(html) {
-  const browser = await puppeteer.launch({
-    executablePath: CHROMIUM_PATH,
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+function renderizarPdf(html) {
+  return serializar(async () => {
+    const browser = await puppeteer.launch({
+      executablePath: CHROMIUM_PATH,
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(html, { waitUntil: 'networkidle0' });
+      return await page.pdf({ format: 'A4', printBackground: true, margin: { top: '10mm', bottom: '10mm', left: '8mm', right: '8mm' } });
+    } finally {
+      await browser.close();
+    }
   });
-  try {
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
-    return await page.pdf({ format: 'A4', printBackground: true, margin: { top: '10mm', bottom: '10mm', left: '8mm', right: '8mm' } });
-  } finally {
-    await browser.close();
-  }
 }
 
 module.exports = { montarHtml, renderizarPdf, formatarPreco };

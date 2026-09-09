@@ -123,6 +123,20 @@ async function executarRotinaDiaria() {
   } catch (e) {
     console.error('[cronCaixaDiario] Falha geral:', e?.message);
   }
+
+  await zerarContadoresDiarios();
+}
+
+// Bot.mensagensHoje: o front mostra como KPI, o webhook da Meta e o Baileys
+// incrementam a cada mensagem — e aqui, na virada do dia, volta a zero. Roda
+// junto do caixa por ser o unico gatilho diario de 00:01 que ja existe.
+async function zerarContadoresDiarios() {
+  try {
+    const r = await prisma.bot.updateMany({ where: { mensagensHoje: { gt: 0 } }, data: { mensagensHoje: 0 } });
+    if (r.count > 0) console.log(`[cronCaixaDiario] mensagensHoje zerado em ${r.count} bot(s).`);
+  } catch (e) {
+    console.error('[cronCaixaDiario] falha ao zerar mensagensHoje:', e?.message);
+  }
 }
 
 // Agenda a proxima execucao e se reagenda recursivamente.

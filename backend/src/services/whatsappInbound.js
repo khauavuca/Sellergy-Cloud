@@ -22,22 +22,22 @@
 const prisma = require('../prisma');
 const { montarRespostaBot } = require('./iaRouter');
 const { reabrirLeadSeFechado } = require('./etapaLeadAuto');
+const { candidatosDeBusca } = require('../utils/telefone');
 
-// Lead.telefone e cadastrado sem o codigo do pais (DDD + numero, 10-11
-// digitos — ver VendaController.validarClienteFinal), mas o remetente sempre
-// vem com ele (ex: 55 + DDD + numero, tanto na Meta quanto no Baileys). Por
-// isso a comparacao e por sufixo nos digitos, nao igualdade exata.
+// O remetente chega como 55 + DDD + numero; o lead guarda so DDD + numero (ou
+// o que o usuario digitou). A forma canonica dos dois lados e
+// Lead.telefoneNormalizado (utils/telefone.js), indexada por tenant — 1 busca
+// por igualdade, em vez de carregar todos os leads do tenant a cada mensagem.
 async function reabrirLeadPorTelefone(clienteId, telefoneRemetente) {
-  const digitosRemetente = String(telefoneRemetente || '').replace(/\D/g, '');
-  if (!digitosRemetente) return;
+  const candidatos = candidatosDeBusca(telefoneRemetente);
+  if (candidatos.length === 0) return;
 
-  const leads = await prisma.lead.findMany({
-    where: { clienteId, telefone: { not: null } },
-    select: { id: true, telefone: true },
-  });
-  const lead = leads.find((l) => {
-    const digitosLead = (l.telefone || '').replace(/\D/g, '');
-    return digitosLead.length >= 8 && digitosRemetente.endsWith(digitosLead);
+  const lead = await prisma.lead.findFirst({
+    where: { clienteId, telefoneNormalizado: { in: candidatos } },
+    select: { id: true },
+    // Se mais de um lead tem o mesmo numero (recorrente que virou lead de
+    // novo), reabre o mais recente.
+    orderBy: { atualizadoEm: 'desc' },
   });
   if (!lead) return;
 
