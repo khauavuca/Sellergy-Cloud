@@ -1,0 +1,25 @@
+# Reverse proxy + TLS automático (Let's Encrypt) do Sellergy Cloud.
+# As variáveis {$...} vêm do `environment` do serviço caddy no compose.
+#
+#   api.<domínio>  ->  backend:3333   (API REST + Socket.io/WebSocket)
+#   cdn.<domínio>  ->  minio:9000     (imagens e PDFs por URL assinada)
+#
+# Pré-requisito: os dois registros DNS (A) apontando pro IP da VM ANTES de
+# subir — o Caddy só consegue emitir o certificado se o domínio resolver.
+
+{
+	email {$TLS_EMAIL}
+}
+
+{$API_DOMAIN} {
+	encode gzip
+	# WebSocket (Socket.io) sobe sozinho pelo reverse_proxy — sem config extra.
+	reverse_proxy backend:3333
+}
+
+{$CDN_DOMAIN} {
+	# Sem compressão: é imagem/PDF (já comprimido). A URL assinada (SigV4)
+	# inclui o Host — o reverse_proxy do Caddy preserva o Host original por
+	# padrão, então o MinIO valida a assinatura normalmente.
+	reverse_proxy minio:9000
+}

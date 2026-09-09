@@ -1,19 +1,77 @@
-# Stack de PRODUÇÃO do Sellergy Cloud.
+# Stack de PRODUÇÃO do Sellergy Cloud — pensada pra UMA VM (Oracle Cloud
+# Always Free, 2 OCPU ARM / 12 GB), com o front na Vercel.
+#
+# Roda aqui: caddy (TLS), postgres, redis, minio, backend, worker, backup.
+# NÃO roda aqui: frontend (Vercel), ngrok e pgadmin (só dev).
 #
 # Diferenças pro docker-compose.yml (dev):
-#  - sem bind-mount do código (a imagem é imutável) e sem nodemon/vite dev-server;
-#  - front buildado e servido por nginx (Dockerfile.prod);
-#  - backend roda `prisma migrate deploy` e `npm start` (não `dev`);
-#  - Postgres/Redis/MinIO NÃO expõem portas pra internet (só a rede interna) —
-#    segurança: o banco não fica acessível de fora;
-#  - sem pgadmin nem ngrok (ferramentas de dev).
+#  - sem bind-mount do código (imagem imutável), sem nodemon;
+#  - só o Caddy expõe porta (80/443). Postgres/Redis/MinIO/backend ficam na
+#    rede interna — nada acessível de fora sem passar pelo proxy;
+#  - limite de memória por serviço: um OOM do worker (Chromium + Baileys) mata
+#    só aquele container, que o `restart` religa — em vez de levar a VM pro swap;
+#  - rotação de log em todos (sem isso o json-file do Docker enche o disco);
+#  - TZ=America/Sao_Paulo no backend/worker — o código usa setHours() em
+#    horário local (cron do caixa, períodos de relatório/agenda);
+#  - Postgres com shared_buffers/effective_cache_size dimensionados pra VM;
+#  - backup diário do Postgres (pg_dump) com retenção — infra/backup-postgres.sh.
 #
 # Uso:  docker compose -f docker-compose.prod.yml up -d --build
-# TLS/HTTPS: ponha um reverse proxy (Caddy/Traefik/nginx) na frente — ver DEPLOY.md.
+# Passo a passo do zero: DEPLOY.md
 
 name: sellergy_cloud_prod
 
+# Rotação de log igual pra todo mundo (âncora YAML reaproveitada abaixo).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+# O que backend e worker compartilham e que o compose resolve. O resto das
+# variáveis vem do env_file (.env).
+x-app-env: &app-env
+  NODE_ENV: production
+  TZ: America/Sao_Paulo
+  # Fixo: o Caddy aponta pra backend:3333.
+  BACKEND_PORT: "3333"
+  DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+  REDIS_URL: redis://redis:6379
+  # Dentro do Docker o backend fala com o MinIO pelo nome do serviço; o
+  # navegador usa o endpoint PÚBLICO (cdn.<domínio>, atrás do Caddy).
+  MINIO_ENDPOINT: http://minio:9000
+  MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT}
+
 services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: sellergy_cloud_prod-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      API_DOMAIN: ${API_DOMAIN}
+      CDN_DOMAIN: ${CDN_DOMAIN}
+      TLS_EMAIL: ${TLS_EMAIL}
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # certificados Let's Encrypt — não perder entre deploys
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - sellergy_cloud-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *logging
+
   postgres:
     image: postgres:16-alpine
     container_name: sellergy_cloud_prod-postgres
@@ -22,6 +80,25 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
+      TZ: America/Sao_Paulo
+    # Tuning pra VM de 12 GB dividida com o resto da stack. A imagem sobe com
+    # shared_buffers=128MB por padrão — desperdício aqui.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - effective_cache_size=6GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - max_connections=60
+    # /dev/shm do Docker é 64MB; query paralela com work_mem acima passa disso.
+    shm_size: 256m
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -31,12 +108,21 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+    logging: *logging
 
   redis:
     image: redis:7-alpine
     container_name: sellergy_cloud_prod-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    # appendonly: filas do BullMQ sobrevivem a restart. maxmemory + noeviction:
+    # se estourar, o Redis recusa escrita (erro claro no log) em vez de
+    # descartar job de fila — e o teto fica abaixo do limite do container,
+    # pra ele recusar antes de ser morto por OOM.
+    command: redis-server --appendonly yes --maxmemory 384mb --maxmemory-policy noeviction
     volumes:
       - redis_data:/data
     networks:
@@ -46,6 +132,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *logging
 
   minio:
     image: minio/minio:RELEASE.2025-04-08T15-41-24Z
@@ -55,6 +146,11 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      TZ: America/Sao_Paulo
+    # A API (9000) só é alcançada pelo Caddy (cdn.<domínio>). O console (9001)
+    # fica preso no loopback da VM — acesso por túnel SSH (ver DEPLOY.md §11).
+    ports:
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio_data:/data
     networks:
@@ -64,8 +160,11 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-    # Pra as imagens (URLs assinadas) carregarem no navegador, exponha o MinIO
-    # por um proxy público e aponte MINIO_ENDPOINT pra essa URL. Ver DEPLOY.md.
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    logging: *logging
 
   backend:
     build:
@@ -75,25 +174,32 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
-      REDIS_URL: redis://redis:6379
-      # Dentro do Docker o backend fala com o MinIO pelo nome do servico.
-      MINIO_ENDPOINT: http://minio:9000
-      # Host que o NAVEGADOR usa nas URLs assinadas — defina no .env de
-      # producao (ex.: https://midia.seu-dominio, atras do proxy publico
-      # do MinIO). Sem isso, cai no ENDPOINT interno e as fotos quebram.
-      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT}
-    ports:
-      - "${BACKEND_PORT}:3333"
+    environment: *app-env
+    # Sem `ports`: só o Caddy chega aqui.
+    expose:
+      - "3333"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
     networks:
       - sellergy_cloud-network
+    # Só fica "healthy" depois de `migrate deploy` terminar e a API subir —
+    # é isso que segura o worker e o Caddy até o banco estar pronto.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3333/saude"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    logging: *logging
     # Aplica migrações pendentes e sobe a API (produção, sem nodemon).
     command: sh -c "npx prisma migrate deploy && npm start"
 
@@ -105,47 +211,59 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
-      REDIS_URL: redis://redis:6379
-      # Dentro do Docker o backend fala com o MinIO pelo nome do servico.
-      MINIO_ENDPOINT: http://minio:9000
-      # Host que o NAVEGADOR usa nas URLs assinadas — defina no .env de
-      # producao (ex.: https://midia.seu-dominio, atras do proxy publico
-      # do MinIO). Sem isso, cai no ENDPOINT interno e as fotos quebram.
-      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT}
+    environment: *app-env
     depends_on:
+      # healthy = migrações aplicadas. Sem isso o worker pode subir antes do
+      # schema estar pronto e falhar ao reconectar os bots Baileys no boot.
       backend:
-        condition: service_started
-      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
     networks:
       - sellergy_cloud-network
+    # Maior limite da stack: segura TODAS as conexões Baileys + o Chromium do
+    # PDF do catálogo. Ainda sem healthcheck (não expõe HTTP) — Fase 2.
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    logging: *logging
     command: node src/worker.js
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.prod
-      args:
-        VITE_API_URL: ${VITE_API_URL}
-        VITE_URL_PUBLICA: ${VITE_URL_PUBLICA}
-    container_name: sellergy_cloud_prod-frontend
+  backup:
+    image: postgres:16-alpine
+    container_name: sellergy_cloud_prod-backup
     restart: unless-stopped
-    ports:
-      - "${FRONTEND_PORT:-80}:80"
+    environment:
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      BACKUP_RETENCAO_DIAS: ${BACKUP_RETENCAO_DIAS:-14}
+      TZ: America/Sao_Paulo
+    volumes:
+      - ./infra/backup-postgres.sh:/backup.sh:ro
+      - backup_data:/backups
+    entrypoint: ["sh", "/backup.sh"]
     depends_on:
-      - backend
+      postgres:
+        condition: service_healthy
     networks:
       - sellergy_cloud-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *logging
 
 volumes:
   postgres_data:
   redis_data:
   minio_data:
+  caddy_data:
+  caddy_config:
+  backup_data:
 
 networks:
   sellergy_cloud-network:
