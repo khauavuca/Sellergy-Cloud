@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   ShoppingBag, Plus, Calendar, User, Package, Ban, Trash2, Wallet,
-  MoreVertical, UserPlus, ExternalLink, ChevronLeft, ChevronRight, X
+  MoreVertical, UserPlus, ExternalLink, ChevronLeft, ChevronRight, X, MessageCircle
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
@@ -48,6 +48,7 @@ export default function VendasPage() {
   const [produtos, setProdutos] = useState([]);
   const [leads, setLeads] = useState([]);
   const [categorias, setCategorias] = useState([]);
+  const [profissionais, setProfissionais] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState('');
   const [modal, setModal] = useState({ open: false });
@@ -66,35 +67,36 @@ export default function VendasPage() {
   const [filtroMetodo, setFiltroMetodo] = useState('');
   // Periodo: '' (todos), 'mes' (mes corrente), 'mes-passado', '30d' (ultimos 30d).
   const [filtroPeriodo, setFiltroPeriodo] = useState('');
-  const [pagina, setPagina] = useState(1);
+  // A pagina volta pra 1 quando algum filtro muda (derivado, sem efeito).
+  const chaveFiltros = `${busca}|${filtroStatus}|${filtroMetodo}|${filtroPeriodo}`;
+  const [paginacao, setPaginacao] = useState({ chave: chaveFiltros, pagina: 1 });
+  const pagina = paginacao.chave === chaveFiltros ? paginacao.pagina : 1;
+  const setPagina = (valor) => setPaginacao({ chave: chaveFiltros, pagina: typeof valor === 'function' ? valor(pagina) : valor });
   const POR_PAGINA = 50;
 
-  useEffect(() => {
-    carregar();
-  }, []);
+  // Busca tudo sem setState sincrono (o estado ja nasce carregando); o
+  // "carregar" das acoes liga o carregando antes de buscar de novo.
+  const buscarDados = useCallback(() => Promise.all([
+    api.get('/vendas').catch(() => ({ data: [] })),
+    api.get('/catalogo').catch(() => ({ data: [] })),
+    api.get('/crm/leads').catch(() => ({ data: [] })),
+    api.get('/financeiro/categorias').catch(() => ({ data: [] })),
+    api.get('/especialistas').catch(() => ({ data: [] })),
+  ]).then(([v, p, l, c, esp]) => {
+    setVendas(v.data || []);
+    setProdutos(p.data || []);
+    setLeads(l.data || []);
+    setCategorias(c.data || []);
+    const listaEsp = Array.isArray(esp.data) ? esp.data : (esp.data?.especialistas || []);
+    setProfissionais(listaEsp.filter((x) => x.ativo !== false));
+  }).finally(() => setCarregando(false)), []);
 
-  // Reseta paginacao quando filtros mudam pra evitar pagina vazia.
-  useEffect(() => {
-    setPagina(1);
-  }, [busca, filtroStatus, filtroMetodo, filtroPeriodo]);
-
-  const carregar = async () => {
+  const carregar = () => {
     setCarregando(true);
-    try {
-      const [v, p, l, c] = await Promise.all([
-        api.get('/vendas').catch(() => ({ data: [] })),
-        api.get('/catalogo').catch(() => ({ data: [] })),
-        api.get('/crm/leads').catch(() => ({ data: [] })),
-        api.get('/financeiro/categorias').catch(() => ({ data: [] })),
-      ]);
-      setVendas(v.data || []);
-      setProdutos(p.data || []);
-      setLeads(l.data || []);
-      setCategorias(c.data || []);
-    } finally {
-      setCarregando(false);
-    }
+    return buscarDados();
   };
+
+  useEffect(() => { buscarDados(); }, [buscarDados]);
 
   const variacoes = useMemo(() => {
     const out = [];
@@ -287,7 +289,11 @@ export default function VendasPage() {
             Limpar
           </Button>
         )}
-        <div className="ml-auto">
+        <div className="ml-auto flex flex-wrap gap-2">
+          {/* Atalho da fase 2: monta o pedido e manda o link de pagamento (tela de Pedidos). */}
+          <Button variant="secondary" icon={MessageCircle} onClick={() => navigate('/app/pedidos?novo=whatsapp')}>
+            Vender pelo WhatsApp
+          </Button>
           <Button variant="primary" icon={Plus} onClick={() => setModal({ open: true })}>
             Registrar venda
           </Button>
@@ -453,11 +459,13 @@ export default function VendasPage() {
 
       {/* Modal de registrar venda */}
       <ModalVenda
+        key={modal.open ? 'venda-aberta' : 'venda-fechada'}
         isOpen={modal.open}
         onClose={() => setModal({ open: false })}
         variacoes={variacoes}
         leads={leads}
         categorias={categorias}
+        profissionais={profissionais}
         onSalvar={handleRegistrar}
       />
 
@@ -473,6 +481,7 @@ export default function VendasPage() {
 
       {/* Modal de cancelamento — motivo obrigatorio (preserva auditoria) */}
       <ModalCancelarVenda
+        key={modalCancelar.open ? `cancelar-${modalCancelar.venda?.id}` : 'cancelar-fechado'}
         isOpen={modalCancelar.open}
         onClose={() => setModalCancelar({ open: false, venda: null })}
         venda={modalCancelar.venda}
@@ -492,6 +501,7 @@ export default function VendasPage() {
 
       {/* Modal de vinculo retroativo de cliente */}
       <ModalVincularLead
+        key={modalVincularLead.open ? `vincular-${modalVincularLead.venda?.id}` : 'vincular-fechado'}
         isOpen={modalVincularLead.open}
         onClose={() => setModalVincularLead({ open: false, venda: null })}
         venda={modalVincularLead.venda}
@@ -508,9 +518,9 @@ function precoEfetivoVariacao(v) {
   return v.preco || 0;
 }
 
-function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar }) {
+function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, profissionais = [], onSalvar }) {
   const [form, setForm] = useState({
-    metodoPagamento: 'PIX', observacoes: '', leadId: '', cupomCodigo: '',
+    metodoPagamento: 'PIX', observacoes: '', leadId: '', cupomCodigo: '', especialistaId: '',
     // 'parcelas' e metadata: anota na descricao mas nao gera lancamentos
     // separados. Operadora do cartao paga o lojista o valor cheio.
     parcelas: 1,
@@ -530,15 +540,6 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar })
     () => new Map(categorias.map((c) => [c.id, c.nome])),
     [categorias]
   );
-
-  useEffect(() => {
-    if (isOpen) {
-      setForm({ metodoPagamento: 'PIX', observacoes: '', leadId: '', cupomCodigo: '', parcelas: 1 });
-      setItens([]);
-      setDatasDevolucao({});
-      setClienteFinal({ nome: '', telefone: '', cpf: '' });
-    }
-  }, [isOpen]);
 
   // Adiciona item e ja sugere categoria do produto (respeitando tipo RECEITA).
   // Se ja tem categoria selecionada, nao sobrescreve.
@@ -637,6 +638,7 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar })
       observacoes: form.observacoes,
       leadId: form.leadId || undefined,
       cupomCodigo: form.cupomCodigo.trim() || undefined,
+      especialistaId: form.especialistaId || undefined,
       ...(precisaClienteFinal ? { clienteFinal } : {}),
       // categoriaId NAO vai mais — backend agrupa por categoria do produto.
       // Parcelas so faz sentido pra credito — backend ignora se outro metodo.
@@ -877,6 +879,18 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, onSalvar })
           hint="O desconto é aplicado e validado ao registrar a venda."
         />
 
+        {profissionais.length > 0 && (
+          <Select
+            size="lg"
+            label="Quem vendeu (opcional)"
+            value={form.especialistaId}
+            onChange={(e) => setForm({ ...form, especialistaId: e.target.value })}
+            placeholder=""
+            hint="Conta na comissão de produto da profissional. Em branco: quem está logado, se for profissional."
+            options={[{ value: '', label: 'Não informar' }, ...profissionais.map((p) => ({ value: p.id, label: p.nome }))]}
+          />
+        )}
+
         <Textarea
           size="lg"
           label="Observações"
@@ -1070,15 +1084,9 @@ function ModalCaixaFechado({ isOpen, onClose, onIrParaCaixa }) {
 // Avisa o usuario do impacto: estorno de estoque + cancelamento de lancamento
 // financeiro. Tudo numa transacao no backend, mas a UI deixa claro.
 function ModalCancelarVenda({ isOpen, onClose, venda, onConfirmar }) {
+  // Estado limpo a cada abertura: o pai troca a `key` do modal.
   const [motivo, setMotivo] = useState('');
   const [salvando, setSalvando] = useState(false);
-
-  useEffect(() => {
-    if (isOpen) {
-      setMotivo('');
-      setSalvando(false);
-    }
-  }, [isOpen]);
 
   if (!venda) return null;
 
@@ -1152,15 +1160,9 @@ function ModalCancelarVenda({ isOpen, onClose, venda, onConfirmar }) {
 // quando a venda ja tem um vinculado). Backend propaga pros lancamentos
 // financeiros vinculados pra manter consistencia de relatorios.
 function ModalVincularLead({ isOpen, onClose, venda, leads, onConfirmar }) {
-  const [leadId, setLeadId] = useState('');
+  // Estado limpo a cada abertura: o pai troca a `key` do modal.
+  const [leadId, setLeadId] = useState(venda?.leadId || '');
   const [salvando, setSalvando] = useState(false);
-
-  useEffect(() => {
-    if (isOpen) {
-      setLeadId(venda?.leadId || '');
-      setSalvando(false);
-    }
-  }, [isOpen, venda]);
 
   if (!venda) return null;
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Plus, Edit2, Trash2, MoreHorizontal, Mail, ShieldCheck, Crown } from 'lucide-react';
 import api from '../services/api';
 import {
@@ -14,16 +14,17 @@ export default function UsersPage() {
   const [busca, setBusca] = useState('');
   const [modal, setModal] = useState({ open: false, data: null });
 
-  useEffect(() => { carregar(); }, []);
+  // Busca sem setState sincrono (o estado ja nasce carregando); o "carregar"
+  // das acoes liga o carregando antes de buscar de novo.
+  const buscarUsuarios = useCallback(() => api.get('/usuarios')
+    .then((r) => { setUsuarios(r.data || []); })
+    .finally(() => { setCarregando(false); }), []);
 
-  const carregar = async () => {
+  useEffect(() => { buscarUsuarios(); }, [buscarUsuarios]);
+
+  const carregar = () => {
     setCarregando(true);
-    try {
-      const r = await api.get('/usuarios');
-      setUsuarios(r.data || []);
-    } finally {
-      setCarregando(false);
-    }
+    return buscarUsuarios();
   };
 
   const filtrados = useMemo(() => {
@@ -124,6 +125,7 @@ export default function UsersPage() {
       )}
 
       <ModalAdmin
+        key={modal.open ? `admin-${modal.data?.id ?? 'novo'}` : 'admin-fechado'}
         isOpen={modal.open}
         onClose={() => setModal({ open: false, data: null })}
         admin={modal.data}
@@ -134,12 +136,10 @@ export default function UsersPage() {
 }
 
 function ModalAdmin({ isOpen, onClose, admin, onSalvar }) {
-  const [form, setForm] = useState({ nome: '', email: '', senha: '' });
-
-  useEffect(() => {
-    if (admin) setForm({ nome: admin.nome, email: admin.email, senha: '' });
-    else setForm({ nome: '', email: '', senha: '' });
-  }, [admin, isOpen]);
+  // O pai troca a `key` a cada abertura, entao o form nasce do admin atual.
+  const [form, setForm] = useState(() => (admin
+    ? { nome: admin.nome, email: admin.email, senha: '' }
+    : { nome: '', email: '', senha: '' }));
 
   const handleSubmit = (e) => {
     e.preventDefault();

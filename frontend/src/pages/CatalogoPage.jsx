@@ -35,10 +35,15 @@ export default function CatalogoPage() {
   const [modalVariacao, setModalVariacao] = useState({ open: false, data: null, produtoId: null });
   const [modalCatServico, setModalCatServico] = useState(false);
 
+  // Carga inicial (promessas direto no efeito; setState so nos callbacks).
   useEffect(() => {
-    carregar();
-    carregarCategorias();
-    carregarEspecialistas();
+    api.get('/catalogo')
+      .then((r) => setProdutos((r.data || []).filter((p) => p.tipo === 'SERVICO')))
+      .catch(() => setProdutos([]))
+      .finally(() => setCarregando(false));
+    api.get('/financeiro/categorias?uso=SERVICO').then((r) => setCategorias(r.data || [])).catch(() => setCategorias([]));
+    // Especialistas ativos pra vincular ao servico (a agenda reserva o horario deles).
+    api.get('/especialistas').then((r) => setEspecialistas((r.data || []).filter((e) => e.ativo))).catch(() => setEspecialistas([]));
   }, []);
 
   const carregar = async () => {
@@ -65,16 +70,6 @@ export default function CatalogoPage() {
     }
   };
 
-  // Especialistas ativos pra vincular ao servico (a agenda reserva o horario deles).
-  const carregarEspecialistas = async () => {
-    try {
-      const r = await api.get('/especialistas');
-      setEspecialistas((r.data || []).filter((e) => e.ativo));
-    } catch {
-      setEspecialistas([]);
-    }
-  };
-
   // Cria categoria contextual de serviço (uso=SERVICO automático; sem dropdown).
   const handleSalvarCategoriaServico = async (nome) => {
     try {
@@ -98,13 +93,22 @@ export default function CatalogoPage() {
 
   const handleSalvar = async (dados) => {
     try {
+      let produtoId = dados.id;
       if (dados.id) {
         await api.put(`/catalogo/${dados.id}`, dados);
-        toast.success('Produto atualizado');
       } else {
-        await api.post('/catalogo', dados);
-        toast.success('Produto criado');
+        const r = await api.post('/catalogo', dados);
+        produtoId = r.data?.id;
       }
+      // Sinal por servico (fase 2): salvo a parte, na rota da agenda.
+      if (produtoId && dados.sinalAlterado) {
+        try {
+          await api.put(`/agenda/servicos/${produtoId}/sinal`, { sinalPercentual: dados.sinalPercentual === '' ? null : Number(dados.sinalPercentual) });
+        } catch (e) {
+          toast.error(e.response?.data?.erro || 'Serviço salvo, mas o sinal não foi salvo.');
+        }
+      }
+      toast.success(dados.id ? 'Produto atualizado' : 'Produto criado');
       setModalProduto({ open: false, data: null });
       carregar();
     } catch (e) {
@@ -334,11 +338,37 @@ function ModalCategoriaServico({ isOpen, onClose, onSalvar }) {
   );
 }
 
-function ModalProduto({ isOpen, onClose, produto, categorias, especialistas = [], onSalvar }) {
-  const [form, setForm] = useState({
-    nome: '', descricao: '', tipo: 'FISICO', visibilidade: 'ATIVO',
+function formInicialProduto(produto) {
+  if (produto) {
+    // Em edicao puxa duracao da 1a variacao "Padrao" se existir.
+    const variacaoPadrao = produto.variacoes?.[0];
+    return {
+      ...produto,
+      descricao: produto.descricao || '',
+      categoriaId: produto.categoriaId || '',
+      imagemUrl: produto.imagemUrl || '',
+      duracaoMin: variacaoPadrao?.duracaoMin ?? '',
+      especialistasIds: (produto.especialistas || []).map((e) => e.id),
+      sinalPercentual: produto.sinalPercentual ?? '',
+      sinalAlterado: false,
+    };
+  }
+  // Default SERVICO porque Catalogo so cadastra servicos.
+  return {
+    nome: '', descricao: '', tipo: 'SERVICO', visibilidade: 'ATIVO',
     categoriaId: '', imagemUrl: '', duracaoMin: '', especialistasIds: [],
-  });
+    sinalPercentual: '', sinalAlterado: false,
+  };
+}
+
+// Abre sempre com estado novo: o conteudo remonta a cada abertura (key).
+function ModalProduto(props) {
+  if (!props.isOpen) return null;
+  return <ModalProdutoConteudo key={props.produto?.id || 'novo'} {...props} />;
+}
+
+function ModalProdutoConteudo({ isOpen, onClose, produto, categorias, especialistas = [], onSalvar }) {
+  const [form, setForm] = useState(() => formInicialProduto(produto));
 
   const toggleEspecialista = (id) => setForm((f) => ({
     ...f,
@@ -350,27 +380,6 @@ function ModalProduto({ isOpen, onClose, produto, categorias, especialistas = []
   // Em modo de edicao isso fica vazio porque o upload e direto no produto existente.
   const [tempsParaLimpar, setTempsParaLimpar] = useState([]);
 
-  useEffect(() => {
-    if (produto) {
-      // Em edicao puxa duracao da 1a variacao "Padrao" se existir.
-      const variacaoPadrao = produto.variacoes?.[0];
-      setForm({
-        ...produto,
-        descricao: produto.descricao || '',
-        categoriaId: produto.categoriaId || '',
-        imagemUrl: produto.imagemUrl || '',
-        duracaoMin: variacaoPadrao?.duracaoMin ?? '',
-        especialistasIds: (produto.especialistas || []).map((e) => e.id),
-      });
-    } else {
-      // Default SERVICO porque Catalogo so cadastra servicos.
-      setForm({
-        nome: '', descricao: '', tipo: 'SERVICO', visibilidade: 'ATIVO',
-        categoriaId: '', imagemUrl: '', duracaoMin: '', especialistasIds: [],
-      });
-    }
-    setTempsParaLimpar([]);
-  }, [produto, isOpen]);
 
   // Quando o modal fecha sem salvar, remove as imagens temp orfas (best-effort).
   const handleClose = async () => {
@@ -383,21 +392,18 @@ function ModalProduto({ isOpen, onClose, produto, categorias, especialistas = []
     onClose();
   };
 
+  // Erro de upload sobe pro componente UploadImagem, que mostra a mensagem.
   const handleUpload = async (file) => {
-    try {
-      let url;
-      if (produto) {
-        // Edicao: upload direto no produto existente
-        url = await catalogoService.uploadImagemProduto(produto.id, file);
-      } else {
-        // Criacao: upload temp; URL vai no body do submit
-        url = await catalogoService.uploadImagemTemp(file);
-        setTempsParaLimpar((prev) => [...prev, url]);
-      }
-      setForm((prev) => ({ ...prev, imagemUrl: url }));
-    } catch (e) {
-      throw e; // o componente UploadImagem mostra o erro
+    let url;
+    if (produto) {
+      // Edicao: upload direto no produto existente
+      url = await catalogoService.uploadImagemProduto(produto.id, file);
+    } else {
+      // Criacao: upload temp; URL vai no body do submit
+      url = await catalogoService.uploadImagemTemp(file);
+      setTempsParaLimpar((prev) => [...prev, url]);
     }
+    setForm((prev) => ({ ...prev, imagemUrl: url }));
   };
 
   const handleRemoverImagem = async () => {
@@ -495,6 +501,19 @@ function ModalProduto({ isOpen, onClose, produto, categorias, especialistas = []
           onChange={(min) => setForm({ ...form, duracaoMin: min })}
         />
 
+        {/* Sinal por Pix ao agendar (fase 2). Vazio = segue o padrao do negocio. */}
+        <div className="border border-[var(--border-main)] rounded-xl p-4 space-y-2">
+          <Input
+            size="lg"
+            label="Sinal ao agendar (% do preço)"
+            type="number" min={0} max={100} step={1}
+            placeholder="Padrão do negócio"
+            value={form.sinalPercentual ?? ''}
+            onChange={(e) => setForm({ ...form, sinalPercentual: e.target.value, sinalAlterado: true })}
+            hint="Vazio = usa o padrão de Configurações › Operação. 0 = este serviço não cobra sinal. Só cobra se o recebimento por Pix estiver configurado em Pagamentos."
+          />
+        </div>
+
         {/* Especialistas que atendem — obrigatório. A agenda usa este vínculo
             pra reservar o horário do profissional escolhido. */}
         <div>
@@ -544,28 +563,24 @@ function ModalProduto({ isOpen, onClose, produto, categorias, especialistas = []
 
 // Catalogo so lida com servicos — modal de variacao nao tem campos de estoque
 // (nao faz sentido pra servico). Duracao sempre visivel.
-function ModalVariacao({ isOpen, onClose, variacao, onSalvar }) {
-  const [form, setForm] = useState({
-    nome: '', sku: '', preco: '', precoCusto: 0,
-    duracaoMin: '', imagemUrl: '',
-  });
-  const [tempsParaLimpar, setTempsParaLimpar] = useState([]);
+// Abre sempre com estado novo: o conteudo remonta a cada abertura (key).
+function ModalVariacao(props) {
+  if (!props.isOpen) return null;
+  return <ModalVariacaoConteudo key={props.variacao?.id || 'nova'} {...props} />;
+}
 
-  useEffect(() => {
-    if (variacao) setForm({
+function ModalVariacaoConteudo({ isOpen, onClose, variacao, onSalvar }) {
+  const [form, setForm] = useState(() => (variacao
+    ? {
       nome: variacao.nome || '',
       sku: variacao.sku || '',
       preco: variacao.preco || 0,
       precoCusto: variacao.precoCusto || 0,
       duracaoMin: variacao.duracaoMin ?? '',
       imagemUrl: variacao.imagemUrl || '',
-    });
-    else setForm({
-      nome: '', sku: '', preco: 0, precoCusto: 0,
-      duracaoMin: '', imagemUrl: '',
-    });
-    setTempsParaLimpar([]);
-  }, [variacao, isOpen]);
+    }
+    : { nome: '', sku: '', preco: 0, precoCusto: 0, duracaoMin: '', imagemUrl: '' }));
+  const [tempsParaLimpar, setTempsParaLimpar] = useState([]);
 
   const handleClose = async () => {
     if (!variacao) {

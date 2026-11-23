@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   Box, ArrowDownToLine, ArrowUpFromLine, AlertTriangle, TrendingUp,
@@ -55,7 +55,6 @@ export default function EstoquePage() {
   const [reposicao, setReposicao] = useState([]);
   const [produtos, setProdutos] = useState([]);
   const [categorias, setCategorias] = useState([]);
-  const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState('');
 
   const [modalMov, setModalMov] = useState({ open: false });
@@ -63,32 +62,28 @@ export default function EstoquePage() {
   const [modalEditarVar, setModalEditarVar] = useState({ open: false, variacao: null });
   const [modalCategoria, setModalCategoria] = useState({ open: false, data: null });
 
+  // O estado "carregando" que existia aqui nunca era lido na tela; foi
+  // removido. A busca so faz setState na resposta (sem setState sincrono).
+  const carregar = useCallback(() => Promise.all([
+    api.get('/estoque/dashboard').catch(() => ({ data: null })),
+    api.get('/estoque/movimentacoes').catch(() => ({ data: [] })),
+    api.get('/estoque/reposicao').catch(() => ({ data: [] })),
+    api.get('/catalogo').catch(() => ({ data: [] })),
+    api.get('/financeiro/categorias?uso=PRODUTO').catch(() => ({ data: [] })),
+  ]).then(([s, m, r, p, c]) => {
+    setStats(s.data);
+    setMovimentacoes(m.data || []);
+    setReposicao(r.data || []);
+    // Estoque so lista produtos FISICOS. Servicos sao gerenciados no Catalogo.
+    // Filtro local pra blindar contra dados legados/criados por outras vias
+    // (ex: bot) — backend continua retornando tudo do tenant.
+    setProdutos((p.data || []).filter((prod) => prod.tipo === 'FISICO'));
+    setCategorias(c.data || []);
+  }), []);
+
   useEffect(() => {
     carregar();
-  }, []);
-
-  const carregar = async () => {
-    setCarregando(true);
-    try {
-      const [s, m, r, p, c] = await Promise.all([
-        api.get('/estoque/dashboard').catch(() => ({ data: null })),
-        api.get('/estoque/movimentacoes').catch(() => ({ data: [] })),
-        api.get('/estoque/reposicao').catch(() => ({ data: [] })),
-        api.get('/catalogo').catch(() => ({ data: [] })),
-        api.get('/financeiro/categorias?uso=PRODUTO').catch(() => ({ data: [] })),
-      ]);
-      setStats(s.data);
-      setMovimentacoes(m.data || []);
-      setReposicao(r.data || []);
-      // Estoque so lista produtos FISICOS. Servicos sao gerenciados no Catalogo.
-      // Filtro local pra blindar contra dados legados/criados por outras vias
-      // (ex: bot) — backend continua retornando tudo do tenant.
-      setProdutos((p.data || []).filter((prod) => prod.tipo === 'FISICO'));
-      setCategorias(c.data || []);
-    } finally {
-      setCarregando(false);
-    }
-  };
+  }, [carregar]);
 
   // Categorias do estoque = categorias financeiras de tipo RECEITA (produtos vendidos viram receita)
   const categoriasProdutos = useMemo(
@@ -550,6 +545,7 @@ export default function EstoquePage() {
       </Tabs>
 
       <ModalMovimentacao
+        key={modalMov.open ? 'mov-aberto' : 'mov-fechado'}
         isOpen={modalMov.open}
         onClose={() => setModalMov({ open: false })}
         variacoes={variacoesFlat}
@@ -559,6 +555,7 @@ export default function EstoquePage() {
         tipoInicial={modalMov.tipoInicial}
       />
       <ModalEditarVariacao
+        key={modalEditarVar.open ? `editar-var-${modalEditarVar.variacao?.id ?? ''}` : 'editar-var-fechado'}
         isOpen={modalEditarVar.open}
         onClose={() => setModalEditarVar({ open: false, variacao: null })}
         variacao={modalEditarVar.variacao}
@@ -568,12 +565,14 @@ export default function EstoquePage() {
         }}
       />
       <ModalProduto
+        key={modalProduto.open ? 'produto-aberto' : 'produto-fechado'}
         isOpen={modalProduto.open}
         onClose={() => setModalProduto({ open: false, data: null })}
         categorias={categoriasProdutos}
         onSalvar={handleSalvarProduto}
       />
       <ModalCategoria
+        key={modalCategoria.open ? `categoria-${modalCategoria.data?.id ?? 'nova'}` : 'categoria-fechada'}
         isOpen={modalCategoria.open}
         onClose={() => setModalCategoria({ open: false, data: null })}
         cat={modalCategoria.data}
@@ -678,21 +677,16 @@ const TIPOS_MOVIMENTACAO = [
 const fmtBRL2 = (v) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 function ModalMovimentacao({ isOpen, onClose, variacoes, onSalvar, variacaoIdInicial, quantidadeInicial, tipoInicial }) {
-  const [form, setForm] = useState({
-    variacaoId: '', tipo: 'COMPRA_FORNECEDOR', quantidade: 1, motivo: '',
-    precoCusto: '', precoVenda: '',
-  });
-
-  useEffect(() => {
-    if (isOpen) setForm({
-      variacaoId: variacaoIdInicial || '',
-      // Quando vem de 'Repor agora' na Reposicao, ja chega prefilado como
-      // COMPRA_FORNECEDOR + quantidade sugerida.
-      tipo: tipoInicial || 'COMPRA_FORNECEDOR',
-      quantidade: quantidadeInicial && quantidadeInicial > 0 ? quantidadeInicial : 1,
-      motivo: '', precoCusto: '', precoVenda: ''
-    });
-  }, [isOpen, variacaoIdInicial, quantidadeInicial, tipoInicial]);
+  // O pai troca a `key` a cada abertura, entao o form nasce com os valores
+  // iniciais da abertura (em vez de um efeito que resetava ao abrir).
+  const [form, setForm] = useState(() => ({
+    variacaoId: variacaoIdInicial || '',
+    // Quando vem de 'Repor agora' na Reposicao, ja chega prefilado como
+    // COMPRA_FORNECEDOR + quantidade sugerida.
+    tipo: tipoInicial || 'COMPRA_FORNECEDOR',
+    quantidade: quantidadeInicial && quantidadeInicial > 0 ? quantidadeInicial : 1,
+    motivo: '', precoCusto: '', precoVenda: ''
+  }));
 
   const variacaoSel = variacoes.find((v) => v.id === form.variacaoId);
   const tipoCfg = TIPOS_MOVIMENTACAO.find((t) => t.value === form.tipo);
@@ -992,34 +986,32 @@ function BlocoDevolucao({ form, setForm }) {
 
 function ModalEditarVariacao({ isOpen, onClose, variacao, onSucesso }) {
   const toast = useToast();
-  const [form, setForm] = useState({
-    nome: '', sku: '', preco: 0, precoCusto: 0, lucroTipo: 'VALOR', lucroValor: 0,
-    estoqueAtual: 0, estoqueMinimo: 0, estoqueIdeal: 0,
-    imagemUrl: '', temDevolucao: false, diasParaDevolucaoPadrao: '',
-  });
-  const [salvando, setSalvando] = useState(false);
-
-  useEffect(() => {
-    if (isOpen && variacao) {
-      setForm({
-        nome: variacao.nome || '',
-        sku: variacao.sku || '',
-        preco: variacao.preco ?? 0,
-        precoCusto: variacao.precoCusto ?? 0,
-        lucroTipo: variacao.lucroTipo || 'VALOR',
-        lucroValor: variacao.lucroValor ?? 0,
-        estoqueAtual: variacao.estoqueAtual ?? 0,
-        estoqueMinimo: variacao.estoqueMinimo ?? 0,
-        estoqueIdeal: variacao.estoqueIdeal ?? 0,
-        // Fallback visual pra imagem do produto quando a variacao nao tem
-        // imagem propria (mesma logica da tabela). Upload novo sobrescreve
-        // na variacao; o produto fica intacto.
-        imagemUrl: variacao.imagemUrl || variacao.produto?.imagemUrl || '',
-        temDevolucao: variacao.produto?.temDevolucao ?? false,
-        diasParaDevolucaoPadrao: variacao.produto?.diasParaDevolucaoPadrao ?? '',
-      });
+  // O pai troca a `key` a cada abertura, entao o form nasce da variacao atual
+  // (em vez de um efeito que hidratava ao abrir).
+  const [form, setForm] = useState(() => (isOpen && variacao
+    ? {
+      nome: variacao.nome || '',
+      sku: variacao.sku || '',
+      preco: variacao.preco ?? 0,
+      precoCusto: variacao.precoCusto ?? 0,
+      lucroTipo: variacao.lucroTipo || 'VALOR',
+      lucroValor: variacao.lucroValor ?? 0,
+      estoqueAtual: variacao.estoqueAtual ?? 0,
+      estoqueMinimo: variacao.estoqueMinimo ?? 0,
+      estoqueIdeal: variacao.estoqueIdeal ?? 0,
+      // Fallback visual pra imagem do produto quando a variacao nao tem
+      // imagem propria (mesma logica da tabela). Upload novo sobrescreve
+      // na variacao; o produto fica intacto.
+      imagemUrl: variacao.imagemUrl || variacao.produto?.imagemUrl || '',
+      temDevolucao: variacao.produto?.temDevolucao ?? false,
+      diasParaDevolucaoPadrao: variacao.produto?.diasParaDevolucaoPadrao ?? '',
     }
-  }, [isOpen, variacao]);
+    : {
+      nome: '', sku: '', preco: 0, precoCusto: 0, lucroTipo: 'VALOR', lucroValor: 0,
+      estoqueAtual: 0, estoqueMinimo: 0, estoqueIdeal: 0,
+      imagemUrl: '', temDevolucao: false, diasParaDevolucaoPadrao: '',
+    }));
+  const [salvando, setSalvando] = useState(false);
 
   if (!variacao) return null;
 
@@ -1179,25 +1171,15 @@ function CardProdutoSelecionado({ variacao, estoqueBaixo }) {
 }
 
 function ModalProduto({ isOpen, onClose, categorias, onSalvar }) {
+  // O pai troca a `key` a cada abertura, entao o form nasce limpo com os
+  // mesmos valores que o antigo efeito "ao abrir" aplicava.
   const [form, setForm] = useState({
     nome: '', descricao: '', categoriaId: '', tipo: 'FISICO', imagemUrl: '',
-    nomeVariacao: 'Padrao', sku: '', preco: 0, precoCusto: '', lucroTipo: 'VALOR', lucroValor: '',
-    estoqueAtual: '', estoqueMinimo: '', estoqueIdeal: '', duracaoMin: '',
+    nomeVariacao: 'Padrao', sku: '', preco: 0, precoCusto: 0, lucroTipo: 'VALOR', lucroValor: 0,
+    estoqueAtual: 0, estoqueMinimo: 0, estoqueIdeal: 0, duracaoMin: '',
     temDevolucao: false, diasParaDevolucaoPadrao: '',
   });
   const [tempsParaLimpar, setTempsParaLimpar] = useState([]);
-
-  useEffect(() => {
-    if (isOpen) {
-      setForm({
-        nome: '', descricao: '', categoriaId: '', tipo: 'FISICO', imagemUrl: '',
-        nomeVariacao: 'Padrao', sku: '', preco: 0, precoCusto: 0, lucroTipo: 'VALOR', lucroValor: 0,
-        estoqueAtual: 0, estoqueMinimo: 0, estoqueIdeal: 0, duracaoMin: '',
-        temDevolucao: false, diasParaDevolucaoPadrao: '',
-      });
-      setTempsParaLimpar([]);
-    }
-  }, [isOpen]);
 
   const handleClose = () => {
     for (const url of tempsParaLimpar) catalogoService.removerImagemTemp(url);
@@ -1390,12 +1372,8 @@ function ModalProduto({ isOpen, onClose, categorias, onSalvar }) {
 }
 
 function ModalCategoria({ isOpen, onClose, cat, onSalvar }) {
-  const [nome, setNome] = useState('');
-
-  useEffect(() => {
-    if (cat) setNome(cat.nome);
-    else setNome('');
-  }, [cat, isOpen]);
+  // O pai troca a `key` a cada abertura, entao o nome nasce da categoria atual.
+  const [nome, setNome] = useState(() => (cat ? cat.nome : ''));
 
   const handleSubmit = (e) => {
     e.preventDefault();

@@ -20,8 +20,8 @@ export default function RelatorioMensalDetalhePage() {
   const { periodo } = useParams(); // formato "YYYY-MM"
   const navigate = useNavigate();
   const [dados, setDados] = useState(null);
-  const [erro, setErro] = useState(null);
-  const [carregando, setCarregando] = useState(true);
+  const [erroBusca, setErro] = useState(null);
+  const [buscando, setCarregando] = useState(true);
 
   // Parse seguro do segmento da URL.
   const [anoStr, mesStr] = (periodo || '').split('-');
@@ -29,12 +29,13 @@ export default function RelatorioMensalDetalhePage() {
   const mes = parseInt(mesStr, 10);
   const periodoValido = Number.isInteger(ano) && Number.isInteger(mes) && mes >= 1 && mes <= 12;
 
+  // Endereço inválido não busca nada: o erro e o "carregando" são derivados
+  // do período em vez de setados de forma síncrona dentro do efeito.
+  const erro = periodoValido ? erroBusca : 'Endereço inválido.';
+  const carregando = periodoValido && buscando;
+
   useEffect(() => {
-    if (!periodoValido) {
-      setErro('Endereço inválido.');
-      setCarregando(false);
-      return;
-    }
+    if (!periodoValido) return;
     relatorioMensalService.detalhe(ano, mes)
       .then((r) => setDados(r))
       .catch((e) => setErro(e?.response?.data?.error || 'Não foi possível carregar este relatório.'))

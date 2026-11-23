@@ -3,11 +3,14 @@ import { Outlet, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingBag, Kanban, Calendar, Package, Box,
   DollarSign, MessageCircle, Send, Bot, Settings, BarChart3, UserCog,
-  CreditCard, Receipt, RotateCcw, BadgeCheck
+  CreditCard, Receipt, RotateCcw, BadgeCheck, Sun, ClipboardList, Wallet, Ticket, Percent, Upload
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import AssinaturaBanner from './conta/AssinaturaBanner';
+import FaixaSuporte from './suporte/FaixaSuporte';
+import FaixaComunicado from './suporte/FaixaComunicado';
+import BotaoAjuda from './suporte/BotaoAjuda';
 import { useAuthStore } from '../store/auth.store';
 import { moduloLiberado } from '../constants/permissoes';
 
@@ -15,9 +18,12 @@ import { moduloLiberado } from '../constants/permissoes';
 // Itens cujo modulo nao foi liberado pelo admin sao escondidos.
 const NAV_OPERACAO = [
   { to: '/app/dashboard', label: 'Início', icon: LayoutDashboard, modulo: null },
+  { to: '/app/hoje', label: 'Hoje', icon: Sun, modulo: null },
   { to: '/app/crm', label: 'Clientes', icon: Kanban, modulo: 'CRM' },
   { to: '/app/agenda', label: 'Agenda', icon: Calendar, modulo: 'AGENDA' },
   { to: '/app/vendas', label: 'Vendas', icon: ShoppingBag, modulo: 'VENDAS' },
+  { to: '/app/pedidos', label: 'Pedidos', icon: ClipboardList, modulo: 'VENDAS' },
+  { to: '/app/pacotes', label: 'Pacotes', icon: Ticket, modulo: 'AGENDA' },
   { to: '/app/devolucoes', label: 'Devoluções', icon: RotateCcw, modulo: 'VENDAS' },
   { to: '/app/catalogo', label: 'Serviços', icon: Package, modulo: 'CATALOGO' },
   {
@@ -51,6 +57,8 @@ const NAV_GESTAO = [
     ],
   },
   { to: '/app/pagamentos', label: 'Pagamentos', icon: CreditCard, modulo: 'PAGAMENTOS' },
+  { to: '/app/recebimentos', label: 'Conta de recebimento', icon: Wallet, modulo: 'PAGAMENTOS' },
+  { to: '/app/comissoes', label: 'Comissões', icon: Percent, modulo: 'FINANCEIRO' },
   { to: '/app/fiscal', label: 'Fiscal', icon: Receipt, modulo: 'FISCAL' },
   {
     to: '/app/relatorios',
@@ -78,6 +86,7 @@ const NAV_AUTOMACAO = [
 // Conta: assinatura do negocio. Fica perto de Configuracoes (no menu do usuario).
 const NAV_CONTA = [
   { to: '/app/plano', label: 'Meu plano', icon: BadgeCheck, perfis: ['CLIENT', 'ADMINISTRADOR'] },
+  { to: '/app/importar', label: 'Importar planilha', icon: Upload, perfis: ['CLIENT', 'ADMINISTRADOR'] },
 ];
 
 const TITULOS = {
@@ -171,8 +180,11 @@ export default function ClientLayout() {
               com formulario (Configuracoes, PerfilPage, CrmUsersPage) tem
               max-w proprio e continuam centradas — listas/tabelas/dashboards
               esticam pra aproveitar a tela inteira. */}
+          <FaixaSuporte />
+          <FaixaComunicado />
           <AssinaturaBanner />
           <Outlet />
+          <BotaoAjuda />
         </main>
       </div>
     </div>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Receipt, Plus, RefreshCw, FileText, FileX, Clock as ClockIcon, Download, Lock, Trash2,
-  FileSpreadsheet, Store, Pencil,
+  FileSpreadsheet, Store, Pencil, Sparkles,
 } from 'lucide-react';
 import {
   Card, CardHeader, CardTitle, CardDescription, Button, Badge, EmptyState,
@@ -209,6 +209,21 @@ export default function FiscalPage() {
           e acompanhe os documentos. A emissao real depende do certificado e do ambiente.
         </p>
       </div>
+
+      {/* Entrada do assistente passo a passo (frente C da fase 2). */}
+      <Link
+        to="/app/fiscal/ativar"
+        className="flex items-center gap-3 rounded-xl border border-[var(--border-main)] bg-[var(--bg-card)] px-4 py-3 min-h-11 hover:bg-[var(--bg-subtle)]"
+      >
+        <Sparkles size={18} className="text-[var(--text-secondary)] flex-shrink-0" aria-hidden />
+        <span className="flex-1 text-sm">
+          <span className="font-semibold text-[var(--text-main)]">
+            {form.ambiente === 'PRODUCAO' && configAtiva ? 'Rever a nota fiscal passo a passo' : 'Ativar nota fiscal passo a passo'}
+          </span>
+          <span className="text-[var(--text-muted)]"> · empresa, certificado A1, numeração e nota de teste</span>
+        </span>
+        <span className="text-sm font-semibold text-[var(--text-main)]">Abrir</span>
+      </Link>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard icon={FileText} color="neutral" label="Documentos" valor={stats.total} />

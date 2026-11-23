@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus, Edit2, Trash2, Phone, Mail, Tag, ArrowRight, ArrowLeft,
@@ -52,38 +52,45 @@ export default function CRMPage() {
   const [modalCatalogoEtapas, setModalCatalogoEtapas] = useState(false);
   const [drawerLead, setDrawerLead] = useState({ open: false, lead: null });
 
+  // Busca sem setState sincrono (o estado ja nasce carregando); o "carregar"
+  // das acoes liga o carregando antes de buscar de novo.
+  const buscarDados = useCallback(() => Promise.all([
+    api.get('/crm/stages').catch(() => ({ data: [] })),
+    api.get('/crm/leads').catch(() => ({ data: [] })),
+  ]).then(([s, l]) => {
+    setStages(s.data || []);
+    setLeads(l.data || []);
+  }).finally(() => {
+    setCarregando(false);
+  }), []);
+
   useEffect(() => {
-    carregar();
-  }, []);
+    buscarDados();
+  }, [buscarDados]);
+
+  const carregar = () => {
+    setCarregando(true);
+    return buscarDados();
+  };
 
   // Suporte a deep-link `?lead=<id>` (vindo de Vendas, Financeiro etc).
-  // Abre o drawer assim que os leads chegam; limpa o query param pra nao
-  // reabrir em refresh.
-  useEffect(() => {
-    const leadId = searchParams.get('lead');
-    if (!leadId || leads.length === 0) return;
-    const alvo = leads.find((l) => l.id === leadId);
-    if (alvo) {
-      setDrawerLead({ open: true, lead: alvo });
-      const next = new URLSearchParams(searchParams);
-      next.delete('lead');
-      setSearchParams(next, { replace: true });
-    }
-  }, [leads, searchParams, setSearchParams]);
+  // Abre o drawer assim que os leads chegam (ajuste de estado no render,
+  // guardando o lead ja aberto pra nao repetir); o efeito so limpa o query
+  // param pra nao reabrir em refresh.
+  const leadIdDeepLink = searchParams.get('lead');
+  const alvoDeepLink = leadIdDeepLink ? leads.find((l) => l.id === leadIdDeepLink) || null : null;
+  const [deepLinkAberto, setDeepLinkAberto] = useState(null);
+  if (alvoDeepLink !== deepLinkAberto) {
+    setDeepLinkAberto(alvoDeepLink);
+    if (alvoDeepLink) setDrawerLead({ open: true, lead: alvoDeepLink });
+  }
 
-  const carregar = async () => {
-    setCarregando(true);
-    try {
-      const [s, l] = await Promise.all([
-        api.get('/crm/stages').catch(() => ({ data: [] })),
-        api.get('/crm/leads').catch(() => ({ data: [] })),
-      ]);
-      setStages(s.data || []);
-      setLeads(l.data || []);
-    } finally {
-      setCarregando(false);
-    }
-  };
+  useEffect(() => {
+    if (!alvoDeepLink) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('lead');
+    setSearchParams(next, { replace: true });
+  }, [alvoDeepLink, searchParams, setSearchParams]);
 
   const leadsFiltered = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -242,6 +249,7 @@ export default function CRMPage() {
       )}
 
       <ModalLead
+        key={modalLead.open ? `lead-${modalLead.data?.id ?? 'novo'}` : 'lead-fechado'}
         isOpen={modalLead.open}
         onClose={() => setModalLead({ open: false, data: null })}
         lead={modalLead.data}
@@ -250,6 +258,7 @@ export default function CRMPage() {
       />
 
       <ModalCatalogoEtapas
+        key={modalCatalogoEtapas ? 'catalogo-etapas-aberto' : 'catalogo-etapas-fechado'}
         isOpen={modalCatalogoEtapas}
         onClose={() => setModalCatalogoEtapas(false)}
         onHabilitar={handleHabilitarEtapa}
@@ -502,20 +511,45 @@ function ListaView({ leads, stages, onSelecionarLead }) {
 //   3. Contexto (etapa, urgencia, origem, etiquetas)
 function ModalLead({ isOpen, onClose, lead, stages, onSalvar }) {
   const toast = useToast();
-  const [form, setForm] = useState({
-    nome: '', telefone: '', email: '', cpf: '', dataNascimento: '',
-    etapaId: '', tags: '', prioridade: 'MEDIUM', origem: 'MANUAL', observacoes: '',
-  });
+  // O pai troca a `key` a cada abertura, entao form e itens nascem hidratados
+  // do lead atual (em vez de um efeito que resetava ao abrir).
+  const [form, setForm] = useState(() => (lead
+    ? {
+      nome: lead.nome || '',
+      telefone: lead.telefone || '',
+      email: lead.email || '',
+      // CPF vem do backend so com digitos — aplicar mascara aqui.
+      cpf: lead.cpf ? formatarCpf(lead.cpf) : '',
+      // Data nasc vem em ISO — pegar so YYYY-MM-DD pro input type=date.
+      dataNascimento: lead.dataNascimento ? new Date(lead.dataNascimento).toISOString().slice(0, 10) : '',
+      etapaId: lead.etapaId || '',
+      tags: lead.tags || '',
+      prioridade: lead.prioridade || 'MEDIUM',
+      origem: lead.origem || 'MANUAL',
+      observacoes: lead.observacoes || '',
+    }
+    : {
+      nome: '', telefone: '', email: '', cpf: '', dataNascimento: '',
+      etapaId: '', tags: '', prioridade: 'MEDIUM', origem: 'MANUAL', observacoes: '',
+    }));
   // Itens selecionados: [{ variacaoId, quantidade, observacao, _v: { ...variacao+produto } }].
   // O _v fica em memoria so pra UI calcular total/exibir; backend recebe sem ele.
-  const [itens, setItens] = useState([]);
+  // Mapeia LeadVariacao -> formato local de itens.
+  const [itens, setItens] = useState(() => (lead
+    ? (lead.variacoes || []).map((lv) => ({
+      variacaoId: lv.variacao?.id || lv.variacaoId,
+      quantidade: lv.quantidade || 1,
+      observacao: lv.observacao || '',
+      _v: lv.variacao || null,
+    }))
+    : []));
   const [catalogo, setCatalogo] = useState([]);
-  const [carregandoCatalogo, setCarregandoCatalogo] = useState(false);
+  // Ja nasce carregando quando o modal monta aberto.
+  const [carregandoCatalogo, setCarregandoCatalogo] = useState(isOpen);
 
   // Carrega catalogo (uma unica vez por abertura) — flatten produto > variacoes.
   useEffect(() => {
     if (!isOpen) return;
-    setCarregandoCatalogo(true);
     api.get('/catalogo')
       .then((r) => {
         const flat = [];
@@ -527,39 +561,6 @@ function ModalLead({ isOpen, onClose, lead, stages, onSalvar }) {
       .catch(() => setCatalogo([]))
       .finally(() => setCarregandoCatalogo(false));
   }, [isOpen]);
-
-  // Hidrata o form ao abrir.
-  useEffect(() => {
-    if (lead) {
-      setForm({
-        nome: lead.nome || '',
-        telefone: lead.telefone || '',
-        email: lead.email || '',
-        // CPF vem do backend so com digitos — aplicar mascara aqui.
-        cpf: lead.cpf ? formatarCpf(lead.cpf) : '',
-        // Data nasc vem em ISO — pegar so YYYY-MM-DD pro input type=date.
-        dataNascimento: lead.dataNascimento ? new Date(lead.dataNascimento).toISOString().slice(0, 10) : '',
-        etapaId: lead.etapaId || '',
-        tags: lead.tags || '',
-        prioridade: lead.prioridade || 'MEDIUM',
-        origem: lead.origem || 'MANUAL',
-        observacoes: lead.observacoes || '',
-      });
-      // Mapeia LeadVariacao -> formato local de itens.
-      setItens((lead.variacoes || []).map((lv) => ({
-        variacaoId: lv.variacao?.id || lv.variacaoId,
-        quantidade: lv.quantidade || 1,
-        observacao: lv.observacao || '',
-        _v: lv.variacao || null,
-      })));
-    } else {
-      setForm({
-        nome: '', telefone: '', email: '', cpf: '', dataNascimento: '',
-        etapaId: '', tags: '', prioridade: 'MEDIUM', origem: 'MANUAL', observacoes: '',
-      });
-      setItens([]);
-    }
-  }, [lead, isOpen]);
 
   const adicionarItem = (variacaoId) => {
     if (!variacaoId) return;
@@ -829,24 +830,24 @@ function ModalLead({ isOpen, onClose, lead, stages, onSalvar }) {
 // recebe 403.
 function ModalCatalogoEtapas({ isOpen, onClose, onHabilitar, onDesabilitar }) {
   const [catalogo, setCatalogo] = useState([]);
-  const [carregando, setCarregando] = useState(false);
+  // Ja nasce carregando quando monta aberto (o pai troca a `key` a cada abertura).
+  const [carregando, setCarregando] = useState(isOpen);
   const [salvandoSlug, setSalvandoSlug] = useState(null);
 
-  const carregarCatalogo = async () => {
+  // Busca sem setState sincrono; o recarregar apos o toggle liga o carregando antes.
+  const buscarCatalogo = useCallback(() => api.get('/crm/stages/catalogo')
+    .then((r) => { setCatalogo(r.data || []); })
+    .catch(() => { setCatalogo([]); })
+    .finally(() => { setCarregando(false); }), []);
+
+  const carregarCatalogo = () => {
     setCarregando(true);
-    try {
-      const r = await api.get('/crm/stages/catalogo');
-      setCatalogo(r.data || []);
-    } catch {
-      setCatalogo([]);
-    } finally {
-      setCarregando(false);
-    }
+    return buscarCatalogo();
   };
 
   useEffect(() => {
-    if (isOpen) carregarCatalogo();
-  }, [isOpen]);
+    if (isOpen) buscarCatalogo();
+  }, [isOpen, buscarCatalogo]);
 
   const handleToggle = async (item, novoEstado) => {
     setSalvandoSlug(item.slug);

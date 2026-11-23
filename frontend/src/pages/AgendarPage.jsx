@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Calendar, Clock, User, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { Calendar, Clock, User, CheckCircle2, AlertCircle, Loader2, Bell, Copy } from 'lucide-react';
 import clsx from 'clsx';
 import api from '../services/api';
 import { Button, Input } from '../components/ui';
@@ -39,6 +39,125 @@ function Escolha({ ativo, onClick, children, className }) {
     >
       {children}
     </button>
+  );
+}
+
+// "Me avise se vagar": entra na fila de encaixe do negocio.
+function AviseSeVagar({ slug, variacaoId, especialistaId, dia }) {
+  const [aberto, setAberto] = useState(false);
+  const [nome, setNome] = useState('');
+  const [telefone, setTelefone] = useState('');
+  const [soEsseDia, setSoEsseDia] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [feito, setFeito] = useState(null);
+  const [erro, setErro] = useState(null);
+
+  if (feito) {
+    return <p role="status" className="text-sm text-[var(--success-text)] bg-[var(--success-soft)] rounded-xl px-3 py-2.5">{feito}</p>;
+  }
+  if (!aberto) {
+    return (
+      <Button variant="secondary" fullWidth className="min-h-[44px]" icon={Bell} onClick={() => setAberto(true)}>
+        Me avise se vagar um horário
+      </Button>
+    );
+  }
+  const enviar = async (e) => {
+    e.preventDefault();
+    setErro(null);
+    setEnviando(true);
+    try {
+      const r = await api.post(`/publico/agenda/${slug}/fila`, { variacaoId, especialistaId, dia, soEsseDia, nome, telefone });
+      setFeito(r.data.mensagem);
+    } catch (err) {
+      setErro(err.response?.data?.erro || 'Não foi possível entrar na fila. Tente de novo.');
+    } finally {
+      setEnviando(false);
+    }
+  };
+  return (
+    <form onSubmit={enviar} className="space-y-3 rounded-xl border border-[var(--border-main)] bg-[var(--bg-card)] p-4">
+      <p className="text-sm text-[var(--text-secondary)]">Se alguém desmarcar, você recebe o horário no WhatsApp. Quem responder primeiro fica com ele.</p>
+      {erro && <p role="alert" className="text-sm text-[var(--danger-text)]">{erro}</p>}
+      <Input label="Nome" value={nome} onChange={(e) => setNome(e.target.value)} autoComplete="name" required />
+      <Input label="WhatsApp" type="tel" placeholder="(11) 98888-7777" value={telefone} onChange={(e) => setTelefone(e.target.value)} autoComplete="tel" required />
+      <label className="flex items-center gap-3 min-h-[44px] text-sm text-[var(--text-main)] cursor-pointer">
+        <input type="checkbox" className="w-5 h-5" checked={soEsseDia} onChange={(e) => setSoEsseDia(e.target.checked)} />
+        Só neste dia (senão, qualquer dia nas próximas 2 semanas)
+      </label>
+      <Button type="submit" variant="primary" fullWidth size="lg" loading={enviando}>Entrar na fila</Button>
+    </form>
+  );
+}
+
+// Depois de agendar com sinal: QR do Pix e acompanhamento do pagamento.
+function TelaSinal({ slug, confirmado }) {
+  const [sinal, setSinal] = useState(confirmado.sinal);
+  const [copiado, setCopiado] = useState(false);
+  const [agora, setAgora] = useState(() => Date.now());
+  const ag = confirmado.agendamento;
+
+  useEffect(() => {
+    if (sinal.status !== 'PENDENTE') return undefined;
+    const t = setInterval(() => {
+      setAgora(Date.now());
+      api.get(`/publico/agenda/${slug}/sinal/${sinal.token}`)
+        .then((r) => setSinal((s) => ({ ...s, ...r.data, qrImagem: r.data.qrImagem || s.qrImagem, token: s.token })))
+        .catch(() => {});
+    }, 8000);
+    return () => clearInterval(t);
+  }, [slug, sinal.status, sinal.token]);
+
+  const restanteMs = new Date(sinal.expiraEm).getTime() - agora;
+  const restante = restanteMs > 0 ? `${Math.floor(restanteMs / 3600000)} h ${Math.floor((restanteMs % 3600000) / 60000)} min` : null;
+  const quando = `${new Date(ag.data).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' })} às ${hora(ag.data)}`;
+  const copiar = () => navigator.clipboard?.writeText(sinal.qrCode).then(() => { setCopiado(true); setTimeout(() => setCopiado(false), 2500); });
+
+  if (sinal.status === 'PAGO') {
+    return (
+      <div className="min-h-screen grid place-items-center bg-[var(--bg-app)] px-4">
+        <div className="text-center max-w-sm space-y-2">
+          <CheckCircle2 size={40} className="mx-auto text-[var(--success)]" />
+          <h1 className="text-xl font-semibold text-[var(--text-main)]">Horário garantido</h1>
+          <p className="text-sm text-[var(--text-secondary)]">Recebemos {fmtBRL(sinal.valor)}. {ag.servico}, {quando}.</p>
+          {sinal.restante > 0 && <p className="text-sm text-[var(--text-secondary)]">No atendimento você paga {fmtBRL(sinal.restante)}.</p>}
+        </div>
+      </div>
+    );
+  }
+  if (sinal.status !== 'PENDENTE') {
+    return (
+      <div className="min-h-screen grid place-items-center bg-[var(--bg-app)] px-4">
+        <div className="text-center max-w-sm space-y-2">
+          <AlertCircle size={36} className="mx-auto text-[var(--text-muted)]" />
+          <h1 className="text-xl font-semibold text-[var(--text-main)]">O prazo do sinal acabou</h1>
+          <p className="text-sm text-[var(--text-secondary)]">O horário voltou pra agenda. Se ainda quiser, é só marcar de novo.</p>
+          <Button variant="primary" className="min-h-[44px]" onClick={() => window.location.reload()}>Marcar de novo</Button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="min-h-screen bg-[var(--bg-app)] px-4 py-8">
+      <div className="max-w-sm mx-auto space-y-5 text-center">
+        <div>
+          <h1 className="text-xl font-semibold text-[var(--text-main)]">Sinal do horário</h1>
+          <p className="text-sm text-[var(--text-secondary)] mt-1">{ag.servico} · {quando}</p>
+        </div>
+        <div className="text-3xl font-bold tabular-nums text-[var(--text-main)]">{fmtBRL(sinal.valor)}</div>
+        <p className="text-sm text-[var(--text-secondary)]">Desconta do total de {fmtBRL(ag.preco)}. {restante ? `Vence em ${restante}.` : 'Vencendo agora.'}</p>
+        {sinal.qrImagem && <img src={sinal.qrImagem} alt="QR Code do Pix do sinal" className="mx-auto w-60 h-60 rounded-xl border border-[var(--border-main)] bg-white p-2" />}
+        {sinal.qrCode && (
+          <div className="space-y-2">
+            <label htmlFor="pix-copia" className="sr-only">Pix copia e cola</label>
+            <textarea id="pix-copia" readOnly value={sinal.qrCode} rows={3} className="w-full text-xs rounded-lg border border-[var(--border-main)] bg-[var(--bg-subtle)] p-2 font-mono" />
+            <Button variant="primary" size="lg" fullWidth icon={Copy} onClick={copiar}>{copiado ? 'Código copiado' : 'Copiar código Pix'}</Button>
+          </div>
+        )}
+        <p className="text-xs text-[var(--text-muted)]">Abra o app do seu banco, escolha Pix copia e cola. A confirmação chega aqui e no seu WhatsApp sozinha.</p>
+        <p className="flex items-center justify-center gap-2 text-xs text-[var(--text-muted)]" role="status"><Loader2 size={12} className="animate-spin" /> Esperando o pagamento</p>
+      </div>
+    </div>
   );
 }
 
@@ -134,6 +253,7 @@ export default function AgendarPage() {
   }
 
   if (confirmado) {
+    if (confirmado.sinal) return <TelaSinal slug={slug} confirmado={confirmado} />;
     return (
       <div className="min-h-screen grid place-items-center bg-[var(--bg-app)] px-4">
         <div className="text-center max-w-sm">
@@ -142,6 +262,11 @@ export default function AgendarPage() {
           <p className="text-sm text-[var(--text-secondary)] mt-2">
             {confirmado.agendamento.servico} · {new Date(confirmado.agendamento.data).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' })} às {hora(confirmado.agendamento.data)}
           </p>
+          {confirmado.pacote && (
+            <p className="text-sm text-[var(--text-secondary)] mt-2">
+              Usando seu pacote {confirmado.pacote.nome}. {confirmado.pacote.restantes > 0 ? `Depois deste, sobram ${confirmado.pacote.restantes} sessão(ões).` : 'Esta é a última sessão do pacote.'}
+            </p>
+          )}
           <p className="text-sm text-[var(--text-muted)] mt-3">{confirmado.mensagem}</p>
         </div>
       </div>
@@ -207,7 +332,10 @@ export default function AgendarPage() {
             {carregandoHorarios ? (
               <Loader2 size={18} className="animate-spin text-[var(--text-muted)]" />
             ) : horarios.length === 0 ? (
-              <p className="text-sm text-[var(--text-muted)]">Sem horários livres neste dia. Tente outro.</p>
+              <div className="space-y-3">
+                <p className="text-sm text-[var(--text-muted)]">Sem horários livres neste dia. Tente outro.</p>
+                <AviseSeVagar slug={slug} variacaoId={variacaoId} especialistaId={especialistaId} dia={dia} />
+              </div>
             ) : (
               <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
                 {horarios.map((h) => (

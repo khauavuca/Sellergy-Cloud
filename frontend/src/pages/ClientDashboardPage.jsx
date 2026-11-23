@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { ShoppingBag, Calendar, ArrowUpRight, Clock } from 'lucide-react';
+import { ShoppingBag, Calendar, ArrowUpRight, Clock, Smartphone } from 'lucide-react';
 import api from '../services/api';
 import { useAuthStore } from '../store/auth.store';
 import { Card, CardHeader, CardTitle, EmptyState, Badge } from '../components/ui';
@@ -46,7 +46,6 @@ export default function ClientDashboardPage() {
       }
       await Promise.all(promises);
     };
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount
     carregar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -83,6 +82,20 @@ export default function ClientDashboardPage() {
         <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-main)] mt-1">Olá, {primeiroNome}</h1>
         <p className="text-sm text-[var(--text-muted)] mt-1">Como está o seu negócio hoje.</p>
       </div>
+
+      {(user?.perfil === 'CLIENT' || user?.perfil === 'ADMINISTRADOR') && (
+        <Link
+          to="/app/hoje"
+          className="flex items-center gap-3 min-h-11 rounded-xl border border-[var(--border-main)] bg-[var(--bg-card)] px-4 py-3 hover:bg-[var(--bg-subtle)]"
+        >
+          <Smartphone size={18} className="text-[var(--text-secondary)]" aria-hidden />
+          <span className="flex-1 text-sm">
+            <span className="font-semibold text-[var(--text-main)]">Hoje no celular</span>
+            <span className="text-[var(--text-muted)]"> · números do dia, horários e Pix na hora</span>
+          </span>
+          <ArrowUpRight size={16} className="text-[var(--text-muted)]" aria-hidden />
+        </Link>
+      )}
 
       <InicioChecklist />
 

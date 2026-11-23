@@ -42,23 +42,21 @@ export default function NotificacoesDropdown() {
   const ref = useRef(null);
   const navigate = useNavigate();
 
-  const buscar = async () => {
-    try {
-      const r = await notificacaoService.listar({ limite: 15 });
-      setItens(r.itens || []);
-      setTotalNaoLidas(r.totalNaoLidas || 0);
-    } catch {
-      // Falha silenciosa: o sino pode ficar sem badge, mas não bloqueia o app.
-    }
-  };
-
-  // Polling. Limpa intervalo quando o componente sair de tela.
+  // Polling. Limpa intervalo quando o componente sair de tela. O setState so
+  // acontece na resposta (dentro do .then), nunca de forma sincrona no efeito.
   useEffect(() => {
     if (semTenant) return undefined;
+    const buscar = () => notificacaoService.listar({ limite: 15 })
+      .then((r) => {
+        setItens(r.itens || []);
+        setTotalNaoLidas(r.totalNaoLidas || 0);
+      })
+      .catch(() => {
+        // Falha silenciosa: o sino pode ficar sem badge, mas não bloqueia o app.
+      });
     buscar();
     const id = setInterval(buscar, INTERVALO_POLL_MS);
     return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [semTenant]);
 
   // Fecha ao clicar fora ou ao apertar Esc.

@@ -51,6 +51,25 @@ const ConfiguracoesAdminPage = lazy(() => import('./pages/ConfiguracoesAdminPage
 const CampanhasPage = lazy(() => import('./pages/CampanhasPage'));
 const BotsClientePage = lazy(() => import('./pages/BotsClientePage'));
 const AdminAssinaturasPage = lazy(() => import('./pages/AdminAssinaturasPage'));
+// Fase 2
+const EncaixePage = lazy(() => import('./pages/EncaixePage'));
+const PacotesPage = lazy(() => import('./pages/PacotesPage'));
+const ComissoesPage = lazy(() => import('./pages/ComissoesPage'));
+const EncaixeRespostaPage = lazy(() => import('./pages/EncaixeRespostaPage'));
+const PedidosPage = lazy(() => import('./pages/PedidosPage'));
+const RecebimentosPage = lazy(() => import('./pages/RecebimentosPage'));
+const LojaPage = lazy(() => import('./pages/LojaPage'));
+const PedidoPublicoPage = lazy(() => import('./pages/PedidoPublicoPage'));
+const ImportarPage = lazy(() => import('./pages/ImportarPage'));
+const AssistenteFiscalPage = lazy(() => import('./pages/AssistenteFiscalPage'));
+const HojePage = lazy(() => import('./pages/HojePage'));
+const ConvitePage = lazy(() => import('./pages/ConvitePage'));
+const AdminSuportePage = lazy(() => import('./pages/AdminSuportePage'));
+const AdminSaudePage = lazy(() => import('./pages/AdminSaudePage'));
+const AdminComunicadosPage = lazy(() => import('./pages/AdminComunicadosPage'));
+const AdminUsoPage = lazy(() => import('./pages/AdminUsoPage'));
+const AdminEquipePage = lazy(() => import('./pages/AdminEquipePage'));
+const AdminPlanosPage = lazy(() => import('./pages/AdminPlanosPage'));
 
 // Bots do tenant: tela real BotsClientePage (conexao + FAQ), Frente 4.
 // `RelatoriosClientePlaceholder` removido — agora usa RelatoriosPage real.
@@ -146,6 +165,10 @@ export default function App() {
           {/* Publicas, sem login: agendamento pelo link e confirmacao do lembrete */}
           <Route path="/agendar/:slug" element={<AgendarPage />} />
           <Route path="/confirmar/:token" element={<ConfirmarPage />} />
+          <Route path="/encaixe/:token" element={<EncaixeRespostaPage />} />
+          <Route path="/loja/:slug" element={<LojaPage />} />
+          <Route path="/pedido/:token" element={<PedidoPublicoPage />} />
+          <Route path="/convite/:token" element={<ConvitePage />} />
           <Route path="/login" element={<Navigate to="/admin/login" replace />} />
 
           {/* Troca de senha (autenticado, mas fora dos layouts) */}
@@ -178,6 +201,12 @@ export default function App() {
             <Route path="/admin/clientes/permissoes" element={<AdminPermissoesClientePage />} />
             <Route path="/admin/clientes/:id" element={<ClientsPage />} />
             <Route path="/admin/assinaturas" element={<AdminAssinaturasPage />} />
+            <Route path="/admin/suporte" element={<AdminSuportePage />} />
+            <Route path="/admin/saude" element={<AdminSaudePage />} />
+            <Route path="/admin/comunicados" element={<AdminComunicadosPage />} />
+            <Route path="/admin/uso" element={<AdminUsoPage />} />
+            <Route path="/admin/equipe" element={<AdminEquipePage />} />
+            <Route path="/admin/planos" element={<AdminPlanosPage />} />
             <Route path="/admin/bots" element={<BotsPage />} />
             <Route path="/admin/bots/:botId/canal" element={<BotCanalPage />} />
             <Route path="/admin/alertas" element={<AlertsPage />} />
@@ -225,6 +254,14 @@ export default function App() {
             <Route path="/app/usuarios" element={<CrmUsersPage />} />
             <Route path="/app/configuracoes" element={<ConfiguracoesPage />} />
             <Route path="/app/plano" element={<PlanoPage />} />
+            <Route path="/app/agenda/encaixe" element={<EncaixePage />} />
+            <Route path="/app/pacotes" element={<PacotesPage />} />
+            <Route path="/app/comissoes" element={<ComissoesPage />} />
+            <Route path="/app/pedidos" element={<PedidosPage />} />
+            <Route path="/app/recebimentos" element={<RecebimentosPage />} />
+            <Route path="/app/importar" element={<ImportarPage />} />
+            <Route path="/app/fiscal/ativar" element={<AssistenteFiscalPage />} />
+            <Route path="/app/hoje" element={<HojePage />} />
             <Route path="/app/configuracoes/perfil" element={<PerfilPage />} />
           </Route>
 

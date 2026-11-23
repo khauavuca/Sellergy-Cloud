@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Plus, Edit2, Trash2, MoreHorizontal, Mail, Phone,
@@ -37,16 +37,17 @@ export default function ClientsPage() {
   const [drawer, setDrawer] = useState({ open: false, cliente: null });
   const [integracoes, setIntegracoes] = useState({ open: false, cliente: null });
 
-  useEffect(() => { carregar(); }, []);
+  // Busca sem setState sincrono (o estado ja nasce carregando); o "carregar"
+  // das acoes liga o carregando antes de buscar de novo.
+  const buscarClientes = useCallback(() => api.get('/clientes')
+    .then((r) => { setClientes(r.data || []); })
+    .finally(() => { setCarregando(false); }), []);
 
-  const carregar = async () => {
+  useEffect(() => { buscarClientes(); }, [buscarClientes]);
+
+  const carregar = () => {
     setCarregando(true);
-    try {
-      const r = await api.get('/clientes');
-      setClientes(r.data || []);
-    } finally {
-      setCarregando(false);
-    }
+    return buscarClientes();
   };
 
   const filtrados = useMemo(() => {
@@ -193,6 +194,7 @@ export default function ClientsPage() {
       )}
 
       <ModalCliente
+        key={modal.open ? `cliente-${modal.data?.id ?? 'novo'}` : 'cliente-fechado'}
         isOpen={modal.open}
         onClose={() => setModal({ open: false, data: null })}
         cliente={modal.data}
@@ -232,18 +234,16 @@ function KpiCard({ label, valor, variant }) {
 }
 
 function ModalCliente({ isOpen, onClose, cliente, onSalvar }) {
-  const [form, setForm] = useState({ nome: '', email: '', telefone: '', segmento: '', plano: 'BASIC', mensalidade: 0 });
-
-  useEffect(() => {
-    if (cliente) setForm({
+  // O pai troca a `key` a cada abertura, entao o form nasce do cliente atual.
+  const [form, setForm] = useState(() => (cliente
+    ? {
       ...cliente,
       email: cliente.email || '',
       telefone: cliente.telefone || '',
       segmento: cliente.segmento || '',
       mensalidade: cliente.mensalidade || 0,
-    });
-    else setForm({ nome: '', email: '', telefone: '', segmento: '', plano: 'BASIC', mensalidade: 0 });
-  }, [cliente, isOpen]);
+    }
+    : { nome: '', email: '', telefone: '', segmento: '', plano: 'BASIC', mensalidade: 0 }));
 
   // Preview dos modulos que o backend vai auto-ativar pelo segmento (so na
   // criacao). Da transparencia ao admin antes de salvar; ele ajusta em Permissoes.

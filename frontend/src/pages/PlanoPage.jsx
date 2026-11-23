@@ -206,7 +206,7 @@ export default function PlanoPage() {
                   const pagavel = f.linkPagamento && (f.status === 'ABERTA' || f.status === 'VENCIDA');
                   return (
                     <tr key={f.id} className="border-t border-[var(--border-main)]">
-                      <td className="px-2 py-3 font-medium text-[var(--text-main)] capitalize">{competencia(f.competencia)}</td>
+                      <td className="px-2 py-3 font-medium text-[var(--text-main)] first-letter:uppercase">{competencia(f.competencia)}</td>
                       <td className="px-2 py-3 tabular-nums">{brl(f.valor)}</td>
                       <td className="px-2 py-3 tabular-nums">{dataCurta(f.vencimento)}</td>
                       <td className="px-2 py-3">

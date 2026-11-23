@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import {
   AlertCircle, AlertTriangle, Info, CheckCircle2, XCircle, Bell, Bot
@@ -30,7 +30,12 @@ export default function AlertsPage() {
   const [filtroStatus, setFiltroStatus] = useState('OPEN');
   const [filtroSeveridade, setFiltroSeveridade] = useState('');
 
-  useEffect(() => { carregar(); }, []);
+  // Carga inicial: o estado ja nasce carregando; setState so na resposta.
+  const carregar = useCallback(() => api.get('/alertas')
+    .then((r) => { setAlertas(r.data || []); })
+    .finally(() => { setCarregando(false); }), []);
+
+  useEffect(() => { carregar(); }, [carregar]);
 
   // Socket.IO real-time
   useEffect(() => {
@@ -49,16 +54,6 @@ export default function AlertsPage() {
     return () => socket.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const carregar = async () => {
-    setCarregando(true);
-    try {
-      const r = await api.get('/alertas');
-      setAlertas(r.data || []);
-    } finally {
-      setCarregando(false);
-    }
-  };
 
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase();

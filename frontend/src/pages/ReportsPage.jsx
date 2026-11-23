@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { BarChart3, TrendingUp, Users, Bot, DollarSign, AlertCircle } from 'lucide-react';
 import api from '../services/api';
 import { Card, CardHeader, CardTitle, Badge, EmptyState, KpiCard } from '../components/ui';
@@ -12,16 +12,14 @@ export default function ReportsPage() {
   const [stats, setStats] = useState(null);
   const [carregando, setCarregando] = useState(true);
 
-  useEffect(() => { carregar(); }, []);
-
-  const carregar = async () => {
-    setCarregando(true);
-    try {
-      const [c, b, a] = await Promise.all([
+  // Carga unica na montagem: o estado ja nasce carregando, entao o efeito so
+  // busca e faz setState na resposta (sem setState sincrono).
+  useEffect(() => {
+    Promise.all([
         api.get('/clientes').catch(() => ({ data: [] })),
         api.get('/bots').catch(() => ({ data: [] })),
         api.get('/alertas').catch(() => ({ data: [] })),
-      ]);
+    ]).then(([c, b, a]) => {
       const clientes = c.data || [];
       const bots = b.data || [];
       const alertas = a.data || [];
@@ -43,10 +41,10 @@ export default function ReportsPage() {
         alertasAbertos: alertas.filter((x) => x.status === 'OPEN').length,
         alertasCriticos: alertas.filter((x) => x.status === 'OPEN' && x.severidade === 'CRITICAL').length,
       });
-    } finally {
+    }).finally(() => {
       setCarregando(false);
-    }
-  };
+    });
+  }, []);
 
   if (carregando) {
     return (

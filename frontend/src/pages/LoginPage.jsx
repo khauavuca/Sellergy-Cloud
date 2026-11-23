@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Mail, ArrowRight, AlertCircle, Sparkles, CreditCard, Users, ShieldCheck } from 'lucide-react';
 import { useAuthStore } from '../store/auth.store';
 import { Button, Input } from '../components/ui';
@@ -13,6 +13,8 @@ import EtapaCodigo from '../components/auth/EtapaCodigo';
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
+  const [params] = useSearchParams();
+  const suporteEncerrado = params.get('suporte') === 'encerrado';
   const { login, error, isLoading, isAuthenticated, user, logout, desafio2fa, confirmar2fa, cancelar2fa } = useAuthStore();
   const navigate = useNavigate();
 
@@ -58,6 +60,11 @@ export default function LoginPage() {
             <EtapaCodigo erro={error} carregando={isLoading} onConfirmar={confirmar2fa} onVoltar={cancelar2fa} />
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
+              {suporteEncerrado && !error && (
+                <p role="status" className="px-3.5 py-3 rounded-xl bg-[var(--bg-subtle)] text-sm text-[var(--text-secondary)]">
+                  Sessão de suporte encerrada. Entre de novo com sua senha e o código.
+                </p>
+              )}
               {error && (
                 <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-[var(--danger-soft)] border border-[var(--danger-soft)]">
                   <AlertCircle size={16} className="text-[var(--danger)] flex-shrink-0 mt-0.5" />

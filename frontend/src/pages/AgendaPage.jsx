@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
   Plus, ChevronLeft, ChevronRight, Calendar, Clock, Phone, Edit2, Trash2,
-  CheckCircle2, XCircle, Sparkles, Lock, History
+  CheckCircle2, XCircle, Sparkles, Lock, History, Users, Package, QrCode
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import api from '../services/api';
 import {
   Card, Button, IconButton, Input, Textarea, Select, Badge,
@@ -47,14 +48,19 @@ export default function AgendaPage() {
   const toast = useToast();
   const [view, setView] = useState('dia');
   const [dataAtual, setDataAtual] = useState(new Date());
-  const [agendamentos, setAgendamentos] = useState([]);
   const [variacoes, setVariacoes] = useState([]);
   const [especialistas, setEspecialistas] = useState([]);
-  const [carregando, setCarregando] = useState(true);
   const [modal, setModal] = useState({ open: false, data: null });
   const [drawer, setDrawer] = useState({ open: false, ag: null });
   const [filtroEspecialista, setFiltroEspecialista] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('');
+  // Recarregar = mudar a versao; carregando = resultado ainda nao e da chave atual.
+  const [versao, setVersao] = useState(0);
+  const [resultado, setResultado] = useState({ chave: null, itens: [] });
+  const chave = `${view}|${dataAtual.toISOString()}|${filtroEspecialista}|${versao}`;
+  const agendamentos = resultado.itens;
+  const carregando = resultado.chave !== chave;
+  const carregar = () => setVersao((v) => v + 1);
 
   const user = useAuthStore((s) => s.user);
   // Só gestor (CLIENT/ADMINISTRADOR) filtra por especialista; o especialista
@@ -62,79 +68,58 @@ export default function AgendaPage() {
   const podeFiltrarEspecialista = ['CLIENT', 'ADMINISTRADOR', 'ADMIN'].includes(user?.perfil);
 
   useEffect(() => {
-    carregar();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, dataAtual, filtroEspecialista]);
+    let vivo = true;
+    // IMPORTANTE: calculamos a janela [inicio, fim] no fuso LOCAL do navegador
+    // e mandamos pro backend em ISO (ja em UTC). Assim o backend nao precisa
+    // saber o fuso do cliente nem manipular Date com setHours (que tem efeito
+    // dependente do TZ do processo).
+    //
+    // Bug que isso corrige: agendamento criado pras 09:00 BRT (= 12:00Z)
+    // aparecia no filtro do dia seguinte quando o servidor rodava em UTC
+    // mas o cliente em BRT, porque a janela do backend era [00:00Z, 23:59Z]
+    // do dia "string" e o setHours embaralhava ainda mais.
+    let inicio, fim;
+    if (view === 'dia') {
+      inicio = new Date(dataAtual);
+      inicio.setHours(0, 0, 0, 0);
+      fim = new Date(dataAtual);
+      fim.setHours(23, 59, 59, 999);
+    } else if (view === 'semana') {
+      // Domingo a sábado da semana que contém dataAtual.
+      inicio = new Date(dataAtual);
+      inicio.setDate(dataAtual.getDate() - dataAtual.getDay());
+      inicio.setHours(0, 0, 0, 0);
+      fim = new Date(inicio);
+      fim.setDate(inicio.getDate() + 6);
+      fim.setHours(23, 59, 59, 999);
+    } else {
+      inicio = new Date(dataAtual.getFullYear(), dataAtual.getMonth(), 1, 0, 0, 0, 0);
+      fim = new Date(dataAtual.getFullYear(), dataAtual.getMonth() + 1, 0, 23, 59, 59, 999);
+    }
+    let url = `/agenda?inicio=${encodeURIComponent(inicio.toISOString())}&fim=${encodeURIComponent(fim.toISOString())}`;
+    if (filtroEspecialista) url += `&especialistaId=${encodeURIComponent(filtroEspecialista)}`;
+    api.get(url)
+      .then((r) => { if (vivo) setResultado({ chave, itens: r.data || [] }); })
+      .catch(() => { if (vivo) setResultado({ chave, itens: [] }); });
+    return () => { vivo = false; };
+  }, [chave, view, dataAtual, filtroEspecialista]);
 
   useEffect(() => {
-    carregarVariacoes();
-    carregarEspecialistas();
+    api.get('/catalogo')
+      .then((r) => {
+        const flat = [];
+        (r.data || []).forEach((p) => {
+          (p.variacoes || []).forEach((v) => flat.push({ ...v, produto: p }));
+        });
+        setVariacoes(flat);
+      })
+      .catch(() => setVariacoes([]));
+    // Especialistas ativos — fallback do seletor na edição (quando não há serviço
+    // re-selecionado, mostra todos pra manter/trocar o profissional).
+    api.get('/especialistas')
+      .then((r) => setEspecialistas((r.data || []).filter((e) => e.ativo)))
+      .catch(() => setEspecialistas([]));
   }, []);
-
-  const carregarVariacoes = async () => {
-    try {
-      const r = await api.get('/catalogo');
-      const flat = [];
-      (r.data || []).forEach((p) => {
-        (p.variacoes || []).forEach((v) => flat.push({ ...v, produto: p }));
-      });
-      setVariacoes(flat);
-    } catch {
-      setVariacoes([]);
-    }
-  };
-
-  // Especialistas ativos — fallback do seletor na edição (quando não há serviço
-  // re-selecionado, mostra todos pra manter/trocar o profissional).
-  const carregarEspecialistas = async () => {
-    try {
-      const r = await api.get('/especialistas');
-      setEspecialistas((r.data || []).filter((e) => e.ativo));
-    } catch {
-      setEspecialistas([]);
-    }
-  };
-
-  const carregar = async () => {
-    setCarregando(true);
-    try {
-      // IMPORTANTE: calculamos a janela [inicio, fim] no fuso LOCAL do navegador
-      // e mandamos pro backend em ISO (ja em UTC). Assim o backend nao precisa
-      // saber o fuso do cliente nem manipular Date com setHours (que tem efeito
-      // dependente do TZ do processo).
-      //
-      // Bug que isso corrige: agendamento criado pras 09:00 BRT (= 12:00Z)
-      // aparecia no filtro do dia seguinte quando o servidor rodava em UTC
-      // mas o cliente em BRT, porque a janela do backend era [00:00Z, 23:59Z]
-      // do dia "string" e o setHours embaralhava ainda mais.
-      let inicio, fim;
-      if (view === 'dia') {
-        inicio = new Date(dataAtual);
-        inicio.setHours(0, 0, 0, 0);
-        fim = new Date(dataAtual);
-        fim.setHours(23, 59, 59, 999);
-      } else if (view === 'semana') {
-        // Domingo a sábado da semana que contém dataAtual.
-        inicio = new Date(dataAtual);
-        inicio.setDate(dataAtual.getDate() - dataAtual.getDay());
-        inicio.setHours(0, 0, 0, 0);
-        fim = new Date(inicio);
-        fim.setDate(inicio.getDate() + 6);
-        fim.setHours(23, 59, 59, 999);
-      } else {
-        inicio = new Date(dataAtual.getFullYear(), dataAtual.getMonth(), 1, 0, 0, 0, 0);
-        fim = new Date(dataAtual.getFullYear(), dataAtual.getMonth() + 1, 0, 23, 59, 59, 999);
-      }
-      let url = `/agenda?inicio=${encodeURIComponent(inicio.toISOString())}&fim=${encodeURIComponent(fim.toISOString())}`;
-      if (filtroEspecialista) url += `&especialistaId=${encodeURIComponent(filtroEspecialista)}`;
-      const r = await api.get(url);
-      setAgendamentos(r.data || []);
-    } catch {
-      setAgendamentos([]);
-    } finally {
-      setCarregando(false);
-    }
-  };
 
   const handleSalvar = async (dados) => {
     try {
@@ -142,8 +127,20 @@ export default function AgendaPage() {
         await api.put(`/agenda/${dados.id}`, dados);
         toast.success('Agendamento atualizado');
       } else {
-        await api.post('/agenda', dados);
-        toast.success('Agendamento criado');
+        const r = await api.post('/agenda', dados);
+        if (r.data?.sinal) {
+          toast.success(`Agendamento criado. Sinal de ${fmtBRL(r.data.sinal.valor)} enviado por Pix; vence às ${new Date(r.data.sinal.expiraEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.`);
+        } else if (r.data?.sinalMotivo) {
+          const motivos = {
+            SEM_PAGAMENTO: 'sem sinal: o recebimento por Pix não está configurado em Pagamentos',
+            MUITO_PERTO: 'sem sinal: o horário está muito perto pra esperar o Pix',
+            SEM_SINAL: 'sem sinal: o valor ficou abaixo de R$ 1,00',
+            FALHA_COBRANCA: 'sem sinal: não foi possível gerar o Pix agora',
+          };
+          toast.warning(`Agendamento criado ${motivos[r.data.sinalMotivo] || 'sem sinal'}.`);
+        } else {
+          toast.success(r.data?.pacoteClienteId ? 'Agendamento criado usando o pacote' : 'Agendamento criado');
+        }
       }
       setModal({ open: false, data: null });
       carregar();
@@ -182,10 +179,13 @@ export default function AgendaPage() {
     try {
       const r = await api.patch(`/agenda/${ag.id}/concluir`, {});
       const v = r.data?.venda;
+      const extras = [];
+      if (r.data?.pacote) extras.push(`sessão ${r.data.pacote.sessoesUsadas} de ${r.data.pacote.sessoesTotal} do pacote`);
+      if (r.data?.sinalAbatido > 0) extras.push(`sinal de ${fmtBRL(r.data.sinalAbatido)} já descontado`);
       toast.success(
-        v
+        (v
           ? `Atendimento concluido · Venda #${v.numero}${v.valor > 0 ? ` (${fmtBRL(v.valor)})` : ''}`
-          : 'Atendimento concluido'
+          : 'Atendimento concluido') + (extras.length ? ` · ${extras.join(' · ')}` : '')
       );
       setDrawer({ open: false, ag: null });
       carregar();
@@ -237,12 +237,15 @@ export default function AgendaPage() {
           <IconButton icon={ChevronLeft} variant="secondary" size="md" onClick={() => navegar(-1)} ariaLabel="Anterior" />
           <Button variant="ghost" size="md" onClick={irHoje}>Hoje</Button>
           <IconButton icon={ChevronRight} variant="secondary" size="md" onClick={() => navegar(1)} ariaLabel="Proximo" />
-          <div className="ml-2 text-base font-semibold tracking-tight text-[var(--text-main)] capitalize">
+          <div className="ml-2 text-base font-semibold tracking-tight text-[var(--text-main)] first-letter:uppercase">
             {fmtData}
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Link to="/app/agenda/encaixe" className="inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border border-[var(--border-strong)] text-sm font-semibold text-[var(--text-main)] hover:bg-[var(--bg-subtle)]">
+            <Users size={16} /> Fila de encaixe
+          </Link>
           <Tabs value={view} onValueChange={setView}>
             <TabsList variant="pills">
               <TabsTrigger value="dia" variant="pills">Dia</TabsTrigger>
@@ -355,6 +358,8 @@ function BlocoAgendamento({ ag, onSelecionar }) {
       </div>
       <div className="text-xs font-semibold truncate">{ag.nomeCliente}</div>
       {ag.servico && <div className="text-[11px] truncate opacity-80">{ag.servico}</div>}
+      {ag.pacote && <div className="text-[11px] truncate opacity-80">Pacote · {ag.pacote.sessoesUsadas} de {ag.pacote.sessoesTotal}</div>}
+      {ag.sinalStatus === 'PENDENTE' && <div className="text-[11px] truncate font-semibold">Sinal pendente</div>}
     </button>
   );
 }
@@ -583,38 +588,39 @@ function precoEfetivoVariacao(v) {
   return v.preco || 0;
 }
 
-function ModalAgendamento({ isOpen, onClose, ag, variacoes = [], especialistas = [], onSalvar }) {
+function formInicialAgendamento(ag) {
+  if (ag) {
+    const d = new Date(ag.data);
+    return {
+      ...ag,
+      data: d.toISOString().split('T')[0],
+      hora: d.toTimeString().slice(0, 5),
+      preco: ag.preco || 0,
+      variacaoId: '', // edição mantém o serviço já gravado; não re-liga variação
+      especialistaId: ag.especialistaId || '',
+      observacoes: ag.observacoes || '',
+    };
+  }
+  const agora = new Date();
+  return {
+    nomeCliente: '', telefoneCliente: '',
+    data: agora.toISOString().split('T')[0],
+    hora: '09:00',
+    duracao: 30, variacaoId: '', servico: '', preco: 0, especialistaId: '',
+    observacoes: '', status: 'PENDING', origem: 'MANUAL',
+  };
+}
+
+// Abre sempre com estado novo: o conteudo remonta a cada abertura (key).
+function ModalAgendamento(props) {
+  if (!props.isOpen) return null;
+  return <ModalAgendamentoConteudo key={props.ag?.id || 'novo'} {...props} />;
+}
+
+function ModalAgendamentoConteudo({ isOpen, onClose, ag, variacoes = [], especialistas = [], onSalvar }) {
   // Agenda é orientada ao SERVIÇO: escolhe pela busca e tudo (valor, duração,
   // especialista) vem do cadastro do serviço. Sem campos livres.
-  const [form, setForm] = useState({
-    nomeCliente: '', telefoneCliente: '', data: '', hora: '', duracao: 30,
-    variacaoId: '', servico: '', preco: 0, especialistaId: '',
-    observacoes: '', status: 'PENDING', origem: 'MANUAL',
-  });
-
-  useEffect(() => {
-    if (ag) {
-      const d = new Date(ag.data);
-      setForm({
-        ...ag,
-        data: d.toISOString().split('T')[0],
-        hora: d.toTimeString().slice(0, 5),
-        preco: ag.preco || 0,
-        variacaoId: '', // edição mantém o serviço já gravado; não re-liga variação
-        especialistaId: ag.especialistaId || '',
-        observacoes: ag.observacoes || '',
-      });
-    } else {
-      const agora = new Date();
-      setForm({
-        nomeCliente: '', telefoneCliente: '',
-        data: agora.toISOString().split('T')[0],
-        hora: '09:00',
-        duracao: 30, variacaoId: '', servico: '', preco: 0, especialistaId: '',
-        observacoes: '', status: 'PENDING', origem: 'MANUAL',
-      });
-    }
-  }, [ag, isOpen]);
+  const [form, setForm] = useState(() => formInicialAgendamento(ag));
 
   // Só serviços entram na agenda (produtos são vendidos, não agendados).
   const servicosVariacoes = useMemo(
@@ -623,6 +629,28 @@ function ModalAgendamento({ isOpen, onClose, ag, variacoes = [], especialistas =
   );
 
   const variacaoSel = variacoes.find((v) => v.id === form.variacaoId);
+
+  // Fase 2: pacote ativo da cliente e sinal do servico (so no agendamento novo).
+  const [pre, setPre] = useState(null);
+  const [usarPacote, setUsarPacote] = useState(true);
+  const [cobrarSinal, setCobrarSinal] = useState(true);
+  const telDigitos = (form.telefoneCliente || '').replace(/\D/g, '');
+  const produtoIdSel = variacaoSel?.produto?.id || '';
+  useEffect(() => {
+    if (!isOpen || ag) return undefined;
+    if (!produtoIdSel && telDigitos.length < 10) return undefined;
+    let cancelado = false;
+    const t = setTimeout(() => {
+      api.get('/agenda/pre-agendamento', { params: { telefone: telDigitos.length >= 10 ? telDigitos : undefined, produtoId: produtoIdSel || undefined, preco: form.preco || 0 } })
+        .then((r) => { if (!cancelado) setPre(r.data); })
+        .catch(() => { if (!cancelado) setPre(null); });
+    }, 350);
+    return () => { cancelado = true; clearTimeout(t); };
+  }, [isOpen, ag, telDigitos, produtoIdSel, form.preco]);
+  const pacoteDoServico = (pre?.pacotes || []).find((p) => p.produtoId === produtoIdSel && p.livres > 0) || null;
+  const outrosPacotes = (pre?.pacotes || []).filter((p) => p !== pacoteDoServico);
+  const vaiUsarPacote = !!pacoteDoServico && usarPacote;
+  const sinalInfo = pre?.sinal && produtoIdSel && pre.sinal.valor > 0 ? pre.sinal : null;
 
   // Especialistas do seletor: os do serviço escolhido; sem serviço re-selecionado
   // (edição), cai pra lista geral pra manter/trocar o profissional.
@@ -667,6 +695,11 @@ function ModalAgendamento({ isOpen, onClose, ag, variacoes = [], especialistas =
       duracao: parseInt(form.duracao) || 30,
       preco: parseFloat(form.preco) || 0,
       especialistaId: form.especialistaId || null,
+      ...(ag ? {} : {
+        produtoId: produtoIdSel || null,
+        pacoteClienteId: vaiUsarPacote ? pacoteDoServico.id : null,
+        cobrarSinal: !vaiUsarPacote && !!sinalInfo?.pagamentoConfigurado && cobrarSinal,
+      }),
     });
   };
 
@@ -754,6 +787,44 @@ function ModalAgendamento({ isOpen, onClose, ag, variacoes = [], especialistas =
           </div>
         </div>
 
+        {/* Fase 2: pacote da cliente e sinal por Pix (so no agendamento novo). */}
+        {!ag && (pacoteDoServico || outrosPacotes.length > 0 || sinalInfo) && (
+          <div className="border border-[var(--border-main)] rounded-xl p-5 space-y-4">
+            <div className="text-base font-semibold text-[var(--text-main)]">Pacote e sinal</div>
+            {pacoteDoServico && (
+              <label className="flex items-start gap-3 cursor-pointer min-h-[44px]">
+                <input type="checkbox" className="mt-1 w-5 h-5" checked={usarPacote} onChange={(e) => setUsarPacote(e.target.checked)} />
+                <span className="text-sm">
+                  <span className="flex items-center gap-1.5 font-semibold text-[var(--text-main)]"><Package size={14} /> Usar o pacote {pacoteDoServico.nome}</span>
+                  <span className="block text-[var(--text-secondary)]">
+                    {pacoteDoServico.sessoesUsadas} de {pacoteDoServico.sessoesTotal} sessões usadas{pacoteDoServico.reservados ? `, ${pacoteDoServico.reservados} já marcada(s)` : ''}. Ao concluir, desconta 1 sessão e não cobra.
+                  </span>
+                </span>
+              </label>
+            )}
+            {outrosPacotes.length > 0 && (
+              <p className="text-xs text-[var(--text-muted)]">
+                Tem pacote ativo: {outrosPacotes.map((p) => `${p.nome} (${p.saldo} de ${p.sessoesTotal} restantes)`).join('; ')}.
+              </p>
+            )}
+            {sinalInfo && !vaiUsarPacote && (sinalInfo.pagamentoConfigurado ? (
+              <label className="flex items-start gap-3 cursor-pointer min-h-[44px]">
+                <input type="checkbox" className="mt-1 w-5 h-5" checked={cobrarSinal} onChange={(e) => setCobrarSinal(e.target.checked)} />
+                <span className="text-sm">
+                  <span className="flex items-center gap-1.5 font-semibold text-[var(--text-main)]"><QrCode size={14} /> Cobrar sinal por Pix</span>
+                  <span className="block text-[var(--text-secondary)]">
+                    {sinalInfo.pct}% do valor ({fmtBRL(sinalInfo.valor)}). A cliente recebe o Pix no WhatsApp; o horário só fica confirmado depois do pagamento e volta pra agenda se não pagar em {sinalInfo.prazoHoras} h. O sinal desconta do total ao concluir.
+                  </span>
+                </span>
+              </label>
+            ) : (
+              <p className="text-sm text-[var(--text-secondary)]">
+                Este serviço pede sinal de {sinalInfo.pct}% ({fmtBRL(sinalInfo.valor)}), mas o recebimento por Pix não está configurado. O horário será marcado sem sinal. Configure em <Link to="/app/pagamentos" className="font-semibold underline">Pagamentos</Link>.
+              </p>
+            ))}
+          </div>
+        )}
+
         {/* Status (a duração vem do serviço e não é editada aqui). */}
         <Select
           size="lg"
@@ -776,21 +847,19 @@ function ModalAgendamento({ isOpen, onClose, ag, variacoes = [], especialistas =
 }
 
 function DrawerAg({ isOpen, onClose, ag, onEditar, onExcluir, onStatus, onConcluir }) {
-  const [historico, setHistorico] = useState([]);
-  const [carregandoHist, setCarregandoHist] = useState(false);
-
-  // Carrega historico ao abrir o drawer; reset quando muda de agendamento.
+  // Historico do agendamento aberto; enquanto o carregado for de outro, mostra carregando.
+  const [hist, setHist] = useState({ id: null, itens: [] });
+  const agId = isOpen ? ag?.id : null;
   useEffect(() => {
-    if (!isOpen || !ag?.id) {
-      setHistorico([]);
-      return;
-    }
-    setCarregandoHist(true);
-    api.get(`/agenda/${ag.id}/historico`)
-      .then((r) => setHistorico(r.data || []))
-      .catch(() => setHistorico([]))
-      .finally(() => setCarregandoHist(false));
-  }, [isOpen, ag?.id]);
+    if (!agId) return undefined;
+    let vivo = true;
+    api.get(`/agenda/${agId}/historico`)
+      .then((r) => { if (vivo) setHist({ id: agId, itens: r.data || [] }); })
+      .catch(() => { if (vivo) setHist({ id: agId, itens: [] }); });
+    return () => { vivo = false; };
+  }, [agId]);
+  const historico = hist.id === agId ? hist.itens : [];
+  const carregandoHist = !!agId && hist.id !== agId;
 
   if (!ag) return null;
   const status = STATUS_LABELS[ag.status] || { label: ag.status, variant: 'neutral' };
@@ -848,6 +917,26 @@ function DrawerAg({ isOpen, onClose, ag, onEditar, onExcluir, onStatus, onConclu
           )}
         </div>
 
+        {(ag.sinalStatus || ag.pacote) && (
+          <div className="space-y-2">
+            {ag.sinalStatus && (
+              <div className="flex items-center gap-2 text-sm">
+                <QrCode size={14} className="text-[var(--text-muted)]" />
+                <span className="text-[var(--text-secondary)]">Sinal de {fmtBRL(ag.sinalValor)}</span>
+                <Badge variant={{ PAGO: 'success', PENDENTE: 'warning' }[ag.sinalStatus] || 'neutral'} size="sm">
+                  {{ PAGO: 'Pago', PENDENTE: `Pendente até ${ag.sinalExpiraEm ? new Date(ag.sinalExpiraEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'}`, EXPIRADO: 'Não pago no prazo', CANCELADO: 'Cancelado', DEVOLVIDO: 'Devolvido' }[ag.sinalStatus] || ag.sinalStatus}
+                </Badge>
+              </div>
+            )}
+            {ag.pacote && (
+              <div className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+                <Package size={14} className="text-[var(--text-muted)]" />
+                Pacote {ag.pacote.nome}: {ag.pacote.sessoesUsadas} de {ag.pacote.sessoesTotal} sessões usadas
+              </div>
+            )}
+          </div>
+        )}
+
         {ag.telefoneCliente && (
           <a href={`tel:${ag.telefoneCliente}`} className="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--border-main)] hover:bg-[var(--bg-subtle)] text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-main)] transition-colors">
             <Phone size={14} /> {ag.telefoneCliente}
@@ -869,7 +958,11 @@ function DrawerAg({ isOpen, onClose, ag, onEditar, onExcluir, onStatus, onConclu
             <div className="text-xs font-semibold tracking-wide text-[var(--text-secondary)] mb-1">Desfecho do atendimento</div>
             <p className="text-[11px] text-[var(--text-muted)] leading-relaxed mb-3">
               Concluir marca como feito e lanca a venda do servico
-              {ag.preco > 0 ? ` (${fmtBRL(ag.preco)})` : ''} no caixa. "Nao compareceu" cancela sem gerar venda.
+              {ag.pacote
+                ? ' (desconta 1 sessao do pacote, sem cobrar)'
+                : ag.sinalStatus === 'PAGO'
+                  ? ` (${fmtBRL(Math.max(0, (ag.preco || 0) - (ag.sinalValor || 0)))}, ja descontado o sinal)`
+                  : ag.preco > 0 ? ` (${fmtBRL(ag.preco)})` : ''} no caixa. "Nao compareceu" cancela sem gerar venda.
             </p>
             <div className="grid grid-cols-1 gap-2">
               <Button variant="primary" size="sm" icon={CheckCircle2} onClick={onConcluir}>
@@ -958,7 +1051,7 @@ function ItemHistorico({ item }) {
           {data.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
         </span>
       </div>
-      {item.alteracoes && <DiffAlteracoes alteracoes={item.alteracoes} acao={item.acao} />}
+      {item.alteracoes && <DiffAlteracoes alteracoes={item.alteracoes} />}
     </div>
   );
 }
@@ -984,7 +1077,7 @@ function fmtValor(campo, v) {
   return String(v);
 }
 
-function DiffAlteracoes({ alteracoes, acao }) {
+function DiffAlteracoes({ alteracoes }) {
   // Snapshot (CRIADO/EXCLUIDO): so mostra os valores, sem de→para
   if (alteracoes.snapshot) {
     const snap = alteracoes.snapshot;

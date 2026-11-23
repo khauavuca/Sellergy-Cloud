@@ -8,6 +8,14 @@
     <meta name="description" content="Agenda com lembrete no WhatsApp, PDV com Pix, caixa automático, estoque, catálogo online e nota fiscal para clínicas de estética e lojas pequenas. Teste grátis por 14 dias, sem cartão de crédito." />
     <meta name="theme-color" content="#136F4D" />
 
+    <!-- PWA: instalar no celular (abre em /app/hoje). Service worker so em producao. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icones/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Sellergy" />
+    <script src="/registrar-sw.js" data-modo="%MODE%" defer></script>
+
     <!-- Open Graph / redes sociais -->
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="pt_BR" />

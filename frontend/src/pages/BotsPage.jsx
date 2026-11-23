@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Plus, Bot, Edit2, Trash2, MoreHorizontal, Wifi, WifiOff, AlertCircle,
@@ -42,20 +42,23 @@ export default function BotsPage() {
   const [modal, setModal] = useState({ open: false, data: null });
   const [drawer, setDrawer] = useState({ open: false, bot: null });
 
-  useEffect(() => { carregar(); }, []);
+  // Busca sem setState sincrono (o estado ja nasce carregando); o "carregar"
+  // das acoes liga o carregando antes de buscar de novo.
+  const buscarDados = useCallback(() => Promise.all([
+    api.get('/bots'),
+    api.get('/clientes'),
+  ]).then(([b, c]) => {
+    setBots(b.data || []);
+    setClientes(c.data || []);
+  }).finally(() => {
+    setCarregando(false);
+  }), []);
 
-  const carregar = async () => {
+  useEffect(() => { buscarDados(); }, [buscarDados]);
+
+  const carregar = () => {
     setCarregando(true);
-    try {
-      const [b, c] = await Promise.all([
-        api.get('/bots'),
-        api.get('/clientes'),
-      ]);
-      setBots(b.data || []);
-      setClientes(c.data || []);
-    } finally {
-      setCarregando(false);
-    }
+    return buscarDados();
   };
 
   const filtrados = useMemo(() => {
@@ -229,6 +232,7 @@ export default function BotsPage() {
       )}
 
       <ModalBot
+        key={modal.open ? `bot-${modal.data?.id ?? 'novo'}` : 'bot-fechado'}
         isOpen={modal.open}
         onClose={() => setModal({ open: false, data: null })}
         bot={modal.data}
@@ -265,26 +269,20 @@ const FORM_VAZIO = {
 
 function ModalBot({ isOpen, onClose, bot, clientes, onSalvar }) {
   const toast = useToast();
-  const [form, setForm] = useState(FORM_VAZIO);
+  // O pai troca a `key` a cada abertura, entao o form nasce do bot atual.
+  const [form, setForm] = useState(() => (bot
+    ? {
+      ...bot,
+      telefone: bot.telefone || '',
+      iaAtiva: bot.iaAtiva ?? false,
+      iaModelo: bot.iaModelo || 'deepseek-v4-flash',
+      iaTokensIncluidosMes: bot.iaTokensIncluidosMes ?? 100000,
+      iaPrecoPorMilTokensExcedente: centavosParaReais(bot.iaPrecoPorMilTokensExcedenteCentavos ?? 8),
+    }
+    : FORM_VAZIO));
   const [chaveIA, setChaveIA] = useState(''); // valor novo digitado (vazio = manter a atual)
   const [chaveIAConfigurada, setChaveIAConfigurada] = useState(null); // null = carregando
   const [salvandoChave, setSalvandoChave] = useState(false);
-
-  useEffect(() => {
-    if (bot) {
-      setForm({
-        ...bot,
-        telefone: bot.telefone || '',
-        iaAtiva: bot.iaAtiva ?? false,
-        iaModelo: bot.iaModelo || 'deepseek-v4-flash',
-        iaTokensIncluidosMes: bot.iaTokensIncluidosMes ?? 100000,
-        iaPrecoPorMilTokensExcedente: centavosParaReais(bot.iaPrecoPorMilTokensExcedenteCentavos ?? 8),
-      });
-    } else {
-      setForm(FORM_VAZIO);
-    }
-    setChaveIA('');
-  }, [bot, isOpen]);
 
   // A chave da DeepSeek e da PLATAFORMA (uma so, nao por bot) — mas o cadastro
   // fica aqui mesmo, no modal do bot, pra nao mandar o admin pra outro lugar.

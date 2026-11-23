@@ -57,7 +57,7 @@ export default function ConfiguracoesPage() {
         <TabsContent value="aparencia" className="mt-5 space-y-5">
           <BlocoTema theme={theme} setTheme={setTheme} />
           {user?.perfil === 'CLIENT' ? (
-            <BlocoBranding user={user} refreshUser={refreshUser} toast={toast} />
+            <BlocoBranding key={JSON.stringify(user?.branding || null)} user={user} refreshUser={refreshUser} toast={toast} />
           ) : (
             <Card padding="lg">
               <div className="flex items-start gap-3">
@@ -73,7 +73,8 @@ export default function ConfiguracoesPage() {
         <TabsContent value="operacao" className="mt-5 space-y-5">
           {podeEditarOperacao ? (
             <>
-              <BlocoHorarioFuncionamento user={user} refreshUser={refreshUser} toast={toast} />
+              <BlocoHorarioFuncionamento key={JSON.stringify(user?.horarioFuncionamento || null)} user={user} refreshUser={refreshUser} toast={toast} />
+              {user?.modulosLiberados?.AGENDA && <BlocoAgendaSinal toast={toast} />}
               <BlocoDevolucao toast={toast} />
             </>
           ) : (
@@ -168,11 +169,7 @@ function BlocoBranding({ user, refreshUser, toast }) {
   const [nome, setNome] = useState(user?.branding?.nome || '');
   const [salvando, setSalvando] = useState(false);
 
-  useEffect(() => {
-    setLogo(user?.branding?.logo || '');
-    setNome(user?.branding?.nome || '');
-  }, [user]);
-
+  // Recarrega do usuario pela key no pai (sem efeito sincronizando estado).
   const handleUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -303,13 +300,7 @@ function BlocoHorarioFuncionamento({ user, refreshUser, toast }) {
   );
   const [salvando, setSalvando] = useState(false);
 
-  useEffect(() => {
-    const h = user?.horarioFuncionamento || {};
-    setAbertura(h.abertura || '08:00');
-    setFechamento(h.fechamento || '18:00');
-    setDias(Array.isArray(h.dias) ? h.dias : [1, 2, 3, 4, 5, 6]);
-  }, [user]);
-
+  // Recarrega do usuario pela key no pai (sem efeito sincronizando estado).
   const toggleDia = (valor) => {
     setDias((atual) =>
       atual.includes(valor) ? atual.filter((d) => d !== valor) : [...atual, valor].sort()
@@ -713,6 +704,89 @@ function BlocoDevolucao({ toast }) {
           Salvar
         </Button>
       </div>
+    </Card>
+  );
+}
+
+// Agenda (fase 2): sinal por Pix padrao e fila de encaixe automatica.
+function BlocoAgendaSinal({ toast }) {
+  const navigate = useNavigate();
+  const [config, setConfig] = useState(null);
+  const [pct, setPct] = useState('');
+  const [erro, setErro] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    api.get('/agenda/config')
+      .then((r) => { setConfig(r.data); setPct(String(r.data.sinalPadraoPct || 0)); })
+      .catch((e) => setErro(e.response?.data?.erro || 'Não foi possível carregar as configurações da agenda.'));
+  }, []);
+
+  const salvar = async (dados) => {
+    setSalvando(true);
+    try {
+      const r = await api.put('/agenda/config', dados);
+      setConfig((c) => ({ ...c, ...r.data }));
+      setPct(String(r.data.sinalPadraoPct || 0));
+      toast.success('Configuração da agenda salva.');
+    } catch (e) {
+      toast.error(e.response?.data?.erro || 'Não foi possível salvar.');
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <Card padding="lg">
+      <CardHeader>
+        <div>
+          <CardTitle>Agenda: sinal e encaixe</CardTitle>
+          <CardDescription>Sinal por Pix reduz falta. A fila de encaixe preenche horário que vagou.</CardDescription>
+        </div>
+      </CardHeader>
+      {erro ? (
+        <p role="alert" className="text-sm text-[var(--danger-text)]">{erro}</p>
+      ) : !config ? (
+        <p className="text-sm text-[var(--text-muted)]">Carregando…</p>
+      ) : (
+        <div className="space-y-5">
+          {!config.pagamentoConfigurado && (
+            <div className="flex items-start gap-3 p-3 rounded-xl bg-[var(--warning-soft)] text-[var(--warning-text)]">
+              <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
+              <div className="text-sm">
+                O recebimento por Pix ainda não está configurado, então nenhum sinal é cobrado (os horários são marcados normalmente).{' '}
+                <button type="button" className="font-semibold underline min-h-[44px]" onClick={() => navigate('/app/pagamentos')}>Configurar em Pagamentos</button>
+              </div>
+            </div>
+          )}
+          <form
+            className="flex flex-wrap items-end gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const n = Number(pct);
+              if (!Number.isInteger(n) || n < 0 || n > 100) { toast.error('Use um número inteiro de 0 a 100.'); return; }
+              salvar({ sinalPadraoPct: n });
+            }}
+          >
+            <div className="w-48">
+              <Input label="Sinal padrão (% do preço)" type="number" min={0} max={100} step={1} value={pct} onChange={(e) => setPct(e.target.value)} hint="0 = não cobra" />
+            </div>
+            <Button type="submit" variant="primary" className="min-h-[44px]" loading={salvando}>Salvar sinal</Button>
+          </form>
+          <p className="text-xs text-[var(--text-muted)]">
+            Vale pra todos os serviços, menos os que têm sinal próprio (Catálogo › editar serviço). A cliente tem {config.prazoSinalHoras} h pra pagar (nunca depois do horário); sem pagamento, o horário volta pra agenda. O sinal desconta do total no atendimento.
+          </p>
+          <div className="flex items-start gap-3 pt-2 border-t border-[var(--border-main)]">
+            <div className="flex-1 pt-3">
+              <div className="text-sm font-semibold text-[var(--text-main)]">Oferecer horário vago pra fila sozinho</div>
+              <p className="text-xs text-[var(--text-muted)] mt-1">Quando alguém cancela ou remarca com mais de 2 h de antecedência, a oferta vai pras 3 primeiras da fila sem perguntar.</p>
+            </div>
+            <div className="pt-3">
+              <Switch checked={!!config.encaixeAutomatico} disabled={salvando} onChange={(v) => salvar({ encaixeAutomatico: v })} ariaLabel="Oferecer horário vago pra fila sozinho" />
+            </div>
+          </div>
+        </div>
+      )}
     </Card>
   );
 }

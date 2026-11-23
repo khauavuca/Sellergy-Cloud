@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   DollarSign, TrendingUp, TrendingDown, AlertCircle, Plus, MoreHorizontal,
   Edit2, Trash2, CheckCircle2, XCircle, Tag, Filter, ArrowDownToLine, ArrowUpFromLine,
@@ -86,10 +86,50 @@ export default function FinanceiroPage() {
   // Modal "Pagar conta": valor editavel + opcao de tirar do caixa.
   const [modalPagarConta, setModalPagarConta] = useState({ open: false, conta: null });
 
-  useEffect(() => {
-    carregar();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Busca sem setState sincrono (o estado ja nasce carregando); o "carregar"
+  // das acoes liga o carregando antes de buscar de novo.
+  const buscarDados = useCallback(() => {
+    const params = new URLSearchParams();
+    if (filtroTipo) params.set('tipo', filtroTipo);
+    if (filtroStatus) params.set('status', filtroStatus);
+    if (busca) params.set('buscar', busca);
+    params.set('limite', '100');
+
+    return Promise.all([
+      api.get('/financeiro/resumo').catch(() => ({ data: null })),
+      api.get(`/financeiro/lancamentos?${params}`).catch(() => ({ data: { dados: [] } })),
+      api.get('/financeiro/categorias').catch(() => ({ data: [] })),
+      api.get('/financeiro/caixa/atual').catch(() => ({ data: { sessao: null } })),
+      contaPagarService.listar().catch(() => []),
+    ]).then(([r, l, c, caixaResp, cp]) => {
+      setResumo(r.data);
+      setLancamentos(l.data?.dados || l.data || []);
+      setCategorias(c.data || []);
+      setSessaoCaixa(caixaResp.data?.sessao ?? null);
+      setContasPagar(cp || []);
+    }).finally(() => {
+      setCarregando(false);
+    });
   }, [filtroTipo, filtroStatus, busca]);
+
+  const carregar = () => {
+    setCarregando(true);
+    return buscarDados();
+  };
+
+  // Filtro mudou: liga o carregando e limpa a selecao ja no render (guardando
+  // a chave dos filtros) em vez de setState sincrono em efeito.
+  const chaveFiltros = `${filtroTipo}|${filtroStatus}|${busca}`;
+  const [chaveFiltrosAnterior, setChaveFiltrosAnterior] = useState(chaveFiltros);
+  if (chaveFiltrosAnterior !== chaveFiltros) {
+    setChaveFiltrosAnterior(chaveFiltros);
+    setCarregando(true);
+    setSelecionados(new Set());
+  }
+
+  useEffect(() => {
+    buscarDados();
+  }, [buscarDados]);
 
   // Carrega catalogo so 1x (independente dos filtros de lancamento) e achata
   // produto+variacoes em uma lista plana pro Combobox do modal.
@@ -102,32 +142,6 @@ export default function FinanceiroPage() {
       setCatalogo(flat);
     }).catch(() => setCatalogo([]));
   }, []);
-
-  const carregar = async () => {
-    setCarregando(true);
-    try {
-      const params = new URLSearchParams();
-      if (filtroTipo) params.set('tipo', filtroTipo);
-      if (filtroStatus) params.set('status', filtroStatus);
-      if (busca) params.set('buscar', busca);
-      params.set('limite', '100');
-
-      const [r, l, c, caixaResp, cp] = await Promise.all([
-        api.get('/financeiro/resumo').catch(() => ({ data: null })),
-        api.get(`/financeiro/lancamentos?${params}`).catch(() => ({ data: { dados: [] } })),
-        api.get('/financeiro/categorias').catch(() => ({ data: [] })),
-        api.get('/financeiro/caixa/atual').catch(() => ({ data: { sessao: null } })),
-        contaPagarService.listar().catch(() => []),
-      ]);
-      setResumo(r.data);
-      setLancamentos(l.data?.dados || l.data || []);
-      setCategorias(c.data || []);
-      setSessaoCaixa(caixaResp.data?.sessao ?? null);
-      setContasPagar(cp || []);
-    } finally {
-      setCarregando(false);
-    }
-  };
 
   const handleSalvarLanc = async (dados) => {
     try {
@@ -195,9 +209,6 @@ export default function FinanceiroPage() {
     toast.success('Abrindo WhatsApp...');
     setModalCobranca({ open: false, dados: null });
   };
-
-  // Limpa selecao sempre que muda a lista (filtros ou recarga).
-  useEffect(() => { setSelecionados(new Set()); }, [filtroTipo, filtroStatus, busca]);
 
   // Carrega historico de sessoes fechadas quando entra na aba 'caixa'.
   useEffect(() => {
@@ -819,6 +830,7 @@ export default function FinanceiroPage() {
       </Tabs>
 
       <ModalLancamento
+        key={modalLanc.open ? `lanc-${modalLanc.data?.id ?? 'novo'}` : 'lanc-fechado'}
         isOpen={modalLanc.open}
         onClose={() => setModalLanc({ open: false, data: null })}
         lanc={modalLanc.data}
@@ -828,6 +840,7 @@ export default function FinanceiroPage() {
       />
 
       <ModalCategoria
+        key={modalCat.open ? `cat-${modalCat.data?.id ?? 'nova'}` : 'cat-fechada'}
         isOpen={modalCat.open}
         onClose={() => setModalCat({ open: false, data: null })}
         cat={modalCat.data}
@@ -835,6 +848,7 @@ export default function FinanceiroPage() {
       />
 
       <DrawerLancamento
+        key={drawer.open ? `drawer-${drawer.lanc?.id ?? ''}` : 'drawer-fechado'}
         isOpen={drawer.open}
         onClose={() => setDrawer({ open: false, lanc: null })}
         lanc={drawer.lanc}
@@ -852,17 +866,20 @@ export default function FinanceiroPage() {
 
       {/* Modais do caixa */}
       <ModalAbrirCaixa
+        key={modalAbrirCaixa ? 'abrir-caixa-aberto' : 'abrir-caixa-fechado'}
         isOpen={modalAbrirCaixa}
         onClose={() => setModalAbrirCaixa(false)}
         onConfirmar={handleAbrirCaixa}
       />
       <ModalFecharCaixa
+        key={modalFecharCaixa ? `fechar-caixa-${sessaoCaixa?.saldoEsperado ?? ''}` : 'fechar-caixa-fechado'}
         isOpen={modalFecharCaixa}
         onClose={() => setModalFecharCaixa(false)}
         sessao={sessaoCaixa}
         onConfirmar={handleFecharCaixa}
       />
       <ModalMovimentacaoCaixa
+        key={modalMovCaixa.open ? `mov-caixa-${modalMovCaixa.tipo}` : 'mov-caixa-fechado'}
         isOpen={modalMovCaixa.open}
         tipo={modalMovCaixa.tipo}
         onClose={() => setModalMovCaixa({ open: false, tipo: null })}
@@ -870,6 +887,7 @@ export default function FinanceiroPage() {
       />
 
       <ModalContaPagar
+        key={modalContaPagar.open ? `conta-${modalContaPagar.data?.id ?? 'nova'}` : 'conta-fechada'}
         isOpen={modalContaPagar.open}
         onClose={() => setModalContaPagar({ open: false, data: null })}
         conta={modalContaPagar.data}
@@ -878,6 +896,7 @@ export default function FinanceiroPage() {
       />
 
       <ModalPagarConta
+        key={modalPagarConta.open ? `pagar-${modalPagarConta.conta?.id ?? 'escolher'}` : 'pagar-fechado'}
         isOpen={modalPagarConta.open}
         onClose={() => setModalPagarConta({ open: false, conta: null })}
         contaSelecionada={modalPagarConta.conta}
@@ -887,6 +906,7 @@ export default function FinanceiroPage() {
       />
 
       <ModalCancelar
+        key={modalCancelar.open ? `cancelar-${modalCancelar.lanc?.id ?? ''}` : 'cancelar-fechado'}
         isOpen={modalCancelar.open}
         onClose={() => setModalCancelar({ open: false, lanc: null })}
         lanc={modalCancelar.lanc}
@@ -894,6 +914,7 @@ export default function FinanceiroPage() {
       />
 
       <ModalCobranca
+        key={modalCobranca.open ? `cobranca-${modalCobranca.dados?.lanc?.id ?? ''}` : 'cobranca-fechada'}
         isOpen={modalCobranca.open}
         onClose={() => setModalCobranca({ open: false, dados: null })}
         dados={modalCobranca.dados}
@@ -925,17 +946,10 @@ function precoEfetivoVar(v) {
 }
 
 function ModalLancamento({ isOpen, onClose, lanc, categorias, catalogo = [], onSalvar }) {
-  const [form, setForm] = useState({
-    descricao: '', valor: 0, tipo: 'RECEITA', dataVencimento: '',
-    dataPagamento: '', categoriaId: '', status: 'PENDENTE', parcelas: 1,
-    produto: '', metodoPagamento: '',
-    // variacaoId nao vai pro backend — guardamos so pra o Combobox manter
-    // selecao visual e pra auto-preenchimento de descricao/valor.
-    variacaoId: '',
-  });
-
-  useEffect(() => {
-    if (lanc) setForm({
+  // O pai troca a `key` a cada abertura, entao o form nasce do lancamento
+  // atual (em vez de um efeito que resetava ao abrir).
+  const [form, setForm] = useState(() => (lanc
+    ? {
       ...lanc,
       dataVencimento: lanc.dataVencimento?.split('T')[0] || '',
       dataPagamento: lanc.dataPagamento?.split('T')[0] || '',
@@ -944,17 +958,16 @@ function ModalLancamento({ isOpen, onClose, lanc, categorias, catalogo = [], onS
       metodoPagamento: lanc.metodoPagamento || '',
       // Edicao nao vincula variacao retroativamente — produto fica como texto.
       variacaoId: '',
-    });
-    else {
-      setForm({
-        descricao: '', valor: 0, tipo: 'RECEITA',
-        dataVencimento: new Date().toISOString().split('T')[0],
-        dataPagamento: '', categoriaId: '', status: 'PENDENTE', parcelas: 1,
-        produto: '', metodoPagamento: '',
-        variacaoId: '',
-      });
     }
-  }, [lanc, isOpen]);
+    : {
+      descricao: '', valor: 0, tipo: 'RECEITA',
+      dataVencimento: new Date().toISOString().split('T')[0],
+      dataPagamento: '', categoriaId: '', status: 'PENDENTE', parcelas: 1,
+      produto: '', metodoPagamento: '',
+      // variacaoId nao vai pro backend — guardamos so pra o Combobox manter
+      // selecao visual e pra auto-preenchimento de descricao/valor.
+      variacaoId: '',
+    }));
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -1205,12 +1218,10 @@ const USOS_CATEGORIA = [
 ];
 
 function ModalCategoria({ isOpen, onClose, cat, onSalvar }) {
-  const [form, setForm] = useState({ nome: '', tipo: 'RECEITA', subTipo: '', uso: '' });
-
-  useEffect(() => {
-    if (cat) setForm({ nome: cat.nome, tipo: cat.tipo, subTipo: cat.subTipo || '', uso: cat.uso || '' });
-    else setForm({ nome: '', tipo: 'RECEITA', subTipo: '', uso: '' });
-  }, [cat, isOpen]);
+  // O pai troca a `key` a cada abertura, entao o form nasce da categoria atual.
+  const [form, setForm] = useState(() => (cat
+    ? { nome: cat.nome, tipo: cat.tipo, subTipo: cat.subTipo || '', uso: cat.uso || '' }
+    : { nome: '', tipo: 'RECEITA', subTipo: '', uso: '' }));
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -1274,16 +1285,14 @@ function ModalCategoria({ isOpen, onClose, cat, onSalvar }) {
 }
 
 function DrawerLancamento({ isOpen, onClose, lanc, onEditar, onExcluir, onStatus, onCobrar, onAdiar, onCancelarComMotivo, onExcluirGrupo }) {
+  // O pai troca a `key` a cada abertura/lancamento, entao o historico nasce
+  // vazio e ja carregando quando ha o que buscar.
   const [historico, setHistorico] = useState([]);
-  const [carregandoHist, setCarregandoHist] = useState(false);
+  const [carregandoHist, setCarregandoHist] = useState(() => !!(isOpen && lanc?.id));
 
   // Carrega historico de mudancas do lancamento ao abrir.
   useEffect(() => {
-    if (!isOpen || !lanc?.id) {
-      setHistorico([]);
-      return;
-    }
-    setCarregandoHist(true);
+    if (!isOpen || !lanc?.id) return;
     api.get(`/financeiro/lancamentos/${lanc.id}/historico`)
       .then((r) => setHistorico(r.data?.itens || []))
       .catch(() => setHistorico([]))
@@ -1712,15 +1721,9 @@ function CaixaTela({ sessao, sessoesFechadas, onAbrir }) {
 // Inicia uma sessao MANUAL. Fundo de caixa = dinheiro inicial pro troco.
 // Backend fecha automaticamente qualquer sessao AUTO_BOT que esteja aberta.
 function ModalAbrirCaixa({ isOpen, onClose, onConfirmar }) {
+  // O pai troca a `key` a cada abertura, entao os campos ja nascem limpos.
   const [fundoCaixa, setFundoCaixa] = useState('');
   const [observacao, setObservacao] = useState('');
-
-  useEffect(() => {
-    if (isOpen) {
-      setFundoCaixa('');
-      setObservacao('');
-    }
-  }, [isOpen]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -1777,16 +1780,13 @@ function ModalAbrirCaixa({ isOpen, onClose, onConfirmar }) {
 // Pede o saldo real contado fisicamente. Sistema calcula diferenca vs
 // esperado. Diferenca != 0 nao impede fechar — fica registrada.
 function ModalFecharCaixa({ isOpen, onClose, sessao, onConfirmar }) {
-  const [saldoReal, setSaldoReal] = useState('');
+  // O pai troca a `key` a cada abertura (e se o saldo esperado mudar), entao
+  // os campos nascem prontos. Pre-preenche com esperado pra facilitar quando
+  // bate certinho.
+  const [saldoReal, setSaldoReal] = useState(() => (
+    isOpen && sessao?.saldoEsperado != null ? String(sessao.saldoEsperado) : ''
+  ));
   const [observacao, setObservacao] = useState('');
-
-  useEffect(() => {
-    if (isOpen) {
-      // Pre-preenche com esperado pra facilitar quando bate certinho
-      setSaldoReal(sessao?.saldoEsperado != null ? String(sessao.saldoEsperado) : '');
-      setObservacao('');
-    }
-  }, [isOpen, sessao?.saldoEsperado]);
 
   if (!sessao) return null;
 
@@ -1948,29 +1948,16 @@ function ListaContasPagar({ contas, carregando, podeCriar = true, podeEditar = t
 // =====================================================================
 function ModalContaPagar({ isOpen, onClose, conta, categorias, onSalvar }) {
   const ehEdicao = !!conta?.id;
-  const [form, setForm] = useState({
-    nome: '',
-    valorPadrao: '',
-    categoriaId: '',
-    periodicidade: 'MENSAL',
-    diaVencimento: '',
-    mesVencimento: '',
-    observacoes: '',
-  });
-
-  useEffect(() => {
-    if (isOpen) {
-      setForm({
-        nome: conta?.nome || '',
-        valorPadrao: conta?.valorPadrao ?? '',
-        categoriaId: conta?.categoriaId || '',
-        periodicidade: conta?.periodicidade || 'MENSAL',
-        diaVencimento: conta?.diaVencimento ?? '',
-        mesVencimento: conta?.mesVencimento ?? '',
-        observacoes: conta?.observacoes || '',
-      });
-    }
-  }, [isOpen, conta]);
+  // O pai troca a `key` a cada abertura, entao o form nasce da conta atual.
+  const [form, setForm] = useState(() => ({
+    nome: conta?.nome || '',
+    valorPadrao: conta?.valorPadrao ?? '',
+    categoriaId: conta?.categoriaId || '',
+    periodicidade: conta?.periodicidade || 'MENSAL',
+    diaVencimento: conta?.diaVencimento ?? '',
+    mesVencimento: conta?.mesVencimento ?? '',
+    observacoes: conta?.observacoes || '',
+  }));
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -2032,34 +2019,24 @@ function ModalContaPagar({ isOpen, onClose, conta, categorias, onSalvar }) {
 // Aceita conta pre-selecionada (vindo da lista) ou abre combobox de contas
 // ativas (vindo do header do caixa). Valor herda do valorPadrao mas e editavel.
 function ModalPagarConta({ isOpen, onClose, contaSelecionada, contas, sessaoCaixaAberta, onConfirmar }) {
-  const [contaId, setContaId] = useState('');
-  const [valor, setValor] = useState('');
+  // O pai troca a `key` a cada abertura, entao os campos nascem da conta
+  // pre-selecionada (ou vazios quando a pessoa vai escolher no combobox).
+  const [contaId, setContaId] = useState(contaSelecionada?.id || '');
+  const [valor, setValor] = useState(contaSelecionada ? String(contaSelecionada.valorPadrao || '') : '');
   const [motivo, setMotivo] = useState('');
   const [tirarDoCaixa, setTirarDoCaixa] = useState(true);
 
   const conta = contaSelecionada || contas.find((c) => c.id === contaId);
 
-  useEffect(() => {
-    if (isOpen) {
-      if (contaSelecionada) {
-        setContaId(contaSelecionada.id);
-        setValor(String(contaSelecionada.valorPadrao || ''));
-      } else {
-        setContaId('');
-        setValor('');
-      }
-      setMotivo('');
-      setTirarDoCaixa(true);
-    }
-  }, [isOpen, contaSelecionada]);
-
-  // Quando troca a conta no combobox, preenche valor automaticamente.
-  useEffect(() => {
-    if (!contaSelecionada && contaId) {
-      const c = contas.find((x) => x.id === contaId);
+  // Quando troca a conta no combobox, preenche valor automaticamente
+  // (no proprio evento de troca, em vez de um efeito observando contaId).
+  const trocarConta = (novoId) => {
+    setContaId(novoId);
+    if (!contaSelecionada && novoId) {
+      const c = contas.find((x) => x.id === novoId);
       if (c) setValor(String(c.valorPadrao || ''));
     }
-  }, [contaId, contas, contaSelecionada]);
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -2081,7 +2058,7 @@ function ModalPagarConta({ isOpen, onClose, contaSelecionada, contas, sessaoCaix
             size="lg"
             label="Qual conta está pagando?"
             value={contaId}
-            onChange={(e) => setContaId(e.target.value)}
+            onChange={(e) => trocarConta(e.target.value)}
             placeholder="Selecione a conta..."
             options={contas.map((c) => ({
               value: c.id,
@@ -2165,15 +2142,9 @@ function ModalPagarConta({ isOpen, onClose, contaSelecionada, contas, sessaoCaix
 // 1 modal compartilhado com tipo dinamico. SANGRIA (backend) = retirada (UI);
 // SUPRIMENTO (backend) = entrada (UI). Motivo obrigatorio (>=3 chars).
 function ModalMovimentacaoCaixa({ isOpen, tipo, onClose, onConfirmar }) {
+  // O pai troca a `key` a cada abertura, entao os campos ja nascem limpos.
   const [valor, setValor] = useState('');
   const [motivo, setMotivo] = useState('');
-
-  useEffect(() => {
-    if (isOpen) {
-      setValor('');
-      setMotivo('');
-    }
-  }, [isOpen]);
 
   if (!tipo) return null;
 
@@ -2256,11 +2227,8 @@ function ModalMovimentacaoCaixa({ isOpen, tipo, onClose, onConfirmar }) {
 // auditoria/historico. Pra reverter, basta abrir o lancamento e marcar
 // pendente de novo no drawer.
 function ModalCancelar({ isOpen, onClose, lanc, onConfirmar }) {
+  // O pai troca a `key` a cada abertura, entao o motivo ja nasce vazio.
   const [motivo, setMotivo] = useState('');
-
-  useEffect(() => {
-    if (isOpen) setMotivo('');
-  }, [isOpen]);
 
   if (!lanc) return null;
 
@@ -2315,13 +2283,8 @@ function ModalCancelar({ isOpen, onClose, lanc, onConfirmar }) {
 // template padrao com variaveis ja substituidas + lista de variaveis (caso
 // usuario queira reescrever do zero usando placeholders {nome}, {valor}, etc).
 function ModalCobranca({ isOpen, onClose, dados, onEnviar }) {
-  const [mensagem, setMensagem] = useState('');
-
-  useEffect(() => {
-    if (isOpen && dados?.mensagemPadrao) {
-      setMensagem(dados.mensagemPadrao);
-    }
-  }, [isOpen, dados]);
+  // O pai troca a `key` a cada abertura, entao a mensagem nasce do template.
+  const [mensagem, setMensagem] = useState(() => (isOpen && dados?.mensagemPadrao ? dados.mensagemPadrao : ''));
 
   if (!dados) return null;
 

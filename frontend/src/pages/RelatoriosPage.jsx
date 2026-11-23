@@ -6,7 +6,7 @@
 //   - Default: ultimos 30 dias. Presets rapidos + custom.
 //   - GLOBAL: vale pra todas as abas — quando troca, todas refazem queries.
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/auth.store';
 import relatorioMensalService from '../services/relatorioMensalService';
@@ -188,10 +188,18 @@ function AbaVisaoExecutiva({ intervalo }) {
   const [dados, setDados] = useState(null);
   const [erro, setErro] = useState(null);
 
-  useEffect(() => {
-    let ativo = true;
+  // Periodo/filtros mudaram: liga o carregando e limpa o erro ja no render
+  // (guardando a chave da busca) em vez de setState sincrono no efeito.
+  const chaveBusca = `${intervalo.inicio.getTime()}|${intervalo.fim.getTime()}`;
+  const [chaveBuscaAnterior, setChaveBuscaAnterior] = useState(null);
+  if (chaveBuscaAnterior !== chaveBusca) {
+    setChaveBuscaAnterior(chaveBusca);
     setCarregando(true);
     setErro(null);
+  }
+
+  useEffect(() => {
+    let ativo = true;
     api.get('/relatorios/visao-executiva', {
       params: {
         inicio: intervalo.inicio.toISOString(),
@@ -319,10 +327,18 @@ function AbaCRM({ intervalo }) {
     return () => { ativo = false; };
   }, []);
 
-  useEffect(() => {
-    let ativo = true;
+  // Periodo/filtros mudaram: liga o carregando e limpa o erro ja no render
+  // (guardando a chave da busca) em vez de setState sincrono no efeito.
+  const chaveBusca = `${intervalo.inicio.getTime()}|${intervalo.fim.getTime()}|${filtros.etapaId}|${filtros.origem}`;
+  const [chaveBuscaAnterior, setChaveBuscaAnterior] = useState(null);
+  if (chaveBuscaAnterior !== chaveBusca) {
+    setChaveBuscaAnterior(chaveBusca);
     setCarregando(true);
     setErro(null);
+  }
+
+  useEffect(() => {
+    let ativo = true;
     api.get('/relatorios/crm', {
       params: {
         inicio: intervalo.inicio.toISOString(),
@@ -570,10 +586,18 @@ function AbaFinanceiro({ intervalo }) {
     return () => { ativo = false; };
   }, []);
 
-  useEffect(() => {
-    let ativo = true;
+  // Periodo/filtros mudaram: liga o carregando e limpa o erro ja no render
+  // (guardando a chave da busca) em vez de setState sincrono no efeito.
+  const chaveBusca = `${intervalo.inicio.getTime()}|${intervalo.fim.getTime()}|${filtros.categoriaId}|${filtros.tipo}|${filtros.subTipo}`;
+  const [chaveBuscaAnterior, setChaveBuscaAnterior] = useState(null);
+  if (chaveBuscaAnterior !== chaveBusca) {
+    setChaveBuscaAnterior(chaveBusca);
     setCarregando(true);
     setErro(null);
+  }
+
+  useEffect(() => {
+    let ativo = true;
     api.get('/relatorios/financeiro', {
       params: {
         inicio: intervalo.inicio.toISOString(),
@@ -835,10 +859,18 @@ function AbaEstoque({ intervalo }) {
     return () => { ativo = false; };
   }, []);
 
-  useEffect(() => {
-    let ativo = true;
+  // Periodo/filtros mudaram: liga o carregando e limpa o erro ja no render
+  // (guardando a chave da busca) em vez de setState sincrono no efeito.
+  const chaveBusca = `${intervalo.inicio.getTime()}|${intervalo.fim.getTime()}|${filtros.categoriaId}`;
+  const [chaveBuscaAnterior, setChaveBuscaAnterior] = useState(null);
+  if (chaveBuscaAnterior !== chaveBusca) {
+    setChaveBuscaAnterior(chaveBusca);
     setCarregando(true);
     setErro(null);
+  }
+
+  useEffect(() => {
+    let ativo = true;
     api.get('/relatorios/estoque', {
       params: {
         inicio: intervalo.inicio.toISOString(),
@@ -1312,10 +1344,18 @@ function AbaVendas({ intervalo }) {
   const [erro, setErro] = useState(null);
   const [filtros, setFiltros] = useState({ origem: '', metodoPagamento: '', filtroRapido: '' });
 
-  useEffect(() => {
-    let ativo = true;
+  // Periodo/filtros mudaram: liga o carregando e limpa o erro ja no render
+  // (guardando a chave da busca) em vez de setState sincrono no efeito.
+  const chaveBusca = `${intervalo.inicio.getTime()}|${intervalo.fim.getTime()}|${filtros.origem}|${filtros.metodoPagamento}`;
+  const [chaveBuscaAnterior, setChaveBuscaAnterior] = useState(null);
+  if (chaveBuscaAnterior !== chaveBusca) {
+    setChaveBuscaAnterior(chaveBusca);
     setCarregando(true);
     setErro(null);
+  }
+
+  useEffect(() => {
+    let ativo = true;
     api.get('/relatorios/vendas', {
       params: {
         inicio: intervalo.inicio.toISOString(),
@@ -2197,10 +2237,18 @@ function AbaBots({ intervalo }) {
     return () => { ativo = false; };
   }, []);
 
-  useEffect(() => {
-    let ativo = true;
+  // Periodo/filtros mudaram: liga o carregando e limpa o erro ja no render
+  // (guardando a chave da busca) em vez de setState sincrono no efeito.
+  const chaveBusca = `${intervalo.inicio.getTime()}|${intervalo.fim.getTime()}|${filtros.botId}|${filtros.canal}`;
+  const [chaveBuscaAnterior, setChaveBuscaAnterior] = useState(null);
+  if (chaveBuscaAnterior !== chaveBusca) {
+    setChaveBuscaAnterior(chaveBusca);
     setCarregando(true);
     setErro(null);
+  }
+
+  useEffect(() => {
+    let ativo = true;
     api.get('/relatorios/bots', {
       params: {
         inicio: intervalo.inicio.toISOString(),
@@ -2440,10 +2488,18 @@ function AbaCaixa({ intervalo }) {
   const [erro, setErro] = useState(null);
   const [filtros, setFiltros] = useState({ origem: '', comDivergencia: '', filtroRapido: '' });
 
-  useEffect(() => {
-    let ativo = true;
+  // Periodo/filtros mudaram: liga o carregando e limpa o erro ja no render
+  // (guardando a chave da busca) em vez de setState sincrono no efeito.
+  const chaveBusca = `${intervalo.inicio.getTime()}|${intervalo.fim.getTime()}|${filtros.origem}|${filtros.comDivergencia}`;
+  const [chaveBuscaAnterior, setChaveBuscaAnterior] = useState(null);
+  if (chaveBuscaAnterior !== chaveBusca) {
+    setChaveBuscaAnterior(chaveBusca);
     setCarregando(true);
     setErro(null);
+  }
+
+  useEffect(() => {
+    let ativo = true;
     api.get('/relatorios/caixa', {
       params: {
         inicio: intervalo.inicio.toISOString(),
@@ -3068,17 +3124,21 @@ function AbaMensais() {
 
   const podeGerar = user?.perfil === 'CLIENT' || user?.perfil === 'ADMINISTRADOR';
 
+  // Busca sem setState sincrono (o estado ja nasce carregando e sem erro);
+  // o "carregar" das acoes liga o carregando e limpa o erro antes.
+  const buscarMensais = useCallback(() => relatorioMensalService.listar()
+    .then(setItens)
+    .catch(() => setErro('Não foi possível carregar os relatórios mensais.'))
+    .finally(() => setCarregando(false)), []);
+
   useEffect(() => {
-    carregar();
-  }, []);
+    buscarMensais();
+  }, [buscarMensais]);
 
   const carregar = () => {
     setCarregando(true);
     setErro(null);
-    relatorioMensalService.listar()
-      .then(setItens)
-      .catch(() => setErro('Não foi possível carregar os relatórios mensais.'))
-      .finally(() => setCarregando(false));
+    buscarMensais();
   };
 
   const onGerarAnterior = async () => {

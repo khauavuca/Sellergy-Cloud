@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
-  AlertTriangle, Ban, CalendarPlus, CheckCircle2, CreditCard, FileText, Hourglass, PlayCircle,
+  AlertTriangle, Ban, CalendarPlus, CheckCircle2, CreditCard, Eye, FileText, Hourglass, Percent, PlayCircle,
   RefreshCw, TrendingDown, UserPlus, Users, Wallet, XCircle,
 } from 'lucide-react';
 import clsx from 'clsx';
 import api from '../services/api';
-import { Badge, Button, Drawer, EmptyState, KpiCard, SearchBar, Select, useToast } from '../components/ui';
+import { Badge, Button, Drawer, EmptyState, Input, KpiCard, SearchBar, Select, useToast } from '../components/ui';
+import { SemPermissao } from '../components/suporte/EstadosAdmin';
+import { usePapelAdmin, entrarComoSuporte } from '../components/suporte/papelAdmin';
 import ConfirmarAcao from '../components/conta/ConfirmarAcao';
 import {
   CICLO, FORMA_PAGAMENTO, NOME_PLANO, STATUS_ASSINATURA, STATUS_FATURA, brl, competencia, dataCurta,
@@ -47,6 +50,8 @@ function Dado({ rotulo, children }) {
 // ---------------------------------------------------------------------
 function PainelCliente({ cliente, planos, onFechar, onMudou }) {
   const toast = useToast();
+  const { pode } = usePapelAdmin();
+  const [mensalidade, setMensalidade] = useState(cliente.mensalidade ? String(cliente.mensalidade) : '');
   const [faturas, setFaturas] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState(false);
@@ -90,6 +95,9 @@ function PainelCliente({ cliente, planos, onFechar, onMudou }) {
   const st = STATUS_ASSINATURA[cliente.statusAssinatura] || { rotulo: cliente.statusAssinatura, variante: 'neutral' };
   const podeSuspender = ['TRIAL', 'ATIVA', 'ATRASADA'].includes(cliente.statusAssinatura);
   const podeReativar = ['SUSPENSA', 'CANCELADA'].includes(cliente.statusAssinatura);
+  const precoTabela = planos.find((p) => p.codigo === cliente.plano)?.precoMensal || null;
+  const valorDesconto = mensalidade.trim() === '' ? 0 : Number(mensalidade.replace(',', '.'));
+  const descontoValido = Number.isFinite(valorDesconto) && valorDesconto >= 0 && valorDesconto !== Number(cliente.mensalidade || 0);
   const opcoesPlano = (planos.length ? planos : Object.entries(NOME_PLANO).map(([codigo, nome]) => ({ codigo, nome })))
     .map((p) => ({ value: p.codigo, label: p.precoMensal ? `${p.nome} · ${brl(p.precoMensal)}/mês` : p.nome }));
 
@@ -145,7 +153,7 @@ function PainelCliente({ cliente, planos, onFechar, onMudou }) {
                 return (
                   <li key={f.id} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
                     <div className="flex-1 min-w-[140px]">
-                      <p className="text-sm font-medium text-[var(--text-main)] capitalize">
+                      <p className="text-sm font-medium text-[var(--text-main)] first-letter:uppercase">
                         {competencia(f.competencia)} · <span className="tabular-nums">{brl(f.valor)}</span>
                       </p>
                       <p className="text-xs text-[var(--text-muted)]">
@@ -154,7 +162,7 @@ function PainelCliente({ cliente, planos, onFechar, onMudou }) {
                       </p>
                     </div>
                     <Badge variant={sf.variante} size="sm">{sf.rotulo}</Badge>
-                    {pendente && (
+                    {pendente && pode('cobranca.baixa') && (
                       <Button
                         variant="secondary"
                         className="min-h-11"
@@ -184,6 +192,7 @@ function PainelCliente({ cliente, planos, onFechar, onMudou }) {
         <section aria-labelledby="painel-acoes" className="space-y-4">
           <h4 id="painel-acoes" className="text-sm font-semibold text-[var(--text-main)]">Ações</h4>
 
+          {pode('plano.mudar') && (
           <div className="flex flex-col sm:flex-row sm:items-end gap-2">
             <div className="flex-1">
               <Select
@@ -204,8 +213,9 @@ function PainelCliente({ cliente, planos, onFechar, onMudou }) {
                 texto: `${cliente.nome} passa de ${nomePlano(cliente.plano, planos)} para ${nomePlano(novoPlano, planos)}. Os limites e recursos mudam na hora.`,
                 rotulo: 'Confirmar mudança',
                 variante: 'primary',
-                acao: () => executar(
-                  () => api.put(`/admin/assinaturas/${cliente.id}`, { plano: novoPlano }),
+                pedirMotivo: true,
+                acao: (motivo) => executar(
+                  () => api.put(`/admin/assinaturas/${cliente.id}`, { plano: novoPlano, motivo }),
                   'Plano alterado.',
                   'Não foi possível mudar o plano.',
                 ),
@@ -214,14 +224,76 @@ function PainelCliente({ cliente, planos, onFechar, onMudou }) {
               Salvar plano
             </Button>
           </div>
+          )}
+
+          {pode('cobranca.desconto') && (
+            <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+              <div className="flex-1">
+                <Input
+                  label="Mensalidade negociada (desconto)"
+                  inputMode="decimal"
+                  value={mensalidade}
+                  onChange={(e) => setMensalidade(e.target.value)}
+                  placeholder={precoTabela ? `vazio = preço do plano (${brl(precoTabela)})` : 'vazio = preço do plano'}
+                  hint={precoTabela && valorDesconto > 0 && valorDesconto < precoTabela
+                    ? `${Math.round((1 - valorDesconto / precoTabela) * 100)}% de desconto sobre ${brl(precoTabela)}. Vale a partir da próxima fatura.`
+                    : 'Vale a partir da próxima fatura. Deixe vazio para voltar ao preço do plano.'}
+                />
+              </div>
+              <Button
+                variant="secondary"
+                className="min-h-11"
+                icon={Percent}
+                disabled={!descontoValido}
+                onClick={() => setConfirmacao({
+                  titulo: valorDesconto > 0 ? 'Aplicar mensalidade negociada?' : 'Voltar ao preço do plano?',
+                  texto: valorDesconto > 0
+                    ? `${cliente.nome} passa a pagar ${brl(valorDesconto)} por mês nas próximas faturas.`
+                    : `${cliente.nome} volta a pagar o preço do plano${precoTabela ? ` (${brl(precoTabela)})` : ''}.`,
+                  rotulo: 'Salvar',
+                  variante: 'primary',
+                  pedirMotivo: true,
+                  acao: (motivo) => executar(
+                    () => api.put(`/admin/assinaturas/${cliente.id}`, { mensalidade: valorDesconto, motivo }),
+                    'Mensalidade atualizada.',
+                    'Não foi possível salvar a mensalidade.',
+                  ),
+                })}
+              >
+                Salvar valor
+              </Button>
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-2">
-            {cliente.statusAssinatura === 'TRIAL' && (
+            {pode('suporte.entrar') && (
+              <Button
+                variant="secondary"
+                className="min-h-11"
+                icon={Eye}
+                onClick={() => setConfirmacao({
+                  titulo: `Entrar como suporte em ${cliente.nome}?`,
+                  texto: 'Você vê o sistema como o dono do negócio por 30 minutos, sem poder criar ou alterar nada. Entrada e saída ficam na auditoria. Para sua segurança, você sai do painel admin: ao encerrar, entre de novo com senha e código.',
+                  rotulo: 'Entrar (só leitura)',
+                  variante: 'primary',
+                  pedirMotivo: true,
+                  motivoObrigatorio: false,
+                  acao: async (motivo) => {
+                    const r = await entrarComoSuporte({ clienteId: cliente.id, motivo });
+                    if (!r.ok) toast.error(r.erro);
+                    return r.ok;
+                  },
+                })}
+              >
+                Entrar como suporte
+              </Button>
+            )}
+            {cliente.statusAssinatura === 'TRIAL' && pode('cobranca.estenderTeste') && (
               <Button variant="secondary" className="min-h-11" icon={CalendarPlus} loading={estendendo} onClick={estenderTeste}>
                 Estender teste em 7 dias
               </Button>
             )}
-            {podeReativar && (
+            {podeReativar && pode('conta.reativar') && (
               <Button
                 variant="secondary"
                 className="min-h-11"
@@ -231,8 +303,9 @@ function PainelCliente({ cliente, planos, onFechar, onMudou }) {
                   texto: 'A conta volta para Ativa e o cliente pode registrar de novo. Confira antes se há fatura em aberto.',
                   rotulo: 'Reativar conta',
                   variante: 'primary',
-                  acao: () => executar(
-                    () => api.post(`/admin/assinaturas/${cliente.id}/reativar`),
+                  pedirMotivo: true,
+                  acao: (motivo) => executar(
+                    () => api.post(`/admin/assinaturas/${cliente.id}/reativar`, { motivo }),
                     'Conta reativada.',
                     'Não foi possível reativar.',
                   ),
@@ -241,7 +314,7 @@ function PainelCliente({ cliente, planos, onFechar, onMudou }) {
                 Reativar conta
               </Button>
             )}
-            {podeSuspender && (
+            {podeSuspender && pode('conta.suspender') && (
               <Button
                 variant="danger-soft"
                 className="min-h-11"
@@ -251,8 +324,9 @@ function PainelCliente({ cliente, planos, onFechar, onMudou }) {
                   texto: 'A conta fica só para consulta: o cliente entra e vê tudo, mas não registra vendas nem agendamentos até ser reativada. Nada é apagado.',
                   rotulo: 'Suspender agora',
                   variante: 'danger',
-                  acao: () => executar(
-                    () => api.post(`/admin/assinaturas/${cliente.id}/suspender`),
+                  pedirMotivo: true,
+                  acao: (motivo) => executar(
+                    () => api.post(`/admin/assinaturas/${cliente.id}/suspender`, { motivo }),
                     'Conta suspensa.',
                     'Não foi possível suspender.',
                   ),
@@ -261,7 +335,7 @@ function PainelCliente({ cliente, planos, onFechar, onMudou }) {
                 Suspender
               </Button>
             )}
-            {cliente.statusAssinatura !== 'CANCELADA' && (
+            {cliente.statusAssinatura !== 'CANCELADA' && pode('conta.cancelar') && (
               <Button
                 variant="danger-soft"
                 className="min-h-11"
@@ -294,7 +368,7 @@ function PainelCliente({ cliente, planos, onFechar, onMudou }) {
         rotuloConfirmar={confirmacao?.rotulo}
         variante={confirmacao?.variante}
         pedirMotivo={confirmacao?.pedirMotivo}
-        motivoObrigatorio={confirmacao?.pedirMotivo}
+        motivoObrigatorio={confirmacao?.pedirMotivo && confirmacao?.motivoObrigatorio !== false}
         rotuloMotivo="Motivo (vai para a auditoria)"
         onConfirmar={(motivo) => confirmacao?.acao(motivo)}
       >
@@ -308,14 +382,18 @@ function PainelCliente({ cliente, planos, onFechar, onMudou }) {
 // Pagina
 // ---------------------------------------------------------------------
 export default function AdminAssinaturasPage() {
+  const { pode } = usePapelAdmin();
+  // Links da Visao geral: ?filtro=ATRASADA e ?cliente=<id>.
+  const [params] = useSearchParams();
+  const filtroUrl = params.get('filtro');
   const [clientes, setClientes] = useState([]);
   const [resumo, setResumo] = useState(null);
   const [planos, setPlanos] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState('');
-  const [filtro, setFiltro] = useState('TODOS');
+  const [filtro, setFiltro] = useState(FILTROS.some((f) => f.valor === filtroUrl) ? filtroUrl : 'TODOS');
   const [busca, setBusca] = useState('');
-  const [selecionadoId, setSelecionadoId] = useState(null);
+  const [selecionadoId, setSelecionadoId] = useState(params.get('cliente'));
 
   // O estado ja nasce carregando; o botao Atualizar liga o carregando antes.
   const carregar = useCallback(() => Promise.all([
@@ -348,6 +426,8 @@ export default function AdminAssinaturasPage() {
   }, [clientes, filtro, busca]);
 
   const selecionado = clientes.find((c) => c.id === selecionadoId) || null;
+
+  if (!pode('clientes.ver')) return <SemPermissao />;
 
   return (
     <div className="space-y-6">

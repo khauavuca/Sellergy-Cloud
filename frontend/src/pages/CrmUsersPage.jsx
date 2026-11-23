@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Users, Plus, Edit2, Trash2, MoreHorizontal, Crown, BadgeCheck,
-  ShieldAlert, Mail, Sparkles, ArrowLeft, UserCog, Clock, Briefcase,
+  ShieldAlert, Mail, Sparkles, ArrowLeft, UserCog, Clock, Briefcase, Send,
 } from 'lucide-react';
 import api from '../services/api';
 import catalogoService from '../services/catalogoService';
@@ -12,6 +12,7 @@ import {
   EmptyState, SearchBar, Dropdown, DropdownItem, DropdownDivider, useToast
 } from '../components/ui';
 import Modal from '../components/Modal';
+import ConvitesEquipe from '../components/equipe/ConvitesEquipe';
 import {
   MODULOS_COLABORADOR, acoesDoModulo, temEscopo, ESCOPOS, permissoesVazias, permissoesCompletas, moduloLiberado
 } from '../constants/permissoes';
@@ -70,13 +71,9 @@ export default function CrmUsersPage() {
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState('');
   const [modal, setModal] = useState({ open: false, data: null });
-
-  useEffect(() => {
-    if (podeGerenciar) carregar();
-  }, [podeGerenciar]);
+  const [convidar, setConvidar] = useState(false);
 
   const carregar = async () => {
-    setCarregando(true);
     try {
       const [r, listaCatalogo] = await Promise.all([
         api.get('/crm/usuarios'),
@@ -89,6 +86,10 @@ export default function CrmUsersPage() {
       setCarregando(false);
     }
   };
+
+  useEffect(() => {
+    if (podeGerenciar) carregar();
+  }, [podeGerenciar]);
 
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -181,10 +182,22 @@ export default function CrmUsersPage() {
         <div className="flex-1 min-w-[240px] max-w-md">
           <SearchBar value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nome ou email..." />
         </div>
-        <Button variant="primary" icon={Plus} onClick={() => setModal({ open: true, data: null })}>
-          Cadastrar usuario
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="primary" size="lg" icon={Send} onClick={() => setConvidar(true)}>
+            Convidar
+          </Button>
+          <Button variant="secondary" size="lg" icon={Plus} onClick={() => setModal({ open: true, data: null })}>
+            Cadastrar usuario
+          </Button>
+        </div>
       </div>
+
+      <ConvitesEquipe
+        aberto={convidar}
+        setAberto={setConvidar}
+        ehDono={ehDono}
+        temAgenda={usuarioLogado?.modulosLiberados?.AGENDA === true}
+      />
 
       {/* Lista */}
       {carregando ? (
@@ -262,6 +275,7 @@ function ModalUsuario({ isOpen, onClose, usuario, ehDono, modulosLiberados, serv
     if (usuario) {
       const tipo = usuario.tipo || (usuario.perfil === 'ADMINISTRADOR' ? 'ADMINISTRADOR' : 'VENDEDOR');
       const esp = usuario.especialista;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sincroniza o form com o usuario ao abrir
       setForm({
         ...usuario,
         senha: '',
