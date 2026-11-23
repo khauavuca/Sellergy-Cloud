@@ -4,6 +4,7 @@ const {
   modulosPorSegmento,
   segmentoPermiteEspecialista,
 } = require('../utils/modulosSegmento');
+const { garantirDentroDoLimite } = require('../planos/recursos');
 
 // Perfis que um colaborador de tenant pode ter (o Prisma só conhece estes).
 // "Especialista" e "Recepção" são TIPOS de UI que persistem como VENDEDOR:
@@ -231,6 +232,19 @@ class CrmUsuariosController {
         return res.status(400).json({ error: 'Este e-mail ja esta cadastrado.' });
       }
 
+      // Limites do plano: usuarios do tenant (dono incluso) e, se for
+      // especialista, profissionais ativos.
+      await garantirDentroDoLimite({
+        clienteId, limite: 'usuarios',
+        usoAtual: await prisma.usuario.count({ where: { clienteId } }),
+      });
+      if (ehEspecialista) {
+        await garantirDentroDoLimite({
+          clienteId, limite: 'profissionais',
+          usoAtual: await prisma.especialista.count({ where: { clienteId, ativo: true } }),
+        });
+      }
+
       // ADMINISTRADOR -> permissoes completas. Demais -> sanitizadas por segmento.
       let permissoesFinais = perfilFinal === 'ADMINISTRADOR'
         ? gerarPermissoesCompletas()
@@ -285,6 +299,9 @@ class CrmUsuariosController {
 
       res.status(201).json({ ...criado, tipo: tipoDerivado(criado), especialista: especialistaResumo(criado.especialista) });
     } catch (error) {
+      if (error.codigo === 'LIMITE_DO_PLANO') {
+        return res.status(403).json({ error: error.message, codigo: error.codigo, limite: error.limite, maximo: error.maximo, planoSugerido: error.planoSugerido });
+      }
       console.error('[CrmUsuariosController/criar]', error);
       if (error.code === 'P2002') return res.status(400).json({ error: 'Este e-mail ja esta cadastrado.' });
       res.status(500).json({ error: 'Erro ao criar usuario do CRM' });

@@ -1,4 +1,5 @@
 const express = require('express');
+const { obterOuAbrirSessaoCaixa } = require('../services/caixaAutomatico');
 const prisma = require('../prisma');
 const middlewareAutenticacao = require('../middlewares/auth.middleware');
 const {
@@ -572,17 +573,9 @@ roteador.patch('/:id/concluir', requerPermissao('AGENDA', 'editar'), async (req,
         resultado = await prisma.$transaction(async (tx) => {
           await lockClienteAdvisory(tx, ag.clienteId);
 
-          let sessao = await tx.sessaoCaixa.findFirst({
-            where: { clienteId: ag.clienteId, status: 'ABERTA' }, orderBy: { abertaEm: 'desc' },
+          const { sessao } = await obterOuAbrirSessaoCaixa(tx, ag.clienteId, {
+            motivo: 'Aberto automaticamente ao concluir um atendimento sem caixa aberto.',
           });
-          if (!sessao) {
-            sessao = await tx.sessaoCaixa.create({
-              data: {
-                clienteId: ag.clienteId, fundoCaixa: 0, status: 'ABERTA', origem: 'AUTO_BOT',
-                observacaoAbertura: 'Aberta automaticamente ao concluir um atendimento sem caixa aberto.',
-              },
-            });
-          }
 
           const venda = await tx.venda.create({
             data: {

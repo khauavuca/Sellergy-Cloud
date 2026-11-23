@@ -12,6 +12,9 @@
  */
 
 const prisma = require('../prisma');
+const { situacaoAssinatura } = require('../assinatura/situacao');
+
+const METODOS_LEITURA = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 const PERFIS_TENANT = ['CLIENT', 'ADMINISTRADOR', 'VENDEDOR'];
 
@@ -56,7 +59,7 @@ function requerModuloLiberado(modulo) {
 
       const cliente = await prisma.cliente.findUnique({
         where: { id: req.usuario.clienteId },
-        select: { modulosLiberados: true, status: true }
+        select: { modulosLiberados: true, status: true, plano: true, statusAssinatura: true, trialAte: true }
       });
 
       if (!cliente) {
@@ -65,6 +68,19 @@ function requerModuloLiberado(modulo) {
 
       if (cliente.status !== 'ACTIVE') {
         return res.status(403).json({ erro: 'Conta inativa ou suspensa.' });
+      }
+
+      // Bloqueio suave da assinatura: trial vencido / conta suspensa ainda
+      // CONSULTA tudo (GET), mas nao cria nem altera. Nada e apagado.
+      const situacao = situacaoAssinatura(cliente);
+      if (situacao.somenteLeitura && !METODOS_LEITURA.has(req.method)) {
+        return res.status(402).json({
+          erro: situacao.aviso === 'TRIAL_VENCIDO'
+            ? 'Seu teste grátis terminou. Escolha um plano para continuar registrando — seus dados estão salvos.'
+            : 'Sua conta está em modo somente leitura por pendência na assinatura. Regularize para voltar a registrar.',
+          codigo: 'ASSINATURA_BLOQUEADA',
+          aviso: situacao.aviso,
+        });
       }
 
       const modulos = cliente.modulosLiberados || {};

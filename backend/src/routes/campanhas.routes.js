@@ -19,10 +19,13 @@ const {
 const { mesclarConversoes, formatarListaLeads, LIMITE_RECORRENTE, DIAS_MIN_LEAD_NOVO } = require('../services/segmentacaoLeads');
 const { normalizarCodigo } = require('../services/cupomService');
 const { enfileirarEnvioCampanha, enfileirarEnvioCampanhaBaileys } = require('../filas');
+const { exigirRecursoNaEscrita } = require('../planos/recursos');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
 roteador.use(requerModuloLiberado('CRM'));
+// Campanhas: plano Profissional para cima (a tela carrega e mostra o upgrade).
+roteador.use(exigirRecursoNaEscrita('campanhas'));
 
 const MS_DIA = 24 * 60 * 60 * 1000;
 const DIAS_PADRAO = 30;
@@ -33,11 +36,11 @@ const SEGMENTOS_VALIDOS = new Set(['recompra', 'recorrentes', 'nunca-converteram
 const MAX_NOME_CAMPANHA = 120;
 const MAX_MENSAGEM_CAMPANHA = 1000;
 const MAX_NOME_TEMPLATE = 120;
-// Teto de seguranca pro canal nao oficial (Baileys/QR Code) — nao existe
-// template/aprovacao la, entao a trava mais barata contra "selecionar 5 mil
-// convertidos e estourar tudo de uma vez" (o padrao que a Meta mais pune com
-// banimento de numero) e limitar o tamanho do lote.
-const LIMITE_LEADS_BAILEYS = 200;
+// Teto por campanha no canal QR Code. O ritmo real (cota diaria com
+// aquecimento do numero, horario comercial, espacamento) fica no envio
+// humano (services/baileys/envioHumano.js): campanha grande se espalha
+// sozinha por varios dias.
+const LIMITE_LEADS_BAILEYS = 2000;
 
 // ==========================================
 // CAMPANHA — criar, listar, disparar. O cupom (se houver) nasce junto da
@@ -366,6 +369,16 @@ roteador.post('/:id/disparar', requerPermissao('CRM', 'editar'), async (req, res
     });
     const usaBaileys = bot?.provedorCanal === 'BAILEYS';
 
+    // Canal QR Code: liberado, mas so pelo "envio humano" (cota diaria com
+    // aquecimento, horario comercial, espacamento, opt-out). O operador pode
+    // desligar tudo com CAMPANHA_CANAL_NAO_OFICIAL=bloqueado.
+    if (usaBaileys && process.env.CAMPANHA_CANAL_NAO_OFICIAL === 'bloqueado') {
+      return res.status(422).json({
+        erro: 'Campanhas pelo WhatsApp Web estão pausadas no momento. Tente mais tarde ou use o WhatsApp oficial.',
+        codigo: 'CAMPANHA_CANAL_NAO_OFICIAL_PAUSADO',
+      });
+    }
+
     if (!usaBaileys && !campanha.nomeTemplate) {
       return res.status(422).json({
         erro: 'Configure o nome do template aprovado na Meta antes de disparar.',
@@ -379,7 +392,7 @@ roteador.post('/:id/disparar', requerPermissao('CRM', 'editar'), async (req, res
     }
     if (usaBaileys && leadIds.length > LIMITE_LEADS_BAILEYS) {
       return res.status(422).json({
-        erro: `O canal não oficial (WhatsApp Web) permite no máximo ${LIMITE_LEADS_BAILEYS} leads por disparo — reduza o segmento ou divida o envio em dias, pra não arriscar o número ser banido.`,
+        erro: `Pelo WhatsApp Web o máximo é ${LIMITE_LEADS_BAILEYS} contatos por campanha. O envio é espalhado em vários dias automaticamente para proteger seu número.`,
       });
     }
 
@@ -396,12 +409,11 @@ roteador.post('/:id/disparar', requerPermissao('CRM', 'editar'), async (req, res
       data: { status: 'ENVIANDO', totalAlvo: envios.length },
     });
 
-    let indiceNoLote = 0;
     for (const envio of envios) {
       if (envio.status !== 'PENDENTE') continue;
       if (usaBaileys) {
-        await enfileirarEnvioCampanhaBaileys(envio.id, indiceNoLote);
-        indiceNoLote += 1;
+        // O espacamento e a cota sao decididos no worker, na hora do envio.
+        await enfileirarEnvioCampanhaBaileys(envio.id);
       } else {
         await enfileirarEnvioCampanha(envio.id);
       }

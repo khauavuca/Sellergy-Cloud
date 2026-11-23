@@ -54,14 +54,26 @@ async function processarEnvioCampanha(campanhaEnvioId) {
   }
 
   let resultado;
+  if (bot.provedorCanal === 'BAILEYS' && process.env.CAMPANHA_CANAL_NAO_OFICIAL === 'bloqueado') {
+    // Interruptor de emergencia do operador (ex.: onda de banimentos).
+    return marcarFalha(envio, 'Campanha pelo WhatsApp Web desligada pelo operador.');
+  }
   if (bot.provedorCanal === 'BAILEYS') {
-    // Sem template no WhatsApp Web — a mensagem da campanha e o texto de
-    // verdade que sai (pra Meta, esse campo e so preview: o que sai la e o
-    // template aprovado). Precisa da conexao viva (socket) do proprio worker.
+    // Sem template no WhatsApp Web: a mensagem da campanha e o texto que sai,
+    // com variacao {a|b} e todo o "envio humano" (ver envioHumano.js). O
+    // espacamento e a cota diaria ja foram reservados no worker antes daqui.
+    const { telefoneParaWhatsapp } = require('./whatsappDoTenant');
+    const para = telefoneParaWhatsapp(envio.lead.telefone);
+    const optOut = await prisma.optOutWhatsapp.findUnique({
+      where: { clienteId_telefone: { clienteId: envio.campanha.clienteId, telefone: para } },
+    }).catch(() => null);
+    if (optOut) return marcarFalha(envio, 'Contato pediu para não receber mensagens (SAIR).');
     const socket = obterSocket(bot.id);
-    if (!socket) return marcarFalha(envio, 'WhatsApp Web nao esta conectado no momento.');
+    if (!socket) throw new Error('WhatsApp Web nao esta conectado no momento.'); // retry do BullMQ
     const adapter = criarProvedorWhatsapp('BAILEYS', { modo: 'live', socket });
-    resultado = await adapter.enviarTexto({ para: envio.lead.telefone, texto: envio.campanha.mensagem });
+    const primeiroNome = String(envio.lead.nome || '').trim().split(/\s+/)[0] || '';
+    const texto = String(envio.campanha.mensagem || '').replace(/\[nome\]|\{\{\s*nome\s*\}\}/gi, primeiroNome);
+    resultado = await adapter.enviarTexto({ para, texto, tipo: 'campanha' });
   } else {
     if (!envio.campanha.nomeTemplate) return marcarFalha(envio, 'Campanha sem template aprovado configurado.');
 
@@ -88,4 +100,15 @@ async function processarEnvioCampanha(campanhaEnvioId) {
   await finalizarSeCompleto(envio.campanhaId);
 }
 
-module.exports = { processarEnvioCampanha };
+/** Bot com canal conectado do tenant dono do envio (pro worker reservar a vez). */
+async function numeroDoEnvio(campanhaEnvioId) {
+  const envio = await prisma.campanhaEnvio.findUnique({ where: { id: campanhaEnvioId }, select: { campanha: { select: { clienteId: true } } } });
+  if (!envio) return null;
+  const bot = await prisma.bot.findFirst({
+    where: { clienteId: envio.campanha.clienteId, provedorCanal: 'BAILEYS', identificadorCanal: { not: null } },
+    select: { id: true, baileysNumeroConectado: true },
+  });
+  return bot?.baileysNumeroConectado || null;
+}
+
+module.exports = { processarEnvioCampanha, numeroDoEnvio };

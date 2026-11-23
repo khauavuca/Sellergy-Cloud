@@ -12,6 +12,22 @@ const { aplicarStatusCobranca } = require('../services/cobrancaPagamento');
 
 const roteador = express.Router();
 
+// POST /webhooks/assinatura/asaas — mensalidade do PROPRIO Sellergy (conta
+// Asaas da plataforma). Token conferido em tempo constante e evento
+// idempotente; ver src/assinatura/webhookAsaas.js.
+roteador.post('/assinatura/asaas', async (req, res) => {
+  try {
+    const { processarWebhook } = require('../assinatura/webhookAsaas');
+    const r = await processarWebhook({ headers: req.headers, body: req.body });
+    if (r.status === 401) console.warn('[webhook/assinatura] token invalido de', req.ip);
+    res.status(r.status).json(r.corpo);
+  } catch (e) {
+    console.error('[webhook/assinatura]', e?.message);
+    // 500 faz o Asaas reenviar depois.
+    res.status(500).json({ erro: 'falha ao processar' });
+  }
+});
+
 // POST /webhooks/pagamento/:provedor
 // Fluxo: parse "cego" do id -> acha a Cobranca (e o tenant dono) -> carrega a
 // credencial do tenant -> valida assinatura -> consulta status real -> aplica.

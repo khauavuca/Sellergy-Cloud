@@ -6,6 +6,8 @@ const prisma = require('../prisma');
 const middlewareAutenticacao = require('../middlewares/auth.middleware');
 const { SEGREDO_JWT } = require('../middlewares/auth.middleware');
 const { definirSessao, garantirCsrf, limparSessao } = require('../utils/sessaoCookie');
+const { validarCadastro, criarContaComTeste } = require('../onboarding/cadastro');
+const totp = require('../seguranca/totp');
 
 const roteador = express.Router();
 
@@ -18,54 +20,124 @@ const limitadorLogin = rateLimit({
   message: { erro: 'Muitas tentativas de login. Tente novamente em alguns minutos.' }
 });
 
-// Limitador moderado para registro: evita criacao em massa.
-const limitadorRegistro = rateLimit({
+// Limitador do cadastro proprio: evita criacao de contas em massa.
+const limitadorCadastro = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hora
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { erro: 'Muitas tentativas de registro. Tente novamente mais tarde.' }
+  message: { erro: 'Muitas tentativas de cadastro. Tente novamente mais tarde.' }
 });
 
-roteador.post('/registrar', limitadorRegistro, async (req, res) => {
+// Cadastro proprio: cria o NEGOCIO (com 14 dias de teste) e o dono, e ja
+// entra logado. Substitui o antigo /registrar, que criava um usuario solto
+// com o perfil padrao do schema (ADMIN) — qualquer um virava admin do
+// sistema. Ver src/onboarding/cadastro.js.
+roteador.post('/cadastro', limitadorCadastro, async (req, res) => {
   try {
-    const { nome, email, senha } = req.body;
+    const { erro, campos, dados } = validarCadastro(req.body);
+    if (erro) return res.status(422).json({ erro, campos });
 
-    if (!nome || !email || !senha) {
-      return res.status(400).json({ erro: 'Nome, e-mail e senha sao obrigatorios' });
-    }
-
-    if (typeof senha !== 'string' || senha.length < 6) {
-      return res.status(400).json({ erro: 'Senha deve ter ao menos 6 caracteres' });
-    }
-
-    const usuarioExiste = await prisma.usuario.findUnique({ where: { email } });
-    if (usuarioExiste) {
-      return res.status(400).json({ erro: 'E-mail ja cadastrado' });
-    }
-
-    const senhaHasheada = await bcrypt.hash(senha, 12);
-
-    const usuario = await prisma.usuario.create({
-      data: {
-        nome,
-        email,
-        senha: senhaHasheada,
-      },
-    });
-
-    res.status(201).json({ id: usuario.id, nome: usuario.nome, email: usuario.email });
+    const { usuario } = await criarContaComTeste(dados);
+    const token = jwt.sign(
+      { id: usuario.id, perfil: usuario.perfil, clienteId: usuario.clienteId },
+      SEGREDO_JWT,
+      { expiresIn: '7d' }
+    );
+    const csrfToken = definirSessao(res, token);
+    const corpo = await montarUsuarioDaSessao(usuario);
+    res.status(201).json({ usuario: corpo, csrfToken });
   } catch (erro) {
-    console.error('[auth/registrar]', erro);
-    res.status(500).json({ erro: 'Erro ao registrar usuario' });
+    if (erro.codigo === 'EMAIL_EM_USO') return res.status(400).json({ erro: erro.message, campos: ['email'], codigo: erro.codigo });
+    console.error('[auth/cadastro]', erro);
+    res.status(500).json({ erro: 'Erro ao criar a conta. Tente de novo.' });
   }
 });
 
+// O antigo registro aberto foi desligado de proposito (criava ADMIN).
+roteador.post('/registrar', (req, res) => {
+  res.status(410).json({ erro: 'Rota desativada. Use /autenticacao/cadastro.', codigo: 'ROTA_DESATIVADA' });
+});
+
+// Mesmo corpo de usuario que o /login devolve.
+async function montarUsuarioDaSessao(usuario) {
+  let modulosLiberados = null;
+  let branding = null;
+  let segmento = null;
+  if (usuario.clienteId) {
+    const cliente = await prisma.cliente.findUnique({
+      where: { id: usuario.clienteId },
+      select: { modulosLiberados: true, segmento: true, brandLogo: true, brandNome: true }
+    });
+    modulosLiberados = cliente?.modulosLiberados || {};
+    segmento = cliente?.segmento || null;
+    branding = { logo: cliente?.brandLogo || null, nome: cliente?.brandNome || null };
+  }
+  return {
+    id: usuario.id,
+    nome: usuario.nome,
+    email: usuario.email,
+    perfil: usuario.perfil,
+    clienteId: usuario.clienteId || null,
+    deveTrocarSenha: usuario.deveTrocarSenha === true,
+    foto: usuario.foto || null,
+    modulosLiberados,
+    segmento,
+    branding,
+  };
+}
+
+// Monta a sessao (cookie httpOnly) e a resposta de login. `mfa` marca que o
+// usuario passou pelo segundo fator — exigido pro ADMIN quando
+// ADMIN_2FA_OBRIGATORIO=true (ver auth.middleware).
+async function responderSessao(res, usuario, { mfa = false } = {}) {
+  const token = jwt.sign(
+    { id: usuario.id, perfil: usuario.perfil, clienteId: usuario.clienteId, mfa },
+    SEGREDO_JWT,
+    { expiresIn: usuario.perfil === 'ADMIN' ? '12h' : '7d' }
+  );
+
+  let modulosLiberados = null;
+  let branding = null;
+  let segmento = null;
+  if (usuario.clienteId) {
+    const cliente = await prisma.cliente.findUnique({
+      where: { id: usuario.clienteId },
+      select: { modulosLiberados: true, segmento: true, brandLogo: true, brandNome: true }
+    });
+    modulosLiberados = cliente?.modulosLiberados || {};
+    segmento = cliente?.segmento || null;
+    branding = { logo: cliente?.brandLogo || null, nome: cliente?.brandNome || null };
+  }
+
+  // O token vai para um cookie httpOnly e NAO volta no corpo: assim ele fica
+  // fora do alcance do JavaScript e um XSS nao consegue roubar a sessao.
+  // No lugar dele devolvemos o segredo de CSRF, que o front guarda em memoria.
+  const csrfToken = definirSessao(res, token);
+
+  res.json({
+    usuario: {
+      id: usuario.id,
+      nome: usuario.nome,
+      email: usuario.email,
+      perfil: usuario.perfil,
+      clienteId: usuario.clienteId || null,
+      deveTrocarSenha: usuario.deveTrocarSenha === true,
+      foto: usuario.foto || null,
+      totpAtivo: usuario.totpAtivo === true,
+      modulosLiberados,
+      segmento,
+      branding,
+    },
+    csrfToken
+  });
+}
+
 roteador.post('/login', limitadorLogin, async (req, res) => {
   try {
-    const { email, senha } = req.body;
+    const { email, senha } = req.body || {};
 
-    if (!email || !senha) {
+    if (!email || !senha || typeof email !== 'string' || typeof senha !== 'string') {
       return res.status(400).json({ erro: 'E-mail e senha sao obrigatorios' });
     }
 
@@ -80,49 +152,114 @@ roteador.post('/login', limitadorLogin, async (req, res) => {
       return res.status(401).json({ erro: 'E-mail ou senha incorretos' });
     }
 
-    const token = jwt.sign(
-      { id: usuario.id, perfil: usuario.perfil, clienteId: usuario.clienteId },
-      SEGREDO_JWT,
-      { expiresIn: '7d' }
-    );
-
-    // Carrega modulosLiberados, segmento e branding se for usuario de tenant.
-    let modulosLiberados = null;
-    let branding = null;
-    let segmento = null;
-    if (usuario.clienteId) {
-      const cliente = await prisma.cliente.findUnique({
-        where: { id: usuario.clienteId },
-        select: { modulosLiberados: true, segmento: true, brandLogo: true, brandNome: true }
-      });
-      modulosLiberados = cliente?.modulosLiberados || {};
-      segmento = cliente?.segmento || null;
-      branding = { logo: cliente?.brandLogo || null, nome: cliente?.brandNome || null };
+    // Segundo fator: a senha so libera um "desafio" de 5 minutos; a sessao
+    // sai em /login/2fa com o codigo do app autenticador.
+    if (usuario.totpAtivo) {
+      const desafio = jwt.sign({ id: usuario.id, etapa: '2fa' }, SEGREDO_JWT, { expiresIn: '5m' });
+      return res.json({ precisa2fa: true, desafio });
     }
 
-    // O token vai para um cookie httpOnly e NAO volta no corpo: assim ele fica
-    // fora do alcance do JavaScript e um XSS nao consegue roubar a sessao.
-    // No lugar dele devolvemos o segredo de CSRF, que o front guarda em memoria.
-    const csrfToken = definirSessao(res, token);
-
-    res.json({
-      usuario: {
-        id: usuario.id,
-        nome: usuario.nome,
-        email: usuario.email,
-        perfil: usuario.perfil,
-        clienteId: usuario.clienteId || null,
-        deveTrocarSenha: usuario.deveTrocarSenha === true,
-        foto: usuario.foto || null,
-        modulosLiberados,
-        segmento,
-        branding,
-      },
-      csrfToken
-    });
+    await responderSessao(res, usuario, { mfa: false });
   } catch (erro) {
     console.error('[auth/login]', erro);
     res.status(500).json({ erro: 'Erro ao fazer login' });
+  }
+});
+
+// Segunda etapa do login com 2FA.
+roteador.post('/login/2fa', limitadorLogin, async (req, res) => {
+  try {
+    const { desafio, codigo } = req.body || {};
+    let dados;
+    try {
+      dados = jwt.verify(String(desafio || ''), SEGREDO_JWT);
+    } catch {
+      return res.status(401).json({ erro: 'O tempo para digitar o código acabou. Entre de novo.' });
+    }
+    if (dados.etapa !== '2fa') return res.status(401).json({ erro: 'Desafio invalido.' });
+
+    const usuario = await prisma.usuario.findUnique({ where: { id: dados.id } });
+    if (!usuario?.totpAtivo || !usuario.totpSegredoCifrado) return res.status(401).json({ erro: 'Desafio invalido.' });
+
+    if (!(await conferirCodigoTotp(usuario, codigo))) return res.status(401).json({ erro: 'Código incorreto.' });
+    await responderSessao(res, usuario, { mfa: true });
+  } catch (erro) {
+    console.error('[auth/login/2fa]', erro);
+    res.status(500).json({ erro: 'Erro ao conferir o código' });
+  }
+});
+
+// ---------- 2FA: configurar / ativar / desativar ----------
+
+let redisTotp = null;
+function obterRedisTotp() {
+  if (!redisTotp) {
+    const IORedis = require('ioredis');
+    redisTotp = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', { maxRetriesPerRequest: 2 });
+    redisTotp.on('error', () => {});
+  }
+  return redisTotp;
+}
+
+// Confere o codigo e queima o passo usado (o mesmo codigo nao entra 2 vezes).
+async function conferirCodigoTotp(usuario, codigo) {
+  const segredo = totp.decifrarSegredo(usuario.id, usuario.totpSegredoCifrado);
+  const chave = `totp:ultimo:${usuario.id}`;
+  const ultimo = Number(await obterRedisTotp().get(chave).catch(() => null)) || null;
+  const passo = totp.verificarCodigo(segredo, codigo, { ultimoPassoUsado: ultimo });
+  if (passo === null) return false;
+  await obterRedisTotp().set(chave, String(passo), 'EX', 300).catch(() => {});
+  return true;
+}
+
+roteador.post('/2fa/configurar', middlewareAutenticacao, limitadorLogin, async (req, res) => {
+  try {
+    const usuario = await prisma.usuario.findUnique({ where: { id: req.usuario.id }, select: { id: true, email: true, totpAtivo: true } });
+    if (!usuario) return res.status(404).json({ erro: 'Usuario nao encontrado' });
+    if (usuario.totpAtivo) return res.status(409).json({ erro: 'O código em 2 etapas já está ativo.' });
+    const segredo = totp.gerarSegredo();
+    await prisma.usuario.update({ where: { id: usuario.id }, data: { totpSegredoCifrado: totp.cifrarSegredo(usuario.id, segredo), totpAtivo: false } });
+    const otpauth = totp.urlOtpauth({ segredo, conta: usuario.email, emissor: req.usuario.perfil === 'ADMIN' ? 'Sellergy Admin' : 'Sellergy' });
+    const qrCode = await require('qrcode').toDataURL(otpauth);
+    res.json({ segredo, otpauth, qrCode });
+  } catch (erro) {
+    console.error('[auth/2fa/configurar]', erro);
+    res.status(500).json({ erro: 'Erro ao configurar o código em 2 etapas' });
+  }
+});
+
+roteador.post('/2fa/ativar', middlewareAutenticacao, limitadorLogin, async (req, res) => {
+  try {
+    const usuario = await prisma.usuario.findUnique({ where: { id: req.usuario.id } });
+    if (!usuario?.totpSegredoCifrado) return res.status(400).json({ erro: 'Configure primeiro.' });
+    if (!(await conferirCodigoTotp(usuario, req.body?.codigo))) {
+      return res.status(422).json({ erro: 'Código incorreto. Confira o horário do celular e tente de novo.' });
+    }
+    const atualizado = await prisma.usuario.update({ where: { id: usuario.id }, data: { totpAtivo: true } });
+    // Sessao nova ja marcada com o segundo fator.
+    await responderSessao(res, atualizado, { mfa: true });
+  } catch (erro) {
+    console.error('[auth/2fa/ativar]', erro);
+    res.status(500).json({ erro: 'Erro ao ativar o código em 2 etapas' });
+  }
+});
+
+roteador.post('/2fa/desativar', middlewareAutenticacao, limitadorLogin, async (req, res) => {
+  try {
+    const usuario = await prisma.usuario.findUnique({ where: { id: req.usuario.id } });
+    if (!usuario?.totpAtivo) return res.status(400).json({ erro: 'O código em 2 etapas não está ativo.' });
+    if (usuario.perfil === 'ADMIN' && process.env.ADMIN_2FA_OBRIGATORIO === 'true') {
+      return res.status(403).json({ erro: 'Para o administrador o código em 2 etapas é obrigatório.' });
+    }
+    const senhaOk = await bcrypt.compare(String(req.body?.senha || ''), usuario.senha);
+    if (!senhaOk || !(await conferirCodigoTotp(usuario, req.body?.codigo))) {
+      return res.status(401).json({ erro: 'Senha ou código incorretos.' });
+    }
+    await prisma.usuario.update({ where: { id: usuario.id }, data: { totpAtivo: false, totpSegredoCifrado: null } });
+    res.json({ ok: true });
+  } catch (erro) {
+    console.error('[auth/2fa/desativar]', erro);
+    res.status(500).json({ erro: 'Erro ao desativar o código em 2 etapas' });
   }
 });
 
@@ -149,6 +286,7 @@ roteador.get('/perfil', middlewareAutenticacao, async (req, res) => {
         deveTrocarSenha: true,
         permissoes: true,
         foto: true,
+        totpAtivo: true,
       }
     });
     if (!usuario) return res.status(404).json({ erro: 'Usuario nao encontrado' });
@@ -176,6 +314,8 @@ roteador.get('/perfil', middlewareAutenticacao, async (req, res) => {
       segmento,
       branding,
       horarioFuncionamento,
+      mfa: req.usuario.mfa === true,
+      admin2faObrigatorio: process.env.ADMIN_2FA_OBRIGATORIO === 'true',
       // Reentrega o segredo de CSRF: o front guarda so em memoria, entao a cada
       // recarga da pagina ele precisa receber o valor de novo por aqui.
       csrfToken: req.sessaoPorCookie ? garantirCsrf(req, res) : null,

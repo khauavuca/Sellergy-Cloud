@@ -18,6 +18,7 @@ const {
   requerPapelPrivilegiado,
 } = require('../middlewares/permissoes.middleware');
 const { carregarCredencialDecifrada } = require('../credenciais');
+const { exigirRecursoNaEscrita } = require('../planos/recursos');
 const {
   criarProvedor,
   PROVEDORES,
@@ -33,6 +34,8 @@ const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
 roteador.use(requerModuloLiberado('FISCAL'));
 roteador.use(requerPapelPrivilegiado);
+// Nota fiscal: plano Profissional para cima (a tela carrega e mostra o upgrade).
+roteador.use(exigirRecursoNaEscrita('notaFiscal'));
 
 const TIPOS = ['NFCE', 'NFSE'];
 const AMBIENTES = ['HOMOLOGACAO', 'PRODUCAO'];

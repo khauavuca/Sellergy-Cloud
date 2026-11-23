@@ -1,6 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
+// Os testes conferem o padrao de producao: o modulo le o ambiente ao carregar,
+// entao um .env de desenvolvimento (ex.: COOKIE_SAMESITE=lax) nao pode vazar.
+delete process.env.COOKIE_SAMESITE;
+delete process.env.COOKIE_SECURE;
+delete process.env.COOKIE_DOMINIO;
+
 const {
   NOME_SESSAO,
   NOME_CSRF,

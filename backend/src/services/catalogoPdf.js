@@ -143,18 +143,69 @@ function montarHtml({ nomeNegocio, produtos, config }) {
  * chamada — gerar catalogo nao e operacao de alta frequencia (poucas vezes
  * por dia por tenant); manter um browser aberto o tempo todo custaria mais
  * memoria do que economizaria tempo.
- * `--no-sandbox`: necessario porque o container roda como root (Chromium
- * recusa o proprio sandbox interno rodando como root) — o isolamento aqui e
- * o container em si, nao o sandbox do Chromium.
+ * `--no-sandbox`: em producao o container roda como usuario sem privilegio,
+ * com `cap_drop: ALL` e `no-new-privileges` (docker-compose.prod.yml) — sem
+ * essas capacidades o sandbox interno do Chromium (namespaces/setuid) nao
+ * consegue subir. O isolamento aqui e o container em si (usuario `node`,
+ * sistema de arquivos so-leitura, sem capabilities), nao o sandbox do Chromium.
+ * O HTML renderizado e montado pelo proprio sistema (montarHtml escapa os
+ * campos do tenant), nunca uma URL externa.
+ *
+ * Memoria (VPS de 1 GB): cada Chromium aberto puxa 200-400 MB. Por isso
+ *  - uma renderizacao por vez por processo (fila em `filaRenderizacao`): dois
+ *    catalogos pedidos juntos esperam um ao outro em vez de abrir 2 browsers;
+ *  - flags que cortam processos/caches que o PDF nao usa (GPU, extensoes,
+ *    zygote, /dev/shm pequeno do Docker).
  */
-async function renderizarPdf(html) {
+const ARGS_CHROMIUM = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-gpu',
+  '--disable-extensions',
+  '--disable-background-networking',
+  '--disable-default-apps',
+  '--disable-sync',
+  '--no-first-run',
+  '--no-zygote',
+  '--mute-audio',
+  '--js-flags=--max-old-space-size=96',
+];
+
+function hostsPermitidos() {
+  const hosts = new Set();
+  // Em dev a midia pode estar no endpoint interno; em producao, nunca.
+  const internoEmDev = process.env.NODE_ENV === 'production' ? null : process.env.MINIO_ENDPOINT;
+  for (const v of [process.env.MINIO_PUBLIC_ENDPOINT, process.env.PDF_HOSTS_PERMITIDOS, internoEmDev]) {
+    for (const item of String(v || '').split(',').map((x) => x.trim()).filter(Boolean)) {
+      try { hosts.add(new URL(item.includes('://') ? item : `https://${item}`).host); } catch { /* ignora */ }
+    }
+  }
+  return hosts;
+}
+
+function requisicaoPermitida(url) {
+  if (url.startsWith('data:') || url.startsWith('about:')) return true;
+  try {
+    const u = new URL(url);
+    return ['https:', 'http:'].includes(u.protocol) && hostsPermitidos().has(u.host);
+  } catch { return false; }
+}
+
+let filaRenderizacao = Promise.resolve();
+
+async function renderizarAgora(html) {
   const browser = await puppeteer.launch({
     executablePath: CHROMIUM_PATH,
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    args: ARGS_CHROMIUM,
   });
   try {
     const page = await browser.newPage();
+    // Anti-SSRF: a URL da imagem vem do cliente. O Chromium so pode buscar o
+    // dominio publico de midia; nada de rede interna (minio:9000, 169.254...).
+    await page.setRequestInterception(true);
+    page.on('request', (r) => (requisicaoPermitida(r.url()) ? r.continue() : r.abort('blockedbyclient')));
     await page.setContent(html, { waitUntil: 'networkidle0' });
     return await page.pdf({ format: 'A4', printBackground: true, margin: { top: '10mm', bottom: '10mm', left: '8mm', right: '8mm' } });
   } finally {
@@ -162,4 +213,11 @@ async function renderizarPdf(html) {
   }
 }
 
-module.exports = { montarHtml, renderizarPdf, formatarPreco };
+function renderizarPdf(html) {
+  const resultado = filaRenderizacao.then(() => renderizarAgora(html));
+  // A fila segue mesmo se esta renderizacao falhar.
+  filaRenderizacao = resultado.catch(() => {});
+  return resultado;
+}
+
+module.exports = { montarHtml, renderizarPdf, formatarPreco, requisicaoPermitida };

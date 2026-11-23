@@ -90,11 +90,13 @@ roteador.post('/whatsapp', async (req, res) => {
 
         for (const msg of mensagens) {
           const de = msg.from;
-          const texto = msg.text?.body || msg.button?.text || msg.interactive?.list_reply?.title || '';
+          const texto = msg.text?.body || msg.button?.text || msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || '';
           // canalContexto: so usado por ferramentas que enviam midia direto
           // (ex.: CATALOGO manda o PDF como documento, fora da resposta de texto).
+          // Botao de resposta rapida (template de lembrete) chega com payload.
+          const payload = msg.button?.payload || msg.interactive?.button_reply?.id || null;
           await processarMensagemRecebida({
-            bot, texto, de, faqs, adapter,
+            bot, texto, de, faqs, adapter, payload,
             canalContexto: { phoneNumberId, token, telefoneCliente: de },
           });
           // TODO(seam): resposta.encaminhar -> notificar a equipe (fila/atendimento).

@@ -1,6 +1,8 @@
 const prisma = require('../prisma');
 const { helpers: caixaHelpers } = require('./CaixaController');
 const { criarVenda } = require('../services/vendaService');
+const { obterOuAbrirSessaoCaixa } = require('../services/caixaAutomatico');
+const { lockClienteAdvisory } = require('../utils/locks');
 const { validarCpf } = require('../utils/validacaoFiscal');
 const { buscarCupom, validarCupom } = require('../services/cupomService');
 
@@ -209,9 +211,19 @@ class VendaController {
         cupomAplicado = { cupomId: cupom.id, valorComDesconto: resultado.valorComDesconto };
       }
 
-      // Venda manual EXIGE caixa aberto. Sem caixa, retorna 409 com codigo
-      // pra frontend mostrar dialogo amigavel "Abra o caixa antes".
-      const sessaoAberta = await caixaHelpers.buscarSessaoAberta(clienteId);
+      // Sem caixa aberto: se o tenant usa caixa automatico (padrao), abre um
+      // agora com o fundo do ultimo fechamento. Desligado, volta a exigir
+      // abertura manual (409 com codigo pro front mostrar o aviso).
+      let sessaoAberta = await caixaHelpers.buscarSessaoAberta(clienteId);
+      if (!sessaoAberta) {
+        const cfg = await prisma.cliente.findUnique({ where: { id: clienteId }, select: { caixaAutomatico: true } });
+        if (cfg?.caixaAutomatico) {
+          sessaoAberta = await prisma.$transaction(async (tx) => {
+            await lockClienteAdvisory(tx, clienteId);
+            return (await obterOuAbrirSessaoCaixa(tx, clienteId)).sessao;
+          });
+        }
+      }
       if (!sessaoAberta) {
         return res.status(409).json({
           error: 'Abra o caixa antes de registrar a venda. Ele controla o saldo do dia e fica disponível em Financeiro · Caixa.',

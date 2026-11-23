@@ -9,12 +9,18 @@
 // Para registrar um job: crie a Queue em ./filas, instancie um `new Worker(...)`
 // aqui com sua conexão própria, e trate o shutdown abaixo.
 const path = require('path');
+// Marca o processo: modulos que precisam do socket do QR Code (so existe
+// aqui) sabem que podem enviar direto em vez de enfileirar.
+process.env.SELLERGY_PROCESSO = 'worker';
 require('dotenv').config();
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
+// Em producao nao sobe com segredo fraco, faltando ou valor de exemplo.
+require('./seguranca/validarAmbiente').garantirAmbienteSeguro();
 
-const { Worker } = require('bullmq');
-const { criarConexaoRedis, NOME_FILA_CAMPANHA, NOME_FILA_CAMPANHA_BAILEYS, NOME_FILA_BAILEYS_COMANDO } = require('./filas');
-const { processarEnvioCampanha } = require('./services/campanhaService');
+const { Worker, DelayedError } = require('bullmq');
+const { criarConexaoRedis, NOME_FILA_CAMPANHA, NOME_FILA_CAMPANHA_BAILEYS, NOME_FILA_BAILEYS_COMANDO, NOME_FILA_AVISO_PLATAFORMA } = require('./filas');
+const { processarEnvioCampanha, numeroDoEnvio } = require('./services/campanhaService');
+const envioHumano = require('./services/baileys/envioHumano');
 const gerenciadorConexaoBaileys = require('./services/baileys/gerenciadorConexao');
 
 // Conexão base mantida viva para o processo continuar disponível ao orquestrador
@@ -40,18 +46,25 @@ workerCampanha.on('failed', (job, err) => {
 });
 consumidores.push(workerCampanha);
 
-// CAMPANHA-DISPARO-BAILEYS — fila propria (nao a de cima), pra ter um
-// espacamento MUITO mais conservador. O pacing real vem do `delay` calculado
-// por job em filas/index.js (intervalo-base + jitter) — este limiter aqui e
-// so uma rede de seguranca, nao o mecanismo principal de espacamento.
+// CAMPANHA-DISPARO-BAILEYS — cada job pede a vez ao "envio humano" (cota
+// diaria com aquecimento, horario comercial, disjuntor de falhas). Se nao e a
+// vez, o job volta pra fila com o atraso certo, sem gastar tentativa. A
+// concorrencia > 1 deixa numeros de clientes diferentes andarem em paralelo;
+// o espacamento entre mensagens do MESMO numero e garantido no Redis.
 const workerCampanhaBaileys = new Worker(
   NOME_FILA_CAMPANHA_BAILEYS,
-  async (job) => processarEnvioCampanha(job.data.campanhaEnvioId),
-  {
-    connection: criarConexaoRedis({ paraWorker: true }),
-    concurrency: 1,
-    limiter: { max: 10, duration: 60_000 },
+  async (job, token) => {
+    const numero = await numeroDoEnvio(job.data.campanhaEnvioId);
+    if (numero) {
+      const vaga = await envioHumano.reservarCampanha(numero);
+      if (!vaga.agora) {
+        await job.moveToDelayed(Date.now() + vaga.esperarMs, token);
+        throw new DelayedError();
+      }
+    }
+    return processarEnvioCampanha(job.data.campanhaEnvioId);
   },
+  { connection: criarConexaoRedis({ paraWorker: true }), concurrency: 4 },
 );
 workerCampanhaBaileys.on('failed', (job, err) => {
   console.error(`[worker:${NOME_FILA_CAMPANHA_BAILEYS}] job ${job?.id} falhou:`, err?.message);
@@ -78,17 +91,41 @@ workerBaileysComando.on('failed', (job, err) => {
 });
 consumidores.push(workerBaileysComando);
 
+// AVISO-PLATAFORMA — WhatsApp do proprio Sellergy pros clientes (gerado
+// pela API, ex.: webhook de pagamento). Envio direto daqui, onde o socket vive.
+const workerAvisoPlataforma = new Worker(
+  NOME_FILA_AVISO_PLATAFORMA,
+  async (job) => {
+    const { avisarNoWhatsapp } = require('./assinatura/avisos');
+    const r = await avisarNoWhatsapp(job.data.clienteId, job.data.texto);
+    if (!r?.ok && r?.motivo === 'SOCKET_INDISPONIVEL') throw new Error('socket do Sellergy indisponivel'); // tenta de novo
+  },
+  { connection: criarConexaoRedis({ paraWorker: true }), concurrency: 1 },
+);
+workerAvisoPlataforma.on('failed', (job, err) => {
+  console.error(`[worker:${NOME_FILA_AVISO_PLATAFORMA}] job ${job?.id} falhou:`, err?.message);
+});
+consumidores.push(workerAvisoPlataforma);
+
 // Reconecta sozinho os bots Baileys que já estavam pareados antes do worker
 // reiniciar (deploy, crash) — sem isso o tenant precisaria escanear o QR de
 // novo toda vez que o container sobe.
 gerenciadorConexaoBaileys.reconectarBotsPareados()
   .catch((e) => console.error('[worker] falha ao reconectar bots Baileys no boot:', e?.message));
 
-console.log(`[worker] iniciado · consumidores registrados: ${NOME_FILA_CAMPANHA}, ${NOME_FILA_CAMPANHA_BAILEYS}, ${NOME_FILA_BAILEYS_COMANDO}`);
+// Fase 1: lembrete/confirmacao de agendamento (a cada 5 min — precisa rodar
+// AQUI porque o socket do canal QR Code so existe neste processo) e a rotina
+// diaria das assinaturas (faturas, atraso, aviso de fim de teste).
+const pararLembretes = require('./agenda/lembretes').iniciarCicloLembretes();
+const pararAssinaturas = require('./assinatura/cobranca').iniciarRotinaAssinaturas();
+
+console.log(`[worker] iniciado · filas: ${NOME_FILA_CAMPANHA}, ${NOME_FILA_CAMPANHA_BAILEYS}, ${NOME_FILA_BAILEYS_COMANDO}, ${NOME_FILA_AVISO_PLATAFORMA}`);
 
 async function shutdown(sinal) {
   console.log(`[worker] sinal ${sinal} recebido, encerrando...`);
   try {
+    pararLembretes();
+    pararAssinaturas();
     for (const w of consumidores) await w.close();
     await conexao.quit();
   } catch (err) {

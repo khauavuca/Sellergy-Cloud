@@ -5,6 +5,8 @@
 const path = require('path');
 require('dotenv').config();
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
+// Em producao nao sobe com segredo fraco, faltando ou valor de exemplo.
+require('./seguranca/validarAmbiente').garantirAmbienteSeguro();
 
 const express = require('express');
 const cors = require('cors');
@@ -172,6 +174,11 @@ app.use('/campanhas', rotasCampanhas);
 app.use('/faq', rotasFaq);
 app.use('/pagamentos', rotasPagamentos);
 app.use('/fiscal', rotasFiscal);
+// Fase 1: conta (plano, assinatura, assistente de inicio) e rotas publicas
+// (agendamento pelo link, confirmacao do lembrete, planos da landing).
+app.use('/conta', require('./routes/conta.routes'));
+app.use('/publico', require('./routes/publico.routes'));
+app.use('/admin/assinaturas', require('./routes/assinaturas.routes'));
 
 // Webhooks externos — SEM autenticacao de usuario (o chamador e o provedor/Meta;
 // a autenticidade vem da assinatura/verify token validada no handler).

@@ -19,12 +19,16 @@ const METODOS_SEGUROS = new Set(['GET', 'HEAD', 'OPTIONS']);
 // Isencoes — cada uma justificada, nao ha isencao "por conveniencia":
 // - /webhooks: o chamador e o provedor externo (Meta, PSP). Nao existe cookie
 //   envolvido e a autenticidade vem da assinatura HMAC conferida no handler.
-// - login/registrar: ainda nao ha sessao para proteger.
+// - login/cadastro/registrar: ainda nao ha sessao para proteger.
+// - /publico: paginas abertas (agendamento, confirmacao) que nao usam a
+//   sessao — quem chama e o cliente final, sem login. As rotas de /publico
+//   nunca leem o cookie de sessao, entao nao ha o que falsificar.
 // - logout: encerrar a sessao a forca nao causa dano, e travar aqui deixaria o
 //   usuario preso na sessao caso o segredo se perdesse.
 const ISENTOS = [
   /^\/webhooks(\/|$)/,
-  /^\/autenticacao\/(login|registrar|logout)$/,
+  /^\/autenticacao\/(login|login\/2fa|cadastro|registrar|logout)$/,
+  /^\/publico(\/|$)/,
 ];
 
 function segredosConferem(a, b) {

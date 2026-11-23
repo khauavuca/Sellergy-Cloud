@@ -35,6 +35,15 @@ const middlewareAutenticacao = (req, res, next) => {
     // Sinaliza a origem da credencial: so a sessao por cookie e enviada
     // automaticamente pelo navegador, logo so ela precisa de defesa de CSRF.
     req.sessaoPorCookie = Boolean(tokenCookie);
+
+    // ADMIN sem segundo fator so alcanca o necessario pra configura-lo.
+    if (process.env.ADMIN_2FA_OBRIGATORIO === 'true' && decodificado.perfil === 'ADMIN' && !decodificado.mfa) {
+      const caminho = (req.originalUrl || '').split('?')[0];
+      const liberado = /^\/autenticacao\/(perfil|2fa\/configurar|2fa\/ativar|logout|trocar-senha)$/.test(caminho);
+      if (!liberado) {
+        return res.status(403).json({ erro: 'Ative o código em 2 etapas para usar o painel de administração.', codigo: 'ADMIN_2FA_OBRIGATORIO' });
+      }
+    }
     return next();
   } catch (erro) {
     return res.status(401).json({ erro: 'Token invalido ou expirado' });

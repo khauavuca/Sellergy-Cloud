@@ -20,6 +20,7 @@
 // pra uma proxima rodada.
 
 const prisma = require('../prisma');
+const { tratarRespostaWhatsapp } = require('../agenda/respostaLembrete');
 const { montarRespostaBot } = require('./iaRouter');
 const { reabrirLeadSeFechado } = require('./etapaLeadAuto');
 
@@ -57,7 +58,19 @@ async function reabrirLeadPorTelefone(clienteId, telefoneRemetente) {
  * }} p
  * @returns {Promise<{texto?:string}|null>} resposta montada (pra log/depuracao de quem chama)
  */
-async function processarMensagemRecebida({ bot, texto, de, faqs, canalContexto, adapter }) {
+async function processarMensagemRecebida({ bot, texto, de, faqs, canalContexto, adapter, payload = null }) {
+  // Resposta a lembrete de agendamento ("1"/"2" ou botao do template) tem
+  // prioridade sobre o bot: confirma/remarca e responde, sem cair no FAQ/IA.
+  try {
+    const lembrete = await tratarRespostaWhatsapp({ clienteId: bot.clienteId, de, texto, payload });
+    if (lembrete.tratado) {
+      if (adapter && lembrete.resposta) await adapter.enviarTexto({ para: de, texto: lembrete.resposta });
+      return { texto: lembrete.resposta, origem: 'LEMBRETE' };
+    }
+  } catch (e) {
+    console.error('[whatsappInbound lembrete]', e?.message);
+  }
+
   // Best-effort: cliente que ja tinha lead fechado (venda concluida) e voltou
   // a escrever, ou mandou a primeira mensagem (lead 'novo') — reabre/avanca
   // pro kanban, nao bloqueia a resposta.

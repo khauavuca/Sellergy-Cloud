@@ -1,4 +1,5 @@
 const express = require('express');
+const { uploadSeguro } = require('../seguranca/uploadSeguro');
 const NotaCompraController = require('../controllers/NotaCompraController');
 const middlewareAutenticacao = require('../middlewares/auth.middleware');
 const {
@@ -17,7 +18,7 @@ roteador.post('/', requerPermissao('ESTOQUE', 'criar'), (req, res) => NotaCompra
 roteador.post(
   '/importar-xml',
   requerPermissao('ESTOQUE', 'criar'),
-  aceitarUmXml('arquivo'),
+  aceitarUmXml('arquivo'), uploadSeguro('xml'),
   (req, res) => NotaCompraController.importarXml(req, res),
 );
 roteador.get('/:id', requerPermissao('ESTOQUE', 'visualizar'), (req, res) => NotaCompraController.buscarPorId(req, res));

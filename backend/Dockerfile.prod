@@ -1,0 +1,79 @@
+# Imagem de PRODUÇÃO do backend (API + worker), enxuta pra rodar numa VPS de 1 GB.
+# (O ./Dockerfile continua sendo o de dev, com nodemon e bind-mount.)
+#
+# Etapas:
+#  - deps    : instala TUDO (inclusive devDependencies e toolchain de compilação),
+#              gera o Prisma Client. Também é a imagem do serviço "migrate" do
+#              compose, que precisa do CLI do Prisma (devDependency) só pra rodar
+#              `prisma migrate deploy` e sair.
+#  - runtime : só as dependências de produção, sem python/make/g++. É a que fica
+#              rodando 24h (backend e worker).
+#
+# Segurança:
+#  - imagem base com tag FIXA (versão do Node + versão do Alpine). Pra atualizar,
+#    troque a tag aqui conscientemente (Node 20 saiu de suporte em abr/2026; 22 é
+#    LTS até abr/2027);
+#  - o runtime roda como o usuário `node` (uid 1000), NÃO como root;
+#  - o código e o node_modules ficam com dono root e só-leitura pro `node`: um
+#    invasor que consiga executar código na API não consegue reescrever a própria
+#    aplicação (e o compose ainda monta o sistema de arquivos como read_only).
+
+# ---- etapa 1: deps ----
+FROM node:22.21.1-alpine3.22 AS deps
+WORKDIR /app
+
+# Toolchain pra compilar addons nativos (só nesta etapa) + OpenSSL do Prisma.
+RUN apk add --no-cache openssl python3 make g++ linux-headers
+
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
+COPY package*.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY prisma ./prisma/
+RUN npx prisma generate
+
+COPY . .
+
+# ---- etapa 2: prune (tira as devDependencies, mantendo o client gerado) ----
+FROM deps AS prune
+RUN npm prune --omit=dev --no-audit --no-fund && npm cache clean --force
+
+# ---- etapa 3: runtime ----
+FROM node:22.21.1-alpine3.22 AS runtime
+WORKDIR /app
+
+# OpenSSL (Prisma) + Chromium do sistema (PDF do catálogo via puppeteer-core) +
+# tini (PID 1 que repassa sinais e recolhe processos-filho do Chromium).
+RUN apk add --no-cache openssl chromium tini
+
+# TZ: a agenda calcula horarios livres e lembretes no fuso local do processo.
+# Sem isso o container roda em UTC e 08:00 vira 05:00 no horario de Brasilia.
+# HOME/XDG apontam pro /tmp porque, em produção, só o /tmp é gravável (tmpfs do
+# compose): o Chromium grava perfil, cache e o banco do crashpad ali. Sem isso
+# ele nem abre ("chrome_crashpad_handler: --database is required").
+ENV NODE_ENV=production \
+    TZ=America/Sao_Paulo \
+    PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+    HOME=/tmp \
+    XDG_CONFIG_HOME=/tmp/.config \
+    XDG_CACHE_HOME=/tmp/.cache \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
+
+COPY --from=prune /app/node_modules ./node_modules
+COPY --from=prune /app/package.json ./package.json
+COPY --from=prune /app/prisma ./prisma
+COPY --from=prune /app/src ./src
+
+# Usuário sem privilégio (já existe na imagem oficial do Node, uid/gid 1000).
+# Os arquivos acima ficam com dono root: o processo lê, mas não altera.
+USER node
+
+EXPOSE 3333
+
+# `node` direto (sem `npm start`): o processo do npm ficaria residente na
+# memória à toa (~30-40 MB) e não repassa SIGTERM direito.
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "src/index.js"]

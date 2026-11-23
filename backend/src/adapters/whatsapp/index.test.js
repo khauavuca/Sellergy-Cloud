@@ -66,7 +66,8 @@ test('BAILEYS em modo live com socket chama sendMessage e devolve idMensagem', c
   };
   const wpp = criar('BAILEYS', { modo: 'live', socket: socketFake });
   const r = await wpp.enviarTexto({ para: '5562999998888', texto: 'oi' });
-  assert.deepEqual(r, { ok: true, simulado: false, idMensagem: 'ABC123' });
+  assert.deepEqual({ ok: r.ok, simulado: r.simulado, idMensagem: r.idMensagem }, { ok: true, simulado: false, idMensagem: 'ABC123' });
+  assert.equal(r.mensagem.key.id, 'ABC123'); // a enquete precisa da mensagem inteira
 }));
 
 test('BAILEYS enviarTemplate sempre lanca (nao existe HSM no WhatsApp Web)', async () => {

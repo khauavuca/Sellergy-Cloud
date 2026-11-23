@@ -16,6 +16,14 @@ const {
   requerPermissao,
   requerPapelPrivilegiado,
 } = require('../middlewares/permissoes.middleware');
+const { garantirDentroDoLimite } = require('../planos/recursos');
+
+// Erro de limite do plano vira 403 com o codigo pro front oferecer upgrade.
+function respostaLimite(res, erro) {
+  if (erro?.codigo !== 'LIMITE_DO_PLANO') return false;
+  res.status(403).json({ erro: erro.message, codigo: erro.codigo, limite: erro.limite, maximo: erro.maximo, planoSugerido: erro.planoSugerido });
+  return true;
+}
 
 // Senha inicial do login do especialista — fixa e simples; deveTrocarSenha
 // forca a troca no primeiro acesso.
@@ -92,6 +100,14 @@ roteador.post('/', requerPapelPrivilegiado, async (req, res) => {
 
     const servicosValidos = await validarServicos(clienteId, servicosIds);
 
+    // Limite de profissionais ativos do plano (so conta quem nasce ativo).
+    if (ativo !== false) {
+      await garantirDentroDoLimite({
+        clienteId, limite: 'profissionais',
+        usoAtual: await prisma.especialista.count({ where: { clienteId, ativo: true } }),
+      });
+    }
+
     // Validacoes de leitura ANTES da transacao.
     // (1) Criar login novo (acesso) OU (2) linkar usuario existente.
     let emailNovo = null;
@@ -144,6 +160,7 @@ roteador.post('/', requerPapelPrivilegiado, async (req, res) => {
     });
     res.status(201).json(saida(especialista));
   } catch (erro) {
+    if (respostaLimite(res, erro)) return;
     console.error('[especialistas/create]', erro);
     if (erro.code === 'P2002') return res.status(400).json({ erro: 'E-mail ja cadastrado.' });
     res.status(500).json({ erro: 'Erro ao criar especialista.' });
@@ -165,6 +182,16 @@ roteador.put('/:id', requerPapelPrivilegiado, async (req, res) => {
       data.nome = nome.trim();
     }
     if (ativo !== undefined) data.ativo = ativo === true;
+    // Reativar conta no limite do plano (senao reativar burlaria o limite).
+    if (data.ativo === true) {
+      const atual = await prisma.especialista.findUnique({ where: { id: existente.id }, select: { ativo: true } });
+      if (!atual?.ativo) {
+        await garantirDentroDoLimite({
+          clienteId: existente.clienteId, limite: 'profissionais',
+          usoAtual: await prisma.especialista.count({ where: { clienteId: existente.clienteId, ativo: true } }),
+        });
+      }
+    }
     if (jornada !== undefined) data.jornada = jornada && typeof jornada === 'object' ? jornada : null;
     if (usuarioId !== undefined) {
       const vinc = await validarUsuarioVinculo({
@@ -194,6 +221,7 @@ roteador.put('/:id', requerPapelPrivilegiado, async (req, res) => {
     });
     res.json(saida(atualizado));
   } catch (erro) {
+    if (respostaLimite(res, erro)) return;
     console.error('[especialistas/update]', erro);
     res.status(500).json({ erro: 'Erro ao atualizar especialista.' });
   }
