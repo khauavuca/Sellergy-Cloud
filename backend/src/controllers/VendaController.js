@@ -1,6 +1,7 @@
 const prisma = require('../prisma');
 const { helpers: caixaHelpers } = require('./CaixaController');
 const { criarVenda } = require('../services/vendaService');
+const { gerarComissaoVenda, estornarComissaoVenda } = require('../agenda/comissoes');
 const { obterOuAbrirSessaoCaixa } = require('../services/caixaAutomatico');
 const { lockClienteAdvisory } = require('../utils/locks');
 const { validarCpf } = require('../utils/validacaoFiscal');
@@ -89,6 +90,8 @@ class VendaController {
       // cheio (~30 dias). Sistema registra 1 lancamento PAGO + nota na
       // descricao ("12x no cartao") pro relatorio mostrar.
       parcelas,
+      // Quem vendeu (profissional), pra comissao de produto. Opcional.
+      especialistaId: especialistaIdInput,
     } = req.body;
 
     // Normaliza itens: legacy -> [{ ... }]; novo -> usa direto.
@@ -247,6 +250,18 @@ class VendaController {
       // Nucleo transacional (venda + baixa de estoque + lancamento) vive em
       // services/vendaService.js — reusado tambem pela confirmacao automatica
       // de pagamento do bot (mesma logica, sem duplicar a parte arriscada).
+      // Quem vendeu: o informado (se for profissional ativa do negocio) ou,
+      // sem nada, a propria pessoa logada quando ela e uma profissional.
+      let especialistaId = null;
+      if (especialistaIdInput) {
+        const esp = await prisma.especialista.findFirst({ where: { id: String(especialistaIdInput), clienteId, ativo: true }, select: { id: true } });
+        if (!esp) return res.status(422).json({ error: 'Profissional inválida para esta venda.' });
+        especialistaId = esp.id;
+      } else if (req.usuario.id) {
+        const propria = await prisma.especialista.findFirst({ where: { usuarioId: req.usuario.id, clienteId, ativo: true }, select: { id: true } });
+        especialistaId = propria?.id || null;
+      }
+
       const resultado = await criarVenda({
         clienteId,
         sessaoCaixaId: sessaoAberta.id,
@@ -255,7 +270,18 @@ class VendaController {
         metodoPagamento: metodoPagamentoSan,
         descricaoVenda,
         cupomAplicado,
+        especialistaId,
       });
+
+      if (especialistaId) {
+        const fator = cupomAplicado && cupomAplicado.valorComDesconto !== undefined
+          ? cupomAplicado.valorComDesconto / Math.max(0.01, itensValidados.reduce((a, i) => a + i.subtotal, 0))
+          : 1;
+        await gerarComissaoVenda(prisma, {
+          venda: resultado.venda,
+          itens: itensValidados.map((i) => ({ tipo: i.variacao?.produto?.tipo, valor: i.subtotal * fator })),
+        }).catch((e) => console.error('[VendaController] comissao de produto', e?.message));
+      }
 
       return res.status(201).json({ success: true, data: resultado });
 
@@ -384,6 +410,9 @@ class VendaController {
 
         return atualizada;
       });
+
+      // Comissao de produto de quem vendeu: estorna (ou desconta, se ja paga).
+      await estornarComissaoVenda(prisma, resultado.id).catch((err) => console.error('[VendaController/cancelar] comissao', err?.message));
 
       return res.json({ ok: true, venda: resultado });
     } catch (error) {

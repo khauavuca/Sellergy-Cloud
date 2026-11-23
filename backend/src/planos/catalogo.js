@@ -12,11 +12,18 @@
 //
 // Mudar preco/limite/recurso = mudar SO este arquivo. Front le via
 // GET /publico/planos, o backend aplica via ./recursos.js.
+//
+// PRECO E LIMITES EDITAVEIS PELO ADMIN (fase 2): a tabela PlanoConfig
+// sobrepoe preco mensal e limites deste arquivo (linha ausente = vale o
+// codigo). `obterPlano` continua SINCRONO: o override fica num cache em
+// memoria (PLANOS) que ./sincronizacao.js carrega no boot, recarrega ao
+// salvar e a cada 5 min (outros processos, ex. o worker, tambem ouvem o aviso
+// pelo Redis pub/sub). Recursos (o que cada plano libera) continuam so aqui.
 // =====================================================================
 
 const ILIMITADO = Number.POSITIVE_INFINITY;
 
-const PLANOS = Object.freeze({
+const PLANOS_BASE = Object.freeze({
   BASIC: Object.freeze({
     codigo: 'BASIC',
     nome: 'Essencial',
@@ -105,8 +112,55 @@ const PLANO_DO_TRIAL = 'PRO';
 const DIAS_DE_TRIAL = 14;
 const DESCONTO_ANUAL = 0.2;
 
-const RECURSOS = Object.freeze(Object.keys(PLANOS.BASIC.recursos));
-const LIMITES = Object.freeze(Object.keys(PLANOS.BASIC.limites));
+const RECURSOS = Object.freeze(Object.keys(PLANOS_BASE.BASIC.recursos));
+const LIMITES = Object.freeze(Object.keys(PLANOS_BASE.BASIC.limites));
+
+// Cache em memoria com o plano EFETIVO (codigo + override do banco). O objeto
+// e o mesmo durante toda a vida do processo (quem importou PLANOS ve a troca);
+// cada plano dentro dele e congelado.
+const PLANOS = {};
+let overridesAtuais = [];
+
+function limitesValidos(limites) {
+  const saida = {};
+  if (!limites || typeof limites !== 'object') return saida;
+  for (const chave of LIMITES) {
+    const v = limites[chave];
+    if (v === null) saida[chave] = ILIMITADO; // null no banco = ilimitado
+    else if (Number.isInteger(v) && v >= 0) saida[chave] = v;
+  }
+  return saida;
+}
+
+/**
+ * Aplica as linhas de PlanoConfig ({ codigo, precoMensal, limites }) sobre o
+ * catalogo do codigo. Linha invalida ou de plano inexistente e ignorada.
+ */
+function aplicarOverrides(linhas = []) {
+  const porCodigo = new Map((Array.isArray(linhas) ? linhas : []).map((l) => [l?.codigo, l]));
+  overridesAtuais = [];
+  for (const [codigo, base] of Object.entries(PLANOS_BASE)) {
+    const o = porCodigo.get(codigo);
+    const preco = Number(o?.precoMensal);
+    if (!o || !Number.isFinite(preco) || preco <= 0) {
+      PLANOS[codigo] = base;
+      continue;
+    }
+    overridesAtuais.push(codigo);
+    PLANOS[codigo] = Object.freeze({
+      ...base,
+      precoMensal: Math.round(preco * 100) / 100,
+      limites: Object.freeze({ ...base.limites, ...limitesValidos(o.limites) }),
+    });
+  }
+  return PLANOS;
+}
+aplicarOverrides([]);
+
+/** Codigos com preco/limite vindos do banco (pro admin mostrar "editado"). */
+function planosPersonalizados() {
+  return [...overridesAtuais];
+}
 
 function obterPlano(codigo) {
   return PLANOS[codigo] || PLANOS.BASIC;
@@ -127,6 +181,9 @@ function planosPublicos() {
 
 module.exports = {
   PLANOS,
+  PLANOS_BASE,
+  aplicarOverrides,
+  planosPersonalizados,
   PLANO_DO_TRIAL,
   DIAS_DE_TRIAL,
   DESCONTO_ANUAL,

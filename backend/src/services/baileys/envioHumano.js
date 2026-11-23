@@ -52,6 +52,11 @@ function obterRedis() {
   return redis;
 }
 
+/** Fecha a conexao com o Redis (shutdown e testes). */
+async function fechar() {
+  if (redis) { const r = redis; redis = null; await r.quit().catch(() => r.disconnect()); }
+}
+
 function aleatorio(min, max) {
   return Math.floor(min + Math.random() * (max - min + 1));
 }
@@ -199,6 +204,7 @@ function ehPedidoDeSaida(texto) {
 }
 
 module.exports = {
+  fechar,
   aguardarVez,
   simularDigitacao,
   variarTexto,

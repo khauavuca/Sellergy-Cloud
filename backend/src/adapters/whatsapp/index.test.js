@@ -74,3 +74,6 @@ test('BAILEYS enviarTemplate sempre lanca (nao existe HSM no WhatsApp Web)', asy
   const wpp = criarProvedorWhatsapp('BAILEYS', { modo: 'fixture' });
   await assert.rejects(() => wpp.enviarTemplate({ para: 'x', nomeTemplate: 'y' }), /Templates HSM/);
 });
+
+// O envio humano abre conexao com o Redis; fecha no fim pro processo terminar.
+test.after(() => require('../../services/baileys/envioHumano').fechar());

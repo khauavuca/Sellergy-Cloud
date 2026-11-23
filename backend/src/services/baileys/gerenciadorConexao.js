@@ -115,6 +115,19 @@ async function tratarVotoEnquete(bot, key, pollUpdates) {
       await adapter.enviarTexto({ para: salvo.linha.remoteJid.split('@')[0], texto: r.mensagem });
     }
   }
+
+  // Oferta da fila de encaixe: "Quero" / "Não posso" (referenciaId = envio).
+  if (salvo.linha.tipo === 'OFERTA_ENCAIXE') {
+    const acao = /quero/i.test(escolhida) ? 'ACEITAR' : 'RECUSAR';
+    const { responderEnvio } = require('../../agenda/encaixe');
+    const r = await responderEnvio({ envioId: salvo.linha.referenciaId, acao }).catch((e) => ({ mensagem: e.status ? e.message : null }));
+    await prisma.enqueteWhatsapp.update({ where: { id: key.id }, data: { respondidaEm: new Date() } }).catch(() => {});
+    const sock = obterSocket(bot.id);
+    if (sock && r?.mensagem) {
+      const adapter = criarProvedorWhatsapp('BAILEYS', { modo: 'live', socket: sock });
+      await adapter.enviarTexto({ para: salvo.linha.remoteJid.split('@')[0], texto: r.mensagem });
+    }
+  }
 }
 
 // ---------- mensagens recebidas ----------

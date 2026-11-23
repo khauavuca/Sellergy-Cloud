@@ -6,9 +6,15 @@ const {
   ehAdmin,
   requerModuloLiberado,
   requerPermissao,
+  requerPapelPrivilegiado,
   escopoDoUsuario,
 } = require('../middlewares/permissoes.middleware');
 const { lockClienteAdvisory } = require('../utils/locks');
+const { temRecurso, CAMPOS_ASSINATURA } = require('../planos/recursos');
+const { aoLiberarHorario } = require('../agenda/eventosAgenda');
+const sinal = require('../agenda/sinal');
+const pacotes = require('../agenda/pacotes');
+const { gerarComissaoAtendimento } = require('../agenda/comissoes');
 
 // Mesmo limite usado no VendaController/tool — cobre colisao da unique
 // [clienteId, numero] quando 2+ vendas chegam no mesmo ms.
@@ -198,6 +204,147 @@ async function validarConflitosAgenda({ clienteId, dataNova, duracaoNova, telefo
   return null;
 }
 
+// Campos que os efeitos da fase 2 (encaixe, sinal, pacote, comissao) precisam
+// do agendamento ANTES de uma mudanca.
+const SELECT_ANTES = {
+  id: true, clienteId: true, data: true, duracao: true, especialistaId: true, servico: true,
+  status: true, telefoneCliente: true, nomeCliente: true, preco: true,
+  sinalStatus: true, sinalCobrancaId: true, pacoteClienteId: true,
+};
+
+function exigeTenant(req, res) {
+  if (!req.usuario?.clienteId) {
+    res.status(403).json({ erro: 'Acesso negado: usuario sem tenant.' });
+    return null;
+  }
+  return req.usuario.clienteId;
+}
+
+// =====================================================================
+// CONFIGURACAO DA AGENDA (fase 2): sinal padrao e encaixe automatico
+// =====================================================================
+roteador.get('/config', requerPermissao('AGENDA', 'visualizar'), async (req, res) => {
+  try {
+    const clienteId = exigeTenant(req, res);
+    if (!clienteId) return;
+    const cliente = await prisma.cliente.findUnique({
+      where: { id: clienteId },
+      select: { sinalPadraoPct: true, encaixeAutomatico: true, ...CAMPOS_ASSINATURA },
+    });
+    res.json({
+      sinalPadraoPct: cliente?.sinalPadraoPct ?? 0,
+      encaixeAutomatico: !!cliente?.encaixeAutomatico,
+      pagamentoConfigurado: await sinal.pagamentoConfigurado(clienteId),
+      pacotesNoPlano: cliente ? temRecurso(cliente, 'pacotes') : false,
+      prazoSinalHoras: sinal.PRAZO_PADRAO_HORAS,
+    });
+  } catch (erro) {
+    console.error('[agenda/config get]', erro);
+    res.status(500).json({ erro: 'Erro ao carregar as configurações da agenda.' });
+  }
+});
+
+roteador.put('/config', requerPapelPrivilegiado, async (req, res) => {
+  try {
+    const clienteId = exigeTenant(req, res);
+    if (!clienteId) return;
+    const { sinalPadraoPct, encaixeAutomatico } = req.body || {};
+    const data = {};
+    if (sinalPadraoPct !== undefined) {
+      const n = sinalPadraoPct === null || sinalPadraoPct === '' ? 0 : Number(sinalPadraoPct);
+      if (!Number.isInteger(n) || n < 0 || n > 100) {
+        return res.status(422).json({ erro: 'O sinal precisa ser um número inteiro de 0 a 100.', campos: ['sinalPadraoPct'] });
+      }
+      data.sinalPadraoPct = n;
+    }
+    if (encaixeAutomatico !== undefined) {
+      if (typeof encaixeAutomatico !== 'boolean') return res.status(422).json({ erro: 'Valor inválido.', campos: ['encaixeAutomatico'] });
+      data.encaixeAutomatico = encaixeAutomatico;
+    }
+    if (!Object.keys(data).length) return res.status(422).json({ erro: 'Nada para salvar.' });
+    const c = await prisma.cliente.update({ where: { id: clienteId }, data, select: { sinalPadraoPct: true, encaixeAutomatico: true } });
+    res.json({ sinalPadraoPct: c.sinalPadraoPct ?? 0, encaixeAutomatico: c.encaixeAutomatico });
+  } catch (erro) {
+    console.error('[agenda/config put]', erro);
+    res.status(500).json({ erro: 'Erro ao salvar as configurações da agenda.' });
+  }
+});
+
+// Sinal por servico: null = segue o padrao do negocio; 0 = nao cobra.
+roteador.get('/servicos/sinal', requerPermissao('AGENDA', 'visualizar'), async (req, res) => {
+  try {
+    const clienteId = exigeTenant(req, res);
+    if (!clienteId) return;
+    const servicos = await prisma.produto.findMany({
+      where: { clienteId, tipo: 'SERVICO' }, select: { id: true, sinalPercentual: true },
+    });
+    res.json(servicos);
+  } catch (erro) {
+    console.error('[agenda/servicos sinal]', erro);
+    res.status(500).json({ erro: 'Erro ao carregar o sinal dos serviços.' });
+  }
+});
+
+roteador.put('/servicos/:produtoId/sinal', requerPapelPrivilegiado, async (req, res) => {
+  try {
+    const clienteId = exigeTenant(req, res);
+    if (!clienteId) return;
+    const produto = await prisma.produto.findFirst({ where: { id: req.params.produtoId, clienteId, tipo: 'SERVICO' }, select: { id: true } });
+    if (!produto) return res.status(404).json({ erro: 'Serviço não encontrado.' });
+    const bruto = req.body?.sinalPercentual;
+    let valor = null;
+    if (bruto !== null && bruto !== undefined && bruto !== '') {
+      valor = Number(bruto);
+      if (!Number.isInteger(valor) || valor < 0 || valor > 100) {
+        return res.status(422).json({ erro: 'O sinal precisa ser um número inteiro de 0 a 100.', campos: ['sinalPercentual'] });
+      }
+    }
+    const p = await prisma.produto.update({ where: { id: produto.id }, data: { sinalPercentual: valor }, select: { id: true, sinalPercentual: true } });
+    res.json(p);
+  } catch (erro) {
+    console.error('[agenda/servico sinal put]', erro);
+    res.status(500).json({ erro: 'Erro ao salvar o sinal do serviço.' });
+  }
+});
+
+// Antes de marcar: pacotes ativos da cliente e o sinal que vale pro servico.
+//   GET /agenda/pre-agendamento?telefone=&leadId=&produtoId=&preco=
+roteador.get('/pre-agendamento', requerPermissao('AGENDA', 'visualizar'), async (req, res) => {
+  try {
+    const clienteId = exigeTenant(req, res);
+    if (!clienteId) return;
+    const telefone = typeof req.query.telefone === 'string' ? req.query.telefone : null;
+    const leadId = typeof req.query.leadId === 'string' && req.query.leadId ? req.query.leadId : null;
+    const produtoId = typeof req.query.produtoId === 'string' && req.query.produtoId ? req.query.produtoId : null;
+    const preco = Number(req.query.preco) || 0;
+
+    const cliente = await prisma.cliente.findUnique({ where: { id: clienteId }, select: CAMPOS_ASSINATURA });
+    const pacotesNoPlano = cliente ? temRecurso(cliente, 'pacotes') : false;
+    let lista = [];
+    if (pacotesNoPlano && (telefone || leadId)) {
+      if (leadId) {
+        const lead = await prisma.lead.findFirst({ where: { id: leadId, clienteId }, select: { id: true } });
+        if (!lead) return res.status(422).json({ erro: 'Cliente inválida.', campos: ['leadId'] });
+      }
+      lista = await pacotes.pacotesAtivosDaCliente({ clienteId, leadId, telefone });
+    }
+    const pct = await sinal.percentualDoServico(clienteId, produtoId);
+    res.json({
+      pacotes: lista,
+      pacotesNoPlano,
+      sinal: {
+        pct,
+        valor: sinal.valorSinal({ preco, pct }),
+        pagamentoConfigurado: await sinal.pagamentoConfigurado(clienteId),
+        prazoHoras: sinal.PRAZO_PADRAO_HORAS,
+      },
+    });
+  } catch (erro) {
+    console.error('[agenda/pre-agendamento]', erro);
+    res.status(500).json({ erro: 'Erro ao consultar pacote e sinal.' });
+  }
+});
+
 roteador.get('/', requerPermissao('AGENDA', 'visualizar'), async (req, res) => {
   try {
     const { month, year, date, inicio, fim, especialistaId, status } = req.query;
@@ -240,6 +387,22 @@ roteador.get('/', requerPermissao('AGENDA', 'visualizar'), async (req, res) => {
       orderBy: { data: 'asc' }
     });
 
+    // Saldo do pacote em cada horario que usa pacote ("pacote 3 de 10").
+    const idsPacote = [...new Set(agendamentos.map((a) => a.pacoteClienteId).filter(Boolean))];
+    if (idsPacote.length) {
+      const lista = await prisma.pacoteCliente.findMany({
+        where: { id: { in: idsPacote } },
+        select: { id: true, clienteId: true, sessoesTotal: true, sessoesUsadas: true, modelo: { select: { nome: true } } },
+      });
+      const mapa = new Map(lista.map((p) => [p.id, p]));
+      for (const a of agendamentos) {
+        const p = a.pacoteClienteId ? mapa.get(a.pacoteClienteId) : null;
+        a.pacote = p && p.clienteId === a.clienteId
+          ? { id: p.id, nome: p.modelo.nome, sessoesTotal: p.sessoesTotal, sessoesUsadas: p.sessoesUsadas, saldo: pacotes.saldoPacote(p) }
+          : null;
+      }
+    }
+
     res.json(agendamentos);
   } catch (erro) {
     console.error('[agenda/list]', erro);
@@ -254,6 +417,8 @@ roteador.post('/', requerPermissao('AGENDA', 'criar'), async (req, res) => {
       leadId, nomeCliente, telefoneCliente, data, duracao,
       servico, preco, observacoes, origem, especialistaId,
       clienteId: bodyClienteId,
+      // fase 2: servico do catalogo (sinal por servico), pacote e sinal
+      produtoId, pacoteClienteId, cobrarSinal,
     } = req.body;
 
     // Apenas ADMIN pode criar para outro tenant.
@@ -303,6 +468,31 @@ roteador.post('/', requerPermissao('AGENDA', 'criar'), async (req, res) => {
       return res.status(422).json({ erro: conflito.erro, conflito: conflito.conflito });
     }
 
+    // Pacote (opcional): da cliente, ativo, do servico, com sessao livre.
+    let pacoteIdValidado = null;
+    if (pacoteClienteId) {
+      if (typeof pacoteClienteId !== 'string') return res.status(422).json({ erro: 'Pacote inválido.', campos: ['pacoteClienteId'] });
+      const dadosPlano = await prisma.cliente.findUnique({ where: { id: clienteId }, select: CAMPOS_ASSINATURA });
+      if (!dadosPlano || !temRecurso(dadosPlano, 'pacotes')) {
+        return res.status(403).json({ erro: 'Seu plano não inclui pacotes de sessões.', codigo: 'PLANO_SEM_RECURSO', recurso: 'pacotes' });
+      }
+      try {
+        const p = await pacotes.validarUsoNoAgendamento({
+          clienteId, pacoteClienteId, leadId: leadId || null, telefone: telefoneCliente, servico, dataAgendamento: dataNova,
+        });
+        pacoteIdValidado = p.id;
+      } catch (e) {
+        if (e.status) return res.status(e.status).json({ erro: e.message, campos: e.campos });
+        throw e;
+      }
+    }
+
+    let produtoIdValidado = null;
+    if (typeof produtoId === 'string' && produtoId) {
+      const prod = await prisma.produto.findFirst({ where: { id: produtoId, clienteId }, select: { id: true } });
+      produtoIdValidado = prod?.id || null;
+    }
+
     const novoAgendamento = await prisma.agendamento.create({
       data: {
         clienteId,
@@ -316,7 +506,8 @@ roteador.post('/', requerPermissao('AGENDA', 'criar'), async (req, res) => {
         preco: parseFloat(preco) || 0,
         observacoes,
         origem: origem || 'MANUAL',
-        status: 'PENDING'
+        status: 'PENDING',
+        pacoteClienteId: pacoteIdValidado,
       }
     });
 
@@ -344,7 +535,20 @@ roteador.post('/', requerPermissao('AGENDA', 'criar'), async (req, res) => {
       });
     }
 
-    res.status(201).json(novoAgendamento);
+    // Sinal por Pix: so quando a equipe pediu, sem pacote e com valor.
+    let sinalResultado = null;
+    if (cobrarSinal === true && !pacoteIdValidado) {
+      sinalResultado = await sinal.cobrarSinal({ agendamento: novoAgendamento, produtoId: produtoIdValidado });
+    }
+    const final = sinalResultado?.cobrado
+      ? await prisma.agendamento.findUnique({ where: { id: novoAgendamento.id } })
+      : novoAgendamento;
+
+    res.status(201).json({
+      ...final,
+      sinal: sinalResultado?.cobrado ? sinalResultado.sinal : null,
+      sinalMotivo: sinalResultado && !sinalResultado.cobrado ? sinalResultado.motivo : null,
+    });
   } catch (erro) {
     console.error('[agenda/create]', erro);
     res.status(500).json({ erro: 'Erro ao salvar agendamento' });
@@ -387,11 +591,11 @@ roteador.put('/:id', requerPermissao('AGENDA', 'editar'), async (req, res) => {
     // Pega o estado antes pra calcular diff no log
     const antes = await prisma.agendamento.findUnique({
       where: { id },
-      select: {
-        nomeCliente: true, telefoneCliente: true, data: true,
-        duracao: true, servico: true, preco: true, observacoes: true, status: true,
-      },
+      select: { ...SELECT_ANTES, observacoes: true },
     });
+    if (dados.status !== undefined && !['PENDING', 'CONFIRMED', 'CANCELED', 'COMPLETED'].includes(dados.status)) {
+      return res.status(400).json({ erro: 'Status invalido' });
+    }
 
     const atualizado = await prisma.agendamento.update({
       where: { id },
@@ -422,6 +626,14 @@ roteador.put('/:id', requerPermissao('AGENDA', 'editar'), async (req, res) => {
         alteracoes,
         req,
       });
+    }
+
+    // Fase 2: cancelou ou mudou de horario -> o horario antigo vagou.
+    const cancelou = atualizado.status === 'CANCELED' && antes.status !== 'CANCELED';
+    const moveu = new Date(atualizado.data).getTime() !== new Date(antes.data).getTime() && antes.status !== 'CANCELED' && atualizado.status !== 'CANCELED';
+    const desfezConclusao = antes.status === 'COMPLETED' && atualizado.status !== 'COMPLETED';
+    if (cancelou || moveu || desfezConclusao) {
+      await aoLiberarHorario(antes, { cancelado: cancelou });
     }
 
     res.json(atualizado);
@@ -458,7 +670,10 @@ roteador.delete('/:id', requerPermissao('AGENDA', 'excluir'), async (req, res) =
       req,
     });
 
+    const antesFase2 = await prisma.agendamento.findUnique({ where: { id }, select: SELECT_ANTES });
     await prisma.agendamento.delete({ where: { id } });
+    // Fase 2: horario futuro excluido vira vaga; concluido excluido estorna.
+    if (antesFase2 && antesFase2.status !== 'CANCELED') await aoLiberarHorario(antesFase2, { cancelado: true });
     res.status(204).send();
   } catch (erro) {
     console.error('[agenda/delete]', erro);
@@ -483,10 +698,16 @@ roteador.patch('/:id/status', requerPermissao('AGENDA', 'editar'), async (req, r
     // checa o estado ATUAL antes da mudanca, e PENDING nao trava).
     if (ehImutavel(existente)) return bloqueioImutavel(res);
 
+    const antesFase2 = await prisma.agendamento.findUnique({ where: { id }, select: SELECT_ANTES });
     const atualizado = await prisma.agendamento.update({
       where: { id },
       data: { status }
     });
+
+    // Fase 2: cancelou -> vaga pra fila; desfez concluido -> estorna pacote/comissao.
+    if ((status === 'CANCELED' && existente.status !== 'CANCELED') || (existente.status === 'COMPLETED' && status !== 'COMPLETED')) {
+      await aoLiberarHorario(antesFase2, { cancelado: status === 'CANCELED' });
+    }
 
     // Log so se realmente mudou
     if (existente.status !== status) {
@@ -546,6 +767,7 @@ roteador.patch('/:id/concluir', requerPermissao('AGENDA', 'editar'), async (req,
       select: {
         id: true, clienteId: true, status: true, servico: true, preco: true,
         leadId: true, nomeCliente: true, venda: { select: { id: true } },
+        especialistaId: true, pacoteClienteId: true, sinalValor: true, sinalStatus: true,
       },
     });
     if (!ag) return res.status(404).json({ erro: 'Agendamento nao encontrado.' });
@@ -558,8 +780,10 @@ roteador.patch('/:id/concluir', requerPermissao('AGENDA', 'editar'), async (req,
 
     const metodoPagamento = typeof req.body?.metodoPagamento === 'string' && req.body.metodoPagamento.trim()
       ? req.body.metodoPagamento.trim() : null;
-    const valor = Number.isFinite(ag.preco) ? ag.preco : 0;
-    const descricao = ag.servico ? `Atendimento: ${ag.servico}` : `Atendimento de ${ag.nomeCliente}`;
+    const precoCheio = Number.isFinite(ag.preco) ? ag.preco : 0;
+    // Sinal pago por Pix ja entrou no financeiro: no balcao so cobra o resto.
+    const valorSemPacote = sinal.valorAposSinal({ preco: precoCheio, sinalValor: ag.sinalValor, sinalStatus: ag.sinalStatus });
+    const descricaoBase = ag.servico ? `Atendimento: ${ag.servico}` : `Atendimento de ${ag.nomeCliente}`;
 
     let resultado;
     let tentativa = 0;
@@ -575,6 +799,22 @@ roteador.patch('/:id/concluir', requerPermissao('AGENDA', 'editar'), async (req,
 
           const { sessao } = await obterOuAbrirSessaoCaixa(tx, ag.clienteId, {
             motivo: 'Aberto automaticamente ao concluir um atendimento sem caixa aberto.',
+          });
+
+          // Pacote: consome 1 sessao (idempotente) e o atendimento sai sem cobrar.
+          const uso = await pacotes.consumirSessao(tx, ag);
+          let valor = valorSemPacote;
+          let descricao = descricaoBase;
+          if (uso) {
+            valor = 0;
+            descricao = `${descricaoBase} (pacote: sessão ${uso.pacote.sessoesUsadas} de ${uso.pacote.sessoesTotal})`;
+          } else if (ag.sinalStatus === 'PAGO' && ag.sinalValor > 0) {
+            descricao = `${descricaoBase} (sinal de R$ ${Number(ag.sinalValor).toFixed(2).replace('.', ',')} já pago por Pix)`;
+          }
+
+          // Comissao da profissional: base = preco cheio (ou 1 sessao do pacote).
+          const comissao = await gerarComissaoAtendimento(tx, {
+            agendamento: ag, base: uso ? uso.valorSessao : precoCheio,
           });
 
           const venda = await tx.venda.create({
@@ -599,7 +839,7 @@ roteador.patch('/:id/concluir', requerPermissao('AGENDA', 'editar'), async (req,
           const agAtualizado = await tx.agendamento.update({
             where: { id: ag.id }, data: { status: 'COMPLETED' },
           });
-          return { venda, agendamento: agAtualizado };
+          return { venda, agendamento: agAtualizado, uso, comissao };
         });
         break;
       } catch (err) {
@@ -619,6 +859,11 @@ roteador.patch('/:id/concluir', requerPermissao('AGENDA', 'editar'), async (req,
       ok: true,
       agendamento: resultado.agendamento,
       venda: { id: resultado.venda.id, numero: resultado.venda.numero, valor: resultado.venda.valor },
+      pacote: resultado.uso
+        ? { id: resultado.uso.pacote.id, sessoesUsadas: resultado.uso.pacote.sessoesUsadas, sessoesTotal: resultado.uso.pacote.sessoesTotal }
+        : null,
+      sinalAbatido: !resultado.uso && ag.sinalStatus === 'PAGO' ? ag.sinalValor : 0,
+      comissao: resultado.comissao ? { valor: resultado.comissao.valor } : null,
     });
   } catch (erro) {
     console.error('[agenda/concluir]', erro);

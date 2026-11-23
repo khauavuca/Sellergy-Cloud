@@ -485,3 +485,8 @@ class CrmUsuariosController {
 module.exports = new CrmUsuariosController();
 module.exports.MODULOS_CRM = MODULOS_CRM;
 module.exports.ACOES = ACOES;
+// Reusados pelo convite da equipe (routes/publicoConvite.routes.js): quem
+// entra por convite ganha as mesmas permissoes de quem e criado pela tela.
+module.exports.gerarPermissoesCompletas = gerarPermissoesCompletas;
+module.exports.sanitizarPermissoes = sanitizarPermissoes;
+module.exports.garantirAgendaPropria = garantirAgendaPropria;

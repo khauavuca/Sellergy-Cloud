@@ -137,14 +137,31 @@ const limitadorAssinatura = rateLimit({
 roteador.post('/assinar', limitadorAssinatura, async (req, res) => {
   try {
     if (req.usuario.perfil !== 'CLIENT') return res.status(403).json({ erro: 'Só o dono da conta pode escolher o plano.' });
-    const { plano, ciclo = 'MENSAL', formaPagamento = 'UNDEFINED', cpfCnpj } = req.body || {};
+    const { plano, ciclo = 'MENSAL', formaPagamento = 'UNDEFINED', cpfCnpj, cupom } = req.body || {};
     if (!['BASIC', 'PRO', 'PREMIUM'].includes(plano)) return res.status(422).json({ erro: 'Plano inválido.', campos: ['plano'] });
     if (!['MENSAL', 'ANUAL'].includes(ciclo)) return res.status(422).json({ erro: 'Ciclo inválido.', campos: ['ciclo'] });
     if (!['PIX', 'CREDIT_CARD', 'BOLETO', 'UNDEFINED'].includes(formaPagamento)) return res.status(422).json({ erro: 'Forma de pagamento inválida.', campos: ['formaPagamento'] });
     if (cpfCnpj !== undefined && cpfCnpj !== null && cpfCnpj !== '' && !validarDocumento(cpfCnpj)) {
       return res.status(422).json({ erro: 'CPF ou CNPJ inválido.', campos: ['cpfCnpj'] });
     }
-    const r = await assinarPlano(req.usuario.clienteId, plano, { ciclo, formaPagamento, cpfCnpj: cpfCnpj ? String(cpfCnpj).replace(/\D/g, '') : undefined });
+    // Cupom (cadastrado no painel admin, Planos e precos).
+    let extra = {};
+    let cupomUsado = null;
+    if (cupom) {
+      const { lerCupons, gravarCupons, validarCupomParaAssinatura } = require('../admin/planos');
+      const cupons = await lerCupons();
+      const v = validarCupomParaAssinatura(cupons, cupom);
+      if (!v.ok) return res.status(422).json({ erro: v.erro, campos: ['cupom'] });
+      cupomUsado = v.cupom;
+      if (cupomUsado.tipo === 'MESES_GRATIS') extra = { carenciaMeses: cupomUsado.valor };
+      else extra = { mensalidade: Math.round(obterPlano(plano).precoMensal * (1 - cupomUsado.valor / 100) * 100) / 100 };
+      await gravarCupons(cupons.map((c) => (c.codigo === cupomUsado.codigo ? { ...c, usos: (c.usos || 0) + 1 } : c)));
+    }
+    const r = await assinarPlano(req.usuario.clienteId, plano, { ciclo, formaPagamento, cpfCnpj: cpfCnpj ? String(cpfCnpj).replace(/\D/g, '') : undefined, ...extra });
+    if (cupomUsado?.tipo === 'PERCENTUAL' && cupomUsado.duracaoMeses) {
+      const { registrarDescontoTemporario, somarMeses } = require('../assinatura/cobranca');
+      await registrarDescontoTemporario(req.usuario.clienteId, somarMeses(new Date(), cupomUsado.duracaoMeses));
+    }
     res.status(201).json({
       plano: obterPlano(r.cliente.plano).nome,
       ciclo: r.cliente.cicloAssinatura,

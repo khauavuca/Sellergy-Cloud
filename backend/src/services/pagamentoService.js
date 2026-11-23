@@ -1,10 +1,44 @@
 // Nucleo de criacao de cobranca — extraido de pagamentos.routes.js pra ser
 // reusado pela ferramenta GERAR_COBRANCA_PIX do bot (mesma logica, sem
 // duplicar a parte que fala com o PSP).
+//
+// Modo e ambiente do PSP do tenant (fase 2):
+//   - modo 'live' (bate no PSP de verdade) quando PAGAMENTO_LIVE=true; sem
+//     isso fica 'fixture' (monta o request mas devolve dado de teste) — o
+//     padrao em dev e nos testes;
+//   - ambiente (producao x sandbox) vem da credencial (`dados.ambiente`, que a
+//     subconta aberta pela plataforma ja grava) e, sem isso, de
+//     PAGAMENTO_AMBIENTE_PADRAO; sem nenhum dos dois, live = producao e
+//     fixture = homologacao.
 
 const prisma = require('../prisma');
 const { carregarCredencialDecifrada } = require('../credenciais');
 const { criarProvedor } = require('../adapters/pagamento');
+
+/** 'live' so com PAGAMENTO_LIVE=true; qualquer outra coisa = 'fixture'. */
+function modoPagamento(env = process.env) {
+  return String(env.PAGAMENTO_LIVE || '').trim().toLowerCase() === 'true' ? 'live' : 'fixture';
+}
+
+/** Traduz os nomes aceitos pro vocabulario dos adapters: 'producao' | 'homologacao'. */
+function normalizarAmbiente(valor) {
+  const v = String(valor || '').trim().toLowerCase();
+  if (['producao', 'produção', 'production', 'prod'].includes(v)) return 'producao';
+  if (['sandbox', 'homologacao', 'homologação', 'teste', 'test', 'dev'].includes(v)) return 'homologacao';
+  return null;
+}
+
+/** Ambiente efetivo: credencial > PAGAMENTO_AMBIENTE_PADRAO > padrao do modo. */
+function ambienteDaCredencial(credencial, env = process.env) {
+  return normalizarAmbiente(credencial?.dados?.ambiente)
+    || normalizarAmbiente(env.PAGAMENTO_AMBIENTE_PADRAO)
+    || (modoPagamento(env) === 'live' ? 'producao' : 'homologacao');
+}
+
+/** Opcoes pro criarProvedor a partir da credencial decifrada. */
+function opcoesDoProvedor(credencial, env = process.env) {
+  return { credencial, modo: modoPagamento(env), ambiente: ambienteDaCredencial(credencial, env) };
+}
 
 /**
  * Monta o provedor do tenant a partir da config + credencial cifrada do cofre.
@@ -15,10 +49,16 @@ const { criarProvedor } = require('../adapters/pagamento');
 async function provedorDoTenant(clienteId) {
   const config = await prisma.configuracaoPagamento.findUnique({ where: { clienteId } });
   if (!config || !config.ativo) {
-    throw Object.assign(new Error('Pagamento nao configurado ou inativo para este tenant.'), { status: 400 });
+    throw Object.assign(new Error('Pagamento nao configurado ou inativo para este tenant.'), { status: 400, codigo: 'PAGAMENTO_NAO_CONFIGURADO' });
   }
   const credencial = await carregarCredencialDecifrada({ credencialId: config.credencialId, clienteId });
-  const psp = criarProvedor(config.provedor, { credencial, modo: 'fixture' });
+  const opcoes = opcoesDoProvedor(credencial);
+  // Em modo live, sem chave nao ha como cobrar: falha clara em vez de um 401
+  // do PSP la na frente.
+  if (opcoes.modo === 'live' && !credencial) {
+    throw Object.assign(new Error('O provedor de pagamento esta sem chave de acesso. Conecte a conta de novo.'), { status: 400, codigo: 'PAGAMENTO_SEM_CHAVE' });
+  }
+  const psp = criarProvedor(config.provedor, opcoes);
   return { config, psp };
 }
 
@@ -34,6 +74,8 @@ async function provedorDoTenant(clienteId) {
  *   pagador?:Object, itensPendentes?:Array}} p
  * `itensPendentes` (opcional): carrinho que a ferramenta do bot quer
  * confirmar como Venda quando o Pix for pago — ver services/cobrancaPagamento.js.
+ * `pagador` (opcional): { nome?, email?, telefone?, cpfCnpj? } — o Asaas exige
+ * CPF/CNPJ de quem paga em modo live.
  */
 async function criarCobranca({ clienteId, origem = 'AVULSA', refId = null, valor, metodo = 'PIX', descricao, vencimento, pagador, itensPendentes }) {
   const { config, psp } = await provedorDoTenant(clienteId);
@@ -72,4 +114,11 @@ async function criarCobranca({ clienteId, origem = 'AVULSA', refId = null, valor
   return { ...atualizada, qrCodeBase64: dto.qrCodeBase64 || null };
 }
 
-module.exports = { provedorDoTenant, criarCobranca };
+module.exports = {
+  provedorDoTenant,
+  criarCobranca,
+  modoPagamento,
+  normalizarAmbiente,
+  ambienteDaCredencial,
+  opcoesDoProvedor,
+};

@@ -8,6 +8,11 @@ const { ProvedorPagamento, STATUS } = require('./ProvedorPagamento');
 
 const BASE = 'https://api.mercadopago.com';
 
+function urlNotificacao() {
+  const base = String(process.env.API_URL_PUBLICA || '').replace(/\/$/, '');
+  return /^https:\/\//.test(base) ? `${base}/webhooks/pagamento/mercado_pago` : undefined;
+}
+
 // status do MP → status normalizado
 function normalizarStatus(s) {
   switch (s) {
@@ -45,7 +50,10 @@ class MercadoPagoAdapter extends ProvedorPagamento {
         description: descricao,
         payment_method_id: 'pix',
         external_reference: refExterna,
-        payer: { email: pagador?.email || 'sem-email@sellergy.app' },
+        payer: { email: pagador?.email || 'sem-email@sellergy.app', first_name: pagador?.nome || undefined },
+        // Com a URL publica da API configurada, o MP avisa direto a rota de
+        // webhook (sem depender de cadastro manual no painel do MP).
+        notification_url: urlNotificacao(),
       },
     };
     const raw = await this._executar(req, () => ({

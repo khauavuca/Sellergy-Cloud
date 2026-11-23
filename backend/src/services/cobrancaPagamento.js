@@ -117,6 +117,9 @@ async function aplicarEfeitoConfirmacao(cobranca) {
     + `(origem=${cobranca.origem}, ref=${cobranca.refId || '-'}, valor=${cobranca.valor}).`
   );
 
+  // Efeitos por origem (sinal, pedido, pacote): ver services/pagamentoHooks.
+  await require('./pagamentoHooks').aoConfirmarPagamento(cobranca);
+
   // So origem VENDA sem venda ainda (nasceu da ferramenta do bot, com o
   // carrinho pretendido em itensPendentes) dispara a baixa automatica.
   // Origem AGENDAMENTO/AVULSA ou VENDA que ja tem refId (cobranca avulsa de

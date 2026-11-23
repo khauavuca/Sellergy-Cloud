@@ -63,6 +63,26 @@ async function validarUsuarioVinculo({ usuarioId, clienteId, especialistaIdAtual
   return { usuarioId: u.id };
 }
 
+
+// Regra de comissao (fase 2): percentuais de 0 a 100 e valor fixo >= 0.
+// null/'' limpa o campo. Devolve { erro, campos } ou { data }.
+function lerRegraComissao(body) {
+  const data = {};
+  const campos = [];
+  const ler = (chave, max) => {
+    if (body[chave] === undefined) return;
+    if (body[chave] === null || body[chave] === '') { data[chave] = null; return; }
+    const n = Number(body[chave]);
+    if (!Number.isFinite(n) || n < 0 || (max != null && n > max)) { campos.push(chave); return; }
+    data[chave] = Math.round(n * 100) / 100;
+  };
+  ler('comissaoServicoPct', 100);
+  ler('comissaoProdutoPct', 100);
+  ler('comissaoFixa', null);
+  if (campos.length) return { erro: 'Comissão inválida: use percentuais de 0 a 100 e valor fixo a partir de zero.', campos };
+  return { data };
+}
+
 function saida(esp) {
   return {
     ...esp,
@@ -97,6 +117,9 @@ roteador.post('/', requerPapelPrivilegiado, async (req, res) => {
     if (typeof nome !== 'string' || !nome.trim()) {
       return res.status(400).json({ erro: 'nome obrigatorio.' });
     }
+
+    const regra = lerRegraComissao(req.body || {});
+    if (regra.erro) return res.status(422).json({ erro: regra.erro, campos: regra.campos });
 
     const servicosValidos = await validarServicos(clienteId, servicosIds);
 
@@ -153,6 +176,7 @@ roteador.post('/', requerPapelPrivilegiado, async (req, res) => {
           ativo: ativo === false ? false : true,
           usuarioId: usuarioIdFinal,
           jornada: jornada && typeof jornada === 'object' ? jornada : null,
+          ...regra.data,
           servicos: { create: servicosValidos.map((produtoId) => ({ produtoId })) },
         },
         include: { servicos: { select: { produtoId: true } } },
@@ -193,6 +217,9 @@ roteador.put('/:id', requerPapelPrivilegiado, async (req, res) => {
       }
     }
     if (jornada !== undefined) data.jornada = jornada && typeof jornada === 'object' ? jornada : null;
+    const regra = lerRegraComissao(req.body || {});
+    if (regra.erro) return res.status(422).json({ erro: regra.erro, campos: regra.campos });
+    Object.assign(data, regra.data);
     if (usuarioId !== undefined) {
       const vinc = await validarUsuarioVinculo({
         usuarioId, clienteId: existente.clienteId, especialistaIdAtual: existente.id,

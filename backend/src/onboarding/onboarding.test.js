@@ -47,14 +47,16 @@ test('assistente da clinica comeca pelo horario e termina no link', () => {
   assert.ok(!r.passos.some((p) => p.chave === 'produtos'));
 });
 
-test('assistente da loja: produtos -> primeira venda', () => {
+test('assistente da loja: produtos -> clientes -> primeira venda', () => {
   const r = montarPassos('PRODUTO', { ...zerado, produtosFisicos: 3 });
-  assert.equal(r.proximo, 'primeiraVenda');
+  assert.equal(r.proximo, 'clientes');
   assert.equal(r.feitos, 1);
+  const r2 = montarPassos('PRODUTO', { ...zerado, produtosFisicos: 3, clientes: 10 });
+  assert.equal(r2.proximo, 'primeiraVenda');
 });
 
 test('assistente completo quando tudo existe', () => {
-  const tudo = { temHorario: true, profissionais: 1, servicos: 1, produtosFisicos: 1, agendamentos: 1, vendas: 1, whatsappConectado: true, pagamentoConfigurado: true, agendamentosPeloLink: 1 };
+  const tudo = { clientes: 1, temHorario: true, profissionais: 1, servicos: 1, produtosFisicos: 1, agendamentos: 1, vendas: 1, whatsappConectado: true, pagamentoConfigurado: true, agendamentosPeloLink: 1 };
   assert.equal(montarPassos('HIBRIDO', tudo).completo, true);
 });
 

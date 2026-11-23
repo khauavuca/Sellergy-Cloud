@@ -16,7 +16,8 @@ const PASSOS = Object.freeze({
   horario: { titulo: 'Defina o horário de funcionamento', rota: '/app/configuracoes', concluido: (c) => c.temHorario },
   profissionais: { titulo: 'Cadastre quem atende', rota: '/app/usuarios', concluido: (c) => c.profissionais > 0 },
   servicos: { titulo: 'Cadastre seus serviços com preço e duração', rota: '/app/catalogo', concluido: (c) => c.servicos > 0 },
-  produtos: { titulo: 'Cadastre seus produtos (ou importe a planilha)', rota: '/app/catalogo', concluido: (c) => c.produtosFisicos > 0 },
+  produtos: { titulo: 'Cadastre seus produtos (ou importe a planilha)', rota: '/app/importar?tipo=produtos', concluido: (c) => c.produtosFisicos > 0 },
+  clientes: { titulo: 'Traga seus clientes (importe a planilha)', rota: '/app/importar?tipo=clientes', concluido: (c) => c.clientes > 0 },
   primeiroAgendamento: { titulo: 'Marque o primeiro atendimento', rota: '/app/agenda', concluido: (c) => c.agendamentos > 0 },
   primeiraVenda: { titulo: 'Registre a primeira venda', rota: '/app/vendas', concluido: (c) => c.vendas > 0 },
   whatsapp: { titulo: 'Conecte o WhatsApp do negócio', rota: '/app/bots', concluido: (c) => c.whatsappConectado },
@@ -25,15 +26,15 @@ const PASSOS = Object.freeze({
 });
 
 const ORDEM_POR_SEGMENTO = Object.freeze({
-  SERVICO: ['horario', 'profissionais', 'servicos', 'primeiroAgendamento', 'whatsapp', 'linkAgendamento', 'pagamento'],
-  PRODUTO: ['produtos', 'primeiraVenda', 'pagamento', 'whatsapp'],
-  HIBRIDO: ['horario', 'produtos', 'profissionais', 'servicos', 'primeiraVenda', 'primeiroAgendamento', 'whatsapp', 'pagamento'],
+  SERVICO: ['horario', 'profissionais', 'servicos', 'clientes', 'primeiroAgendamento', 'whatsapp', 'linkAgendamento', 'pagamento'],
+  PRODUTO: ['produtos', 'clientes', 'primeiraVenda', 'pagamento', 'whatsapp'],
+  HIBRIDO: ['horario', 'produtos', 'profissionais', 'servicos', 'clientes', 'primeiraVenda', 'primeiroAgendamento', 'whatsapp', 'pagamento'],
 });
 
 /**
  * Regra pura: monta o checklist a partir das contagens.
  * @param {string|null} segmento
- * @param {object} contagens  { temHorario, profissionais, servicos, produtosFisicos, agendamentos, vendas, whatsappConectado, pagamentoConfigurado, agendamentosPeloLink }
+ * @param {object} contagens  { clientes, temHorario, profissionais, servicos, produtosFisicos, agendamentos, vendas, whatsappConectado, pagamentoConfigurado, agendamentosPeloLink }
  */
 function montarPassos(segmento, contagens) {
   const ordem = ORDEM_POR_SEGMENTO[String(segmento || '').toUpperCase()] || ORDEM_POR_SEGMENTO.HIBRIDO;
@@ -55,7 +56,7 @@ function montarPassos(segmento, contagens) {
 
 /** Le as contagens do banco e devolve o checklist do tenant. */
 async function carregarPassos(clienteId) {
-  const [cliente, profissionais, servicos, produtosFisicos, agendamentos, agendamentosPeloLink, vendas, bot, pagamento] = await Promise.all([
+  const [cliente, profissionais, servicos, produtosFisicos, agendamentos, agendamentosPeloLink, vendas, bot, pagamento, clientes] = await Promise.all([
     prisma.cliente.findUnique({ where: { id: clienteId }, select: { segmento: true, horarioFuncionamento: true } }),
     prisma.especialista.count({ where: { clienteId, ativo: true } }),
     prisma.produto.count({ where: { clienteId, tipo: 'SERVICO' } }),
@@ -65,6 +66,7 @@ async function carregarPassos(clienteId) {
     prisma.venda.count({ where: { clienteId } }),
     prisma.bot.findFirst({ where: { clienteId, identificadorCanal: { not: null } }, select: { id: true } }),
     prisma.configuracaoPagamento.findUnique({ where: { clienteId }, select: { ativo: true } }),
+    prisma.lead.count({ where: { clienteId } }),
   ]);
 
   return montarPassos(cliente?.segmento, {
@@ -77,6 +79,7 @@ async function carregarPassos(clienteId) {
     vendas,
     whatsappConectado: Boolean(bot),
     pagamentoConfigurado: Boolean(pagamento?.ativo),
+    clientes,
   });
 }
 

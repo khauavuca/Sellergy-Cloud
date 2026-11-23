@@ -36,7 +36,7 @@ const MAX_RETRIES_NUMERO = 5;
  * aqui so persiste o desconto e incrementa o uso, na mesma transacao da venda.
  * @returns {Promise<{venda:Object, totalItens:number, valorTotal:number, lancamentos:Array, totalLancamentos:number}>}
  */
-async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = null, metodoPagamento = null, descricaoVenda, cupomAplicado = null, tx: txExterna }) {
+async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = null, metodoPagamento = null, descricaoVenda, cupomAplicado = null, especialistaId = null, tx: txExterna }) {
   const valorBruto = itensValidados.reduce((acc, i) => acc + i.subtotal, 0);
   const valorFinal = cupomAplicado ? cupomAplicado.valorComDesconto : valorBruto;
   // Proporcao do desconto — aplicada em cada grupo de lancamento pra soma dos
@@ -56,6 +56,7 @@ async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = n
         valorAntesDesconto: cupomAplicado ? valorBruto : null,
         metodoPagamento: metodoPagamento || null,
         descricao: descricaoVenda,
+        especialistaId: especialistaId || null,
         status: 'COMPLETED',
       },
     });

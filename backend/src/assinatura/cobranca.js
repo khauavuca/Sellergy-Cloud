@@ -138,7 +138,7 @@ async function marcarFaturaPaga(faturaId, agora = new Date(), { formaPagamento }
  * @param {{ ciclo?: 'MENSAL'|'ANUAL', formaPagamento?: string, cpfCnpj?: string, agora?: Date }} [op]
  * @returns {Promise<{ cliente: object, fatura: object|null, linkPagamento: string|null, modo: 'AUTOMATICO'|'MANUAL' }>}
  */
-async function assinarPlano(clienteId, plano, { ciclo = 'MENSAL', formaPagamento = 'UNDEFINED', cpfCnpj, agora = new Date() } = {}) {
+async function assinarPlano(clienteId, plano, { ciclo = 'MENSAL', formaPagamento = 'UNDEFINED', cpfCnpj, mensalidade, carenciaMeses = 0, agora = new Date() } = {}) {
   const atual = await prisma.cliente.findUnique({
     where: { id: clienteId },
     select: {
@@ -151,7 +151,14 @@ async function assinarPlano(clienteId, plano, { ciclo = 'MENSAL', formaPagamento
   // Assinou ainda no teste: a primeira cobranca so vence quando o teste
   // acaba (nada de cobrar pelos dias gratis). Fora do teste: em 3 dias.
   const fimTeste = atual.statusAssinatura === 'TRIAL' && atual.trialAte && new Date(atual.trialAte) > agora ? new Date(atual.trialAte) : null;
-  const vencimento = fimTeste || new Date(agora.getTime() + DIAS_ANTES_PARA_FATURAR * DIA_MS);
+  // Cupom de meses gratis empurra a primeira cobranca.
+  const vencimentoBase = fimTeste || new Date(agora.getTime() + DIAS_ANTES_PARA_FATURAR * DIA_MS);
+  const vencimento = carenciaMeses > 0 ? somarMeses(vencimentoBase, carenciaMeses) : vencimentoBase;
+  // Mensalidade negociada (cupom de %): passa a valer ja nesta assinatura.
+  if (mensalidade !== undefined) {
+    await prisma.cliente.update({ where: { id: clienteId }, data: { mensalidade } });
+    atual.mensalidade = mensalidade;
+  }
   const valor = valorDoCiclo(plano, ciclo, atual.mensalidade);
   const documento = cpfCnpj || atual.cpfCnpj;
 
@@ -227,6 +234,40 @@ async function cancelarAssinatura(clienteId, { motivo = null, agora = new Date()
     mensagem: 'Sua conta fica disponível só para consulta e exportação por 60 dias. Para voltar, é só escolher um plano.',
   });
   return cliente;
+}
+
+// ---------- cupom com prazo ----------
+// Desconto de cupom por N meses fica registrado em ConfigPlataforma
+// ('descontosTemporarios': [{ clienteId, ate }]). Vencido, a mensalidade
+// volta ao preco do plano (inclusive na assinatura do Asaas).
+const CHAVE_DESCONTOS = 'descontosTemporarios';
+
+async function registrarDescontoTemporario(clienteId, ate) {
+  const linha = await prisma.configPlataforma.findUnique({ where: { chave: CHAVE_DESCONTOS } });
+  const lista = (Array.isArray(linha?.valor) ? linha.valor : []).filter((d) => d.clienteId !== clienteId);
+  lista.push({ clienteId, ate: new Date(ate).toISOString() });
+  await prisma.configPlataforma.upsert({ where: { chave: CHAVE_DESCONTOS }, create: { chave: CHAVE_DESCONTOS, valor: lista }, update: { valor: lista } });
+}
+
+async function reverterDescontosVencidos(agora = new Date()) {
+  const linha = await prisma.configPlataforma.findUnique({ where: { chave: CHAVE_DESCONTOS } });
+  const lista = Array.isArray(linha?.valor) ? linha.valor : [];
+  const vencidos = lista.filter((d) => new Date(d.ate) <= agora);
+  if (!vencidos.length) return 0;
+  for (const d of vencidos) {
+    const c = await prisma.cliente.update({
+      where: { id: d.clienteId }, data: { mensalidade: 0 },
+      select: { plano: true, cicloAssinatura: true, asaasAssinaturaId: true },
+    }).catch(() => null);
+    if (c?.asaasAssinaturaId && asaas.ativo()) {
+      await asaas.atualizarAssinatura(c.asaasAssinaturaId, { valor: valorDoCiclo(c.plano, c.cicloAssinatura, 0) })
+        .catch((e) => console.error('[assinatura/desconto] asaas', e?.message));
+    }
+    if (c) await avisar(d.clienteId, { titulo: 'Desconto do cupom terminou', mensagem: 'A partir da próxima fatura a mensalidade volta ao preço do seu plano.', whatsapp: false });
+  }
+  const resto = lista.filter((d) => new Date(d.ate) > agora);
+  await prisma.configPlataforma.update({ where: { chave: CHAVE_DESCONTOS }, data: { valor: resto } });
+  return vencidos.length;
 }
 
 /** Estende o teste gratis (admin). */
@@ -316,7 +357,7 @@ async function rodarRegua(agora = new Date()) {
 
 /** Rotina diaria. Devolve um resumo pra log. */
 async function processarAssinaturas(agora = new Date()) {
-  const resumo = { faturasGeradas: 0, faturasVencidas: 0, statusAlterados: 0, avisosTrial: 0, avisosRegua: 0 };
+  const resumo = { faturasGeradas: 0, faturasVencidas: 0, statusAlterados: 0, avisosTrial: 0, avisosRegua: 0, descontosEncerrados: 0 };
 
   // 1. Faturas a gerar (so modo manual: no automatico quem gera e o Asaas).
   const limite = new Date(agora.getTime() + DIAS_ANTES_PARA_FATURAR * DIA_MS);
@@ -342,6 +383,9 @@ async function processarAssinaturas(agora = new Date()) {
     const novo = await recalcularStatus(c.id, agora);
     if (novo && novo !== c.statusAssinatura) resumo.statusAlterados += 1;
   }
+
+  // 3b. Cupom com prazo que acabou.
+  resumo.descontosEncerrados = await reverterDescontosVencidos(agora);
 
   // 4a. Regua de cobranca.
   resumo.avisosRegua = await rodarRegua(agora);
@@ -400,6 +444,8 @@ module.exports = {
   assinarPlano,
   cancelarAssinatura,
   estenderTeste,
+  registrarDescontoTemporario,
+  reverterDescontosVencidos,
   sincronizarCobranca,
   rodarRegua,
   diasEntre,

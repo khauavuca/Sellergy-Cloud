@@ -141,12 +141,34 @@ async function enfileirarComandoBaileys(acao, botId) {
   await obterFilaBaileysComando().add(acao, { acao, botId });
 }
 
+// ==========================================
+// WHATSAPP-TENANT — mensagem do numero do NEGOCIO pro cliente final, gerada
+// na API (oferta de encaixe, Pix do pedido, convite...). Envio no worker.
+// ==========================================
+const NOME_FILA_WHATSAPP_TENANT = 'whatsapp-tenant';
+
+let filaWhatsappTenant = null;
+function obterFilaWhatsappTenant() {
+  if (!filaWhatsappTenant) {
+    filaWhatsappTenant = new Queue(NOME_FILA_WHATSAPP_TENANT, {
+      connection: criarConexaoRedis(),
+      defaultJobOptions: { attempts: 4, backoff: { type: 'exponential', delay: 20_000 }, removeOnComplete: 500, removeOnFail: 500 },
+    });
+  }
+  return filaWhatsappTenant;
+}
+
+async function enfileirarMensagemTenant(msg) {
+  await obterFilaWhatsappTenant().add('enviar', msg);
+}
+
 // Fecha as filas/conexões no shutdown.
 async function fecharFilas() {
   if (filaCampanhaDisparo) await filaCampanhaDisparo.close();
   if (filaCampanhaDisparoBaileys) await filaCampanhaDisparoBaileys.close();
   if (filaBaileysComando) await filaBaileysComando.close();
   if (filaAvisoPlataforma) await filaAvisoPlataforma.close();
+  if (filaWhatsappTenant) await filaWhatsappTenant.close();
 }
 
 module.exports = {
@@ -156,6 +178,8 @@ module.exports = {
   enfileirarEnvioCampanhaBaileys,
   enfileirarComandoBaileys,
   enfileirarAvisoPlataforma,
+  enfileirarMensagemTenant,
+  NOME_FILA_WHATSAPP_TENANT,
   NOME_FILA_AVISO_PLATAFORMA,
   NOME_FILA_CAMPANHA,
   NOME_FILA_CAMPANHA_BAILEYS,

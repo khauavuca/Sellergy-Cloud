@@ -17,13 +17,12 @@ const {
   requerModuloLiberado,
   requerPapelPrivilegiado,
 } = require('../middlewares/permissoes.middleware');
-const { carregarCredencialDecifrada } = require('../credenciais');
 const { exigirRecursoNaEscrita } = require('../planos/recursos');
 const {
-  criarProvedor,
   PROVEDORES,
   TIPO_CREDENCIAL_POR_PROVEDOR,
 } = require('../adapters/fiscal');
+const { emissorDoTenant } = require('../fiscal/emissao');
 const { aplicarDocumento, CAMPOS_DOCUMENTO } = require('../services/documentoFiscal');
 const {
   soDigitos, validarCnpj, validarDocumento, validarNcm, validarCfop, validarCest,
@@ -52,23 +51,13 @@ const CAMPOS_EMITENTE = [
 const CAMPOS_CONFIG = {
   provedor: true, credencialId: true, regime: true, cnpj: true, inscricao: true,
   csc: true, serie: true, ambiente: true, ativo: true, atualizadoEm: true,
+  certificadoRef: true, certificadoValidoAte: true, certificadoTitular: true,
+  proximoNumero: true, emitirAutomatico: true,
   ...Object.fromEntries(CAMPOS_EMITENTE.map((k) => [k, true])),
 };
 
-// Monta o emissor do tenant a partir da config + credencial cifrada.
-// modo 'fixture' nesta fase — a Fase 4 troca pra 'live'.
-async function emissorDoTenant(clienteId) {
-  const config = await prisma.configuracaoFiscal.findUnique({ where: { clienteId } });
-  if (!config || !config.ativo) {
-    throw Object.assign(new Error('Fiscal nao configurado ou inativo para este tenant.'), { status: 400 });
-  }
-  const credencial = await carregarCredencialDecifrada({ credencialId: config.credencialId, clienteId });
-  const ambiente = config.ambiente === 'PRODUCAO' ? 'producao' : 'homologacao';
-  // 'live' so com opt-in deliberado (FISCAL_LIVE=true) + ambiente PRODUCAO.
-  // Default: 'fixture' (nunca bate no SEFAZ por acidente).
-  const emissor = criarProvedor(config.provedor, { credencial, config, ambiente, modo: resolverModoFiscal(config) });
-  return { config, emissor };
-}
+// Emissor do tenant (config + credencial cifrada): ver src/fiscal/emissao.js.
+// 'fixture' por padrao; 'live' so com FISCAL_LIVE=true + ambiente PRODUCAO.
 
 // --- Configuracao fiscal (1 por tenant) ---
 
@@ -135,7 +124,8 @@ roteador.put('/config', async (req, res) => {
       regime: regime || null,
       cnpj: cnpj || null,
       inscricao: inscricao || null,
-      certificadoRef: certificadoRef || null,
+      // Sem certificadoRef no corpo, mantem o que o assistente gravou.
+      ...(certificadoRef !== undefined ? { certificadoRef: certificadoRef || null } : {}),
       csc: csc || null,
       serie: serie || null,
       ambiente: amb,
@@ -378,5 +368,7 @@ roteador.post('/documentos/:id/cancelar', async (req, res) => {
     res.status(500).json({ erro: 'Erro ao cancelar documento.' });
   }
 });
+
+roteador.use('/assistente', require('../fiscal/assistente.routes'));
 
 module.exports = roteador;

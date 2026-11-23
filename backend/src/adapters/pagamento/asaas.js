@@ -1,6 +1,8 @@
 // Adapter Asaas — implementa ProvedorPagamento.
 // Auth: header `access_token: <apiKey>`. Base prod: https://api.asaas.com/v3
-// (sandbox: https://sandbox.asaas.com/api/v3).
+// (sandbox: https://api-sandbox.asaas.com/v3).
+// Toda cobranca do Asaas precisa de um customer: com `pagador.cpfCnpj` o
+// adapter cria o customer antes.
 // Fluxo Pix: POST /payments (billingType PIX) → GET /payments/{id}/pixQrCode.
 // Webhook: { event:'PAYMENT_RECEIVED'|..., payment:{...} } + token próprio no
 // header `asaas-access-token` (definido ao cadastrar o webhook).
@@ -9,7 +11,7 @@ const crypto = require('crypto');
 const { ProvedorPagamento, STATUS } = require('./ProvedorPagamento');
 
 const BASE_PROD = 'https://api.asaas.com/v3';
-const BASE_SANDBOX = 'https://sandbox.asaas.com/api/v3';
+const BASE_SANDBOX = 'https://api-sandbox.asaas.com/v3';
 
 function normalizarStatus(s) {
   switch (s) {
@@ -46,13 +48,46 @@ class AsaasAdapter extends ProvedorPagamento {
 
   _vencimentoPadrao() { return new Date(Date.now() + 86_400_000).toISOString().slice(0, 10); }
 
+  /**
+   * Resolve o customer do Asaas de quem paga. Aceita um id pronto
+   * (`pagador.clienteExternoId`, ou o legado `pagador.documento` com cara de
+   * "cus_..."); com CPF/CNPJ, cria o customer. Sem nada disso, em modo live o
+   * Asaas recusaria a cobranca — falha antes, com mensagem clara.
+   */
+  async _customer(pagador, refExterna) {
+    const idPronto = pagador?.clienteExternoId
+      || (typeof pagador?.documento === 'string' && pagador.documento.startsWith('cus_') ? pagador.documento : null);
+    if (idPronto) return idPronto;
+    const doc = String(pagador?.cpfCnpj || '').replace(/\D/g, '');
+    if (doc.length !== 11 && doc.length !== 14) {
+      if (this.modo === 'fixture') return 'cus_fixture';
+      throw Object.assign(new Error('O Asaas pede o CPF de quem vai pagar.'), { status: 422, codigo: 'PAGADOR_SEM_CPF' });
+    }
+    const req = {
+      url: `${this._base}/customers`,
+      metodo: 'POST',
+      headers: this._headers(),
+      corpo: {
+        name: String(pagador?.nome || 'Cliente').slice(0, 100),
+        cpfCnpj: doc,
+        mobilePhone: String(pagador?.telefone || '').replace(/\D/g, '').slice(-11) || undefined,
+        email: pagador?.email || undefined,
+        externalReference: refExterna,
+        notificationDisabled: true, // o aviso sai pelo WhatsApp do negocio
+      },
+    };
+    const c = await this._executar(req, () => ({ id: `cus_${doc}` }));
+    return String(c.id);
+  }
+
   async criarCobrancaPix({ valor, descricao, refExterna, vencimento, pagador }) {
+    const customer = await this._customer(pagador, refExterna);
     const reqPg = {
       url: `${this._base}/payments`,
       metodo: 'POST',
       headers: this._headers(),
       corpo: {
-        customer: pagador?.documento || undefined, // id do customer Asaas, quando houver
+        customer,
         billingType: 'PIX',
         value: Number(valor),
         dueDate: (vencimento || '').slice(0, 10) || this._vencimentoPadrao(),
@@ -85,12 +120,14 @@ class AsaasAdapter extends ProvedorPagamento {
     };
   }
 
-  async criarLink({ valor, descricao, refExterna, vencimento }) {
+  async criarLink({ valor, descricao, refExterna, vencimento, pagador }) {
+    const customer = await this._customer(pagador, refExterna);
     const req = {
       url: `${this._base}/payments`,
       metodo: 'POST',
       headers: this._headers(),
       corpo: {
+        customer,
         billingType: 'UNDEFINED', // deixa o pagador escolher (Pix/boleto/cartão)
         value: Number(valor),
         dueDate: (vencimento || '').slice(0, 10) || this._vencimentoPadrao(),

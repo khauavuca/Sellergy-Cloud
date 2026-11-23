@@ -8,7 +8,8 @@
 //   3. link publico /confirmar/<token> (routes/publico.routes.js)
 //
 // REMARCAR cancela o horario (libera a vaga) e avisa a equipe pra combinar
-// outro — com o link de agendamento quando o plano tiver.
+// outro — com o link de agendamento quando o plano tiver. A vaga vai pra fila
+// de encaixe (agenda/encaixe.js).
 // So respostas CURTAS e exatas contam (texto livre segue pro bot normal),
 // pra uma conversa comum nunca virar confirmacao sem querer.
 // =====================================================================
@@ -62,7 +63,10 @@ async function aplicarResposta({ agendamento, acao, origem }) {
   }
 
   // REMARCAR
+  const antes = await prisma.agendamento.findUnique({ where: { id: agendamento.id } });
   await prisma.agendamento.update({ where: { id: agendamento.id }, data: { status: 'CANCELED' } });
+  // Fase 2: o horario vagou -> fila de encaixe (e sinal pendente cancelado).
+  await require('./eventosAgenda').aoLiberarHorario(antes, { cancelado: true });
   await prisma.historicoAgendamento.create({
     data: { agendamentoId: agendamento.id, acao: 'STATUS_MUDADO', alteracoes: { status: { de: agendamento.status, para: 'CANCELED' }, motivo: 'Cliente pediu para remarcar' }, usuarioNome: 'Cliente', origem },
   }).catch(() => {});

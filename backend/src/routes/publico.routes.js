@@ -25,6 +25,10 @@ const { situacaoAssinatura } = require('../assinatura/situacao');
 const { listarHorariosLivres } = require('../services/agendaSlots');
 const { aplicarResposta } = require('../agenda/respostaLembrete');
 const { lockClienteAdvisory } = require('../utils/locks');
+const sinal = require('../agenda/sinal');
+const pacotes = require('../agenda/pacotes');
+const encaixe = require('../agenda/encaixe');
+const { partesBRT } = require('../agenda/utilAgenda');
 
 const roteador = express.Router();
 
@@ -202,7 +206,10 @@ roteador.post('/agenda/:slug/agendamentos', limitadorEscrita, async (req, res) =
           servico: variacao.nome && variacao.nome !== variacao.produto.nome ? `${variacao.produto.nome} — ${variacao.nome}` : variacao.produto.nome,
           preco: variacao.preco, origem: 'LINK_PUBLICO', status: 'PENDING',
         },
-        select: { id: true, data: true, duracao: true, servico: true },
+        select: {
+          id: true, clienteId: true, leadId: true, data: true, duracao: true, servico: true, preco: true,
+          nomeCliente: true, telefoneCliente: true, tokenConfirmacao: true,
+        },
       });
       await tx.historicoAgendamento.create({
         data: { agendamentoId: criado.id, acao: 'CRIADO', usuarioNome: nomeLimpo, origem: 'LINK_PUBLICO' },
@@ -210,11 +217,138 @@ roteador.post('/agenda/:slug/agendamentos', limitadorEscrita, async (req, res) =
       return criado;
     });
 
-    res.status(201).json({ agendamento, mensagem: 'Você vai receber um lembrete no WhatsApp antes do atendimento.' });
+    // Fase 2: quem tem pacote desse servico usa o pacote (e nao paga sinal);
+    // senao, cobra o sinal quando o negocio configurou.
+    let pacoteUsado = null;
+    if (temRecurso(cliente, 'pacotes')) {
+      const lista = await pacotes.pacotesAtivosDaCliente({ clienteId: cliente.id, leadId: agendamento.leadId, telefone: telefoneDigitos });
+      for (const p of lista.filter((x) => x.produtoId === variacao.produtoId && x.livres > 0)) {
+        try {
+          await pacotes.validarUsoNoAgendamento({
+            clienteId: cliente.id, pacoteClienteId: p.id, leadId: agendamento.leadId, telefone: telefoneDigitos,
+            servico: agendamento.servico, dataAgendamento: agendamento.data, ignorarAgendamentoId: agendamento.id,
+          });
+          await prisma.agendamento.update({ where: { id: agendamento.id }, data: { pacoteClienteId: p.id } });
+          pacoteUsado = { nome: p.nome, restantes: p.livres - 1 };
+          break;
+        } catch (e) {
+          if (!e.status) throw e;
+        }
+      }
+    }
+    let sinalPublico = null;
+    if (!pacoteUsado) {
+      const r = await sinal.cobrarSinal({ agendamento, produtoId: variacao.produtoId });
+      if (r.cobrado) sinalPublico = await sinalParaTela({ ...r.sinal, qrCode: r.sinal.qrCode }, r.sinal.qrCodeBase64);
+    }
+
+    const { leadId: _l, clienteId: _c, tokenConfirmacao: _t, nomeCliente: _n, telefoneCliente: _f, ...publicoAg } = agendamento; // eslint-disable-line no-unused-vars
+    res.status(201).json({
+      agendamento: publicoAg,
+      pacote: pacoteUsado,
+      sinal: sinalPublico,
+      mensagem: sinalPublico
+        ? 'Pague o sinal por Pix para garantir o horário. A confirmação chega aqui e no seu WhatsApp.'
+        : 'Você vai receber um lembrete no WhatsApp antes do atendimento.',
+    });
   } catch (e) {
     if (e?.codigo === 'HORARIO_OCUPADO') return res.status(409).json({ erro: 'Esse horário acabou de ser ocupado. Escolha outro.', codigo: 'HORARIO_OCUPADO' });
     console.error('[publico/agendar]', e);
     res.status(500).json({ erro: 'Erro ao agendar. Tente de novo.' });
+  }
+});
+
+// ---------------------------------------------------------------------
+// Sinal por Pix (fase 2): a cliente acompanha o pagamento na mesma pagina
+// ---------------------------------------------------------------------
+
+async function sinalParaTela({ valor, status, expiraEm, qrCode, token }, base64 = null) {
+  // O QR sai do proprio copia-e-cola (o mesmo codigo que a cliente copia);
+  // a imagem do PSP so entra se nao houver o texto.
+  let qrImagem = null;
+  if (qrCode) {
+    try { qrImagem = await require('qrcode').toDataURL(qrCode, { margin: 1, width: 240 }); } catch { qrImagem = null; }
+  }
+  if (!qrImagem && base64) qrImagem = `data:image/png;base64,${base64}`;
+  return { valor, status, expiraEm, qrCode: qrCode || null, qrImagem, token };
+}
+
+roteador.get('/agenda/:slug/sinal/:token', limitadorLeitura, async (req, res) => {
+  try {
+    const cliente = await negocioComAgendaOnline(req.params.slug);
+    if (!cliente) return indisponivel(res);
+    const token = req.params.token;
+    if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{10,64}$/.test(token)) return res.status(404).json({ erro: 'Link inválido.' });
+    const ag = await prisma.agendamento.findFirst({
+      where: { tokenConfirmacao: token, clienteId: cliente.id },
+      select: { status: true, sinalValor: true, sinalStatus: true, sinalExpiraEm: true, sinalCobrancaId: true, preco: true },
+    });
+    if (!ag || !ag.sinalStatus) return res.status(404).json({ erro: 'Link inválido.' });
+    const cob = ag.sinalCobrancaId
+      ? await prisma.cobranca.findFirst({ where: { id: ag.sinalCobrancaId, clienteId: cliente.id }, select: { qrCode: true } })
+      : null;
+    const tela = await sinalParaTela({
+      valor: ag.sinalValor, status: ag.sinalStatus, expiraEm: ag.sinalExpiraEm,
+      qrCode: ag.sinalStatus === 'PENDENTE' ? cob?.qrCode : null, token,
+    });
+    res.json({ ...tela, horarioStatus: ag.status, restante: sinal.valorAposSinal({ preco: ag.preco, sinalValor: ag.sinalValor, sinalStatus: ag.sinalStatus }) });
+  } catch (e) {
+    console.error('[publico/sinal]', e);
+    res.status(500).json({ erro: 'Erro ao consultar o pagamento.' });
+  }
+});
+
+// ---------------------------------------------------------------------
+// "Me avise se vagar" (fase 2): entra na fila de encaixe pelo link
+// ---------------------------------------------------------------------
+
+const limitadorFila = rateLimit({
+  windowMs: 60 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false,
+  message: { erro: 'Muitas tentativas. Tente de novo mais tarde.' },
+});
+
+roteador.post('/agenda/:slug/fila', limitadorFila, async (req, res) => {
+  try {
+    const cliente = await negocioComAgendaOnline(req.params.slug);
+    if (!cliente) return indisponivel(res);
+    const { variacaoId, especialistaId, dia, soEsseDia, nome, telefone } = req.body || {};
+
+    const variacao = typeof variacaoId === 'string'
+      ? await prisma.variacaoProduto.findFirst({
+        where: { id: variacaoId, produto: { clienteId: cliente.id, tipo: 'SERVICO', visibilidade: 'ATIVO' } },
+        select: { produtoId: true },
+      })
+      : null;
+    if (!variacao) return res.status(422).json({ erro: 'Escolha o serviço.', campos: ['variacaoId'] });
+    if (especialistaId && !(await validarCombinacao(cliente.id, especialistaId, variacaoId))) {
+      return res.status(422).json({ erro: 'Profissional inválido.', campos: ['especialistaId'] });
+    }
+
+    // Validade: so o dia escolhido, ou as proximas 2 semanas.
+    const diaValido = typeof dia === 'string' && lerDia(dia) ? dia : null;
+    const hoje = partesBRT(new Date()).ymd;
+    const ate = soEsseDia && diaValido
+      ? diaValido
+      : partesBRT(new Date(Date.now() + 14 * 86400000)).ymd;
+    const r = encaixe.normalizarEntradaFila({
+      nome, telefone, produtoId: variacao.produtoId, especialistaId: especialistaId || null, ate: ate < hoje ? hoje : ate,
+      preferencia: soEsseDia && diaValido ? `Pelo link: só no dia ${diaValido.split('-').reverse().join('/')}` : 'Pelo link: qualquer dia nas próximas 2 semanas',
+    });
+    if (r.erro) return res.status(422).json({ erro: r.erro, campos: r.campos });
+
+    const leads = await prisma.lead.findMany({ where: { clienteId: cliente.id, telefone: { not: null } }, select: { id: true, telefone: true } });
+    const lead = leads.find((l) => String(l.telefone).replace(/\D/g, '').slice(-8) === r.dados.telefone.slice(-8));
+    try {
+      await encaixe.adicionarNaFila({ clienteId: cliente.id, dados: { ...r.dados, leadId: lead?.id || null } });
+    } catch (e) {
+      if (e.codigo === 'JA_NA_FILA') return res.status(200).json({ ok: true, mensagem: 'Você já está na fila desse serviço. Avisamos pelo WhatsApp quando vagar.' });
+      throw e;
+    }
+    res.status(201).json({ ok: true, mensagem: 'Pronto! Se vagar um horário, avisamos pelo WhatsApp. Quem responder primeiro fica com ele.' });
+  } catch (e) {
+    if (e?.status) return res.status(e.status).json({ erro: e.message });
+    console.error('[publico/fila]', e);
+    res.status(500).json({ erro: 'Erro ao entrar na fila. Tente de novo.' });
   }
 });
 

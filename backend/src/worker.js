@@ -18,7 +18,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 require('./seguranca/validarAmbiente').garantirAmbienteSeguro();
 
 const { Worker, DelayedError } = require('bullmq');
-const { criarConexaoRedis, NOME_FILA_CAMPANHA, NOME_FILA_CAMPANHA_BAILEYS, NOME_FILA_BAILEYS_COMANDO, NOME_FILA_AVISO_PLATAFORMA } = require('./filas');
+const { criarConexaoRedis, NOME_FILA_CAMPANHA, NOME_FILA_CAMPANHA_BAILEYS, NOME_FILA_BAILEYS_COMANDO, NOME_FILA_AVISO_PLATAFORMA, NOME_FILA_WHATSAPP_TENANT } = require('./filas');
 const { processarEnvioCampanha, numeroDoEnvio } = require('./services/campanhaService');
 const envioHumano = require('./services/baileys/envioHumano');
 const gerenciadorConexaoBaileys = require('./services/baileys/gerenciadorConexao');
@@ -107,6 +107,25 @@ workerAvisoPlataforma.on('failed', (job, err) => {
 });
 consumidores.push(workerAvisoPlataforma);
 
+// WHATSAPP-TENANT — mensagem do negocio pro cliente final gerada na API.
+const workerWhatsappTenant = new Worker(
+  NOME_FILA_WHATSAPP_TENANT,
+  async (job) => {
+    const { enviarAgora } = require('./services/mensagemTenant');
+    const r = await enviarAgora(job.data);
+    if (!r?.ok && r?.motivo === 'SOCKET_INDISPONIVEL') throw new Error('socket do tenant indisponivel'); // tenta de novo
+    return r;
+  },
+  { connection: criarConexaoRedis({ paraWorker: true }), concurrency: 4 },
+);
+workerWhatsappTenant.on('failed', (job, err) => {
+  console.error(`[worker:${NOME_FILA_WHATSAPP_TENANT}] job ${job?.id} falhou:`, err?.message);
+});
+consumidores.push(workerWhatsappTenant);
+
+// Rotinas da fase 2 (encaixe que expira, sinal nao pago, pacote vencido...).
+const pararRotinasFase2 = require('./agenda/rotinasFase2').iniciar();
+
 // Reconecta sozinho os bots Baileys que já estavam pareados antes do worker
 // reiniciar (deploy, crash) — sem isso o tenant precisaria escanear o QR de
 // novo toda vez que o container sobe.
@@ -126,6 +145,7 @@ async function shutdown(sinal) {
   try {
     pararLembretes();
     pararAssinaturas();
+    pararRotinasFase2();
     for (const w of consumidores) await w.close();
     await conexao.quit();
   } catch (err) {

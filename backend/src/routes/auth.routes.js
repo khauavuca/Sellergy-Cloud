@@ -90,7 +90,11 @@ async function montarUsuarioDaSessao(usuario) {
 // Monta a sessao (cookie httpOnly) e a resposta de login. `mfa` marca que o
 // usuario passou pelo segundo fator — exigido pro ADMIN quando
 // ADMIN_2FA_OBRIGATORIO=true (ver auth.middleware).
-async function responderSessao(res, usuario, { mfa = false } = {}) {
+async function responderSessao(res, usuario, { mfa = false, status = 200 } = {}) {
+  // Equipe Sellergy com o acesso desativado pelo dono (Equipe e auditoria).
+  if (usuario.perfil === 'ADMIN' && usuario.papelAdmin === 'DESATIVADO') {
+    return res.status(403).json({ erro: 'Seu acesso ao painel foi desativado.', codigo: 'ADMIN_DESATIVADO' });
+  }
   const token = jwt.sign(
     { id: usuario.id, perfil: usuario.perfil, clienteId: usuario.clienteId, mfa },
     SEGREDO_JWT,
@@ -115,7 +119,7 @@ async function responderSessao(res, usuario, { mfa = false } = {}) {
   // No lugar dele devolvemos o segredo de CSRF, que o front guarda em memoria.
   const csrfToken = definirSessao(res, token);
 
-  res.json({
+  res.status(status).json({
     usuario: {
       id: usuario.id,
       nome: usuario.nome,
@@ -287,9 +291,17 @@ roteador.get('/perfil', middlewareAutenticacao, async (req, res) => {
         permissoes: true,
         foto: true,
         totpAtivo: true,
+        papelAdmin: true,
       }
     });
     if (!usuario) return res.status(404).json({ erro: 'Usuario nao encontrado' });
+    // Papel na equipe Sellergy (so ADMIN) e sessao de suporte (frente D).
+    const { papelDe, acoesDoPapel } = require('../seguranca/papeis');
+    const papelAdmin = usuario.perfil === 'ADMIN' ? papelDe(usuario.papelAdmin) : null;
+    const extrasAdmin = usuario.perfil === 'ADMIN'
+      ? { papelAdmin, acoesAdmin: acoesDoPapel(papelAdmin), exige2faIndividual: usuario.permissoes?.exige2fa === true }
+      : { papelAdmin: null };
+    delete usuario.papelAdmin;
 
     // Carrega modulos liberados, segmento, branding e horario do tenant.
     let modulosLiberados = null;
@@ -314,8 +326,10 @@ roteador.get('/perfil', middlewareAutenticacao, async (req, res) => {
       segmento,
       branding,
       horarioFuncionamento,
+      ...extrasAdmin,
+      suporte: req.usuario.suporte || null,
       mfa: req.usuario.mfa === true,
-      admin2faObrigatorio: process.env.ADMIN_2FA_OBRIGATORIO === 'true',
+      admin2faObrigatorio: process.env.ADMIN_2FA_OBRIGATORIO === 'true' || extrasAdmin.exige2faIndividual === true,
       // Reentrega o segredo de CSRF: o front guarda so em memoria, entao a cada
       // recarga da pagina ele precisa receber o valor de novo por aqui.
       csrfToken: req.sessaoPorCookie ? garantirCsrf(req, res) : null,
@@ -467,3 +481,5 @@ roteador.put('/horario-funcionamento', middlewareAutenticacao, async (req, res) 
 });
 
 module.exports = roteador;
+// Usado tambem pelo aceite de convite (routes/publicoConvite.routes.js).
+module.exports.responderSessao = responderSessao;

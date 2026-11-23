@@ -95,6 +95,8 @@ io.use((socket, next) => {
 
   try {
     const dados = jwt.verify(token, SEGREDO_JWT);
+    // Sessao de suporte (so leitura) nao abre o tempo real: ali ha eventos que escrevem.
+    if (dados.suporte) return next(new Error('Sessao de suporte nao usa o tempo real'));
     socket.usuario = dados;
     return next();
   } catch (erro) {
@@ -177,7 +179,27 @@ app.use('/fiscal', rotasFiscal);
 // Fase 1: conta (plano, assinatura, assistente de inicio) e rotas publicas
 // (agendamento pelo link, confirmacao do lembrete, planos da landing).
 app.use('/conta', require('./routes/conta.routes'));
+// Fase 2 (rotas publicas mais especificas antes de /publico).
+app.use('/publico/encaixe', require('./routes/publicoEncaixe.routes'));
+app.use('/publico/loja', require('./routes/publicoCatalogo.routes'));
+app.use('/publico/convite', require('./routes/publicoConvite.routes'));
 app.use('/publico', require('./routes/publico.routes'));
+app.use('/encaixe', require('./routes/encaixe.routes'));
+app.use('/pacotes', require('./routes/pacotes.routes'));
+app.use('/comissoes', require('./routes/comissoes.routes'));
+app.use('/pedidos', require('./routes/pedidos.routes'));
+app.use('/conta-recebimento', require('./routes/contaRecebimento.routes'));
+app.use('/importacao', require('./routes/importacao.routes'));
+app.use('/convites', require('./routes/convites.routes'));
+app.use('/hoje', require('./routes/hoje.routes'));
+app.use('/suporte', require('./routes/suporte.routes'));
+app.use('/comunicados', require('./routes/comunicados.routes'));
+app.use('/admin/suporte', require('./routes/adminSuporte.routes'));
+app.use('/admin/saude', require('./routes/adminSaude.routes'));
+app.use('/admin/comunicados', require('./routes/adminComunicados.routes'));
+app.use('/admin/uso', require('./routes/adminUso.routes'));
+app.use('/admin/equipe', require('./routes/adminEquipe.routes'));
+app.use('/admin/planos', require('./routes/adminPlanos.routes'));
 app.use('/admin/assinaturas', require('./routes/assinaturas.routes'));
 
 // Webhooks externos — SEM autenticacao de usuario (o chamador e o provedor/Meta;

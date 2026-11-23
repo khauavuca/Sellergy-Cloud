@@ -13,6 +13,7 @@
 
 const prisma = require('../prisma');
 const { situacaoAssinatura } = require('../assinatura/situacao');
+const { papelPode, papelDe } = require('../seguranca/papeis');
 
 const METODOS_LEITURA = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -31,6 +32,32 @@ function requerAdmin(req, res, next) {
     return res.status(403).json({ erro: 'Acesso restrito ao administrador do sistema.' });
   }
   return next();
+}
+
+/**
+ * Equipe Sellergy por papel (DONO, SUPORTE, FINANCEIRO). Inclui o requerAdmin.
+ * O papel e carregado do banco pelo middlewareAutenticacao
+ * (req.usuario.papelAdmin). Matriz em seguranca/papeis.js.
+ *
+ *   roteador.post('/faturas/:id/pagar', requerPapelAdmin('cobranca.baixa'), ...)
+ */
+function requerPapelAdmin(acao) {
+  // Valida a acao ja na montagem da rota (erro de digitacao quebra no boot).
+  papelPode('DONO', acao);
+  return function (req, res, next) {
+    if (!ehAdmin(req.usuario)) {
+      return res.status(403).json({ erro: 'Acesso restrito ao administrador do sistema.' });
+    }
+    if (!papelPode(req.usuario.papelAdmin, acao)) {
+      return res.status(403).json({ erro: 'Seu papel na equipe não permite essa ação.', codigo: 'PAPEL_SEM_PERMISSAO', acao });
+    }
+    return next();
+  };
+}
+
+/** Papel efetivo do admin logado (DONO quando nao carregado). */
+function papelAdminDe(req) {
+  return papelDe(req?.usuario?.papelAdmin);
 }
 
 /**
@@ -180,6 +207,8 @@ module.exports = {
   ehColaborador,
   ehDoTenant,
   requerAdmin,
+  requerPapelAdmin,
+  papelAdminDe,
   requerTenant,
   requerModuloLiberado,
   requerPermissao,

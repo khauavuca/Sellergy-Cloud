@@ -47,9 +47,15 @@ async function acharCliente(pagamento) {
 /**
  * @returns {Promise<{ status: number, corpo: object }>}
  */
-async function processarWebhook({ headers, body }) {
+async function processarWebhook({ headers, body, query }) {
   if (!process.env.ASAAS_PLATAFORMA_WEBHOOK_TOKEN) return { status: 503, corpo: { erro: 'webhook nao configurado' } };
   if (!tokenConfere(headers['asaas-access-token'])) return { status: 401, corpo: { erro: 'token invalido' } };
+  // Status da conta de recebimento (subconta aberta pela plataforma): o
+  // status e reconsultado na API com a chave da subconta, entao reentrega e
+  // evento fora de ordem nao fazem mal. Ver pagamentos/contaRecebimento.js.
+  if (typeof body?.event === 'string' && body.event.startsWith('ACCOUNT_STATUS_')) {
+    return require('../pagamentos/contaRecebimento').processarEventoConta({ body, query });
+  }
   if (!body?.event || !body?.payment?.id) return { status: 200, corpo: { ok: true, ignorado: 'sem cobranca' } };
   if (!EVENTOS_DE_COBRANCA.has(body.event)) return { status: 200, corpo: { ok: true, ignorado: body.event } };
 
