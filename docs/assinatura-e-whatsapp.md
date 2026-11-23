@@ -65,3 +65,51 @@ Risco que continua existindo: é uma API não oficial. O WhatsApp pode banir nú
 - Smoke contra o backend local: cadastro, assinar anual no teste, admin (baixa, suspender, reativar), cancelar, webhook recusando sem token, 2FA completo (26 de 26).
 - Webhook e régua direto no banco: criado → aviso 3 dias antes (sem repetir) → vencido → pago → reativado, evento repetido ignorado (10 de 10).
 - **Não testado** contra o Asaas sandbox de verdade (falta a chave) nem com um celular real no QR Code.
+
+## Pagamento do tenant, loja online e conta de recebimento (fase 2, frente B)
+
+### Cobrança do tenant de verdade
+
+`services/pagamentoService.js` cria o adapter do PSP do tenant (Mercado Pago, Asaas, Pagar.me) com:
+
+- **modo** `live` só com `PAGAMENTO_LIVE=true`; sem isso fica `fixture` (monta o request, mas não chama o PSP). Dev e testes continuam em fixture.
+- **ambiente** (produção x sandbox) vindo da credencial (`dados.ambiente`: `producao` | `sandbox`). A subconta aberta pela plataforma já grava isso. Sem o campo, vale `PAGAMENTO_AMBIENTE_PADRAO`; sem os dois, live = produção e fixture = homologação.
+- O Asaas exige um customer em toda cobrança: o adapter cria o customer com o CPF de quem paga. Por isso a loja online e o "Vender pelo WhatsApp" pedem o CPF quando o tenant recebe pelo Asaas.
+
+O webhook do tenant (`POST /webhooks/pagamento/:provedor`) **nunca aplica o status do corpo**. Ele confere a assinatura quando há `webhookSecret` na credencial e sempre consulta o status no PSP (`consultarStatus`) antes de aplicar. Se não conseguir consultar, não aplica nada. Em produção (`NODE_ENV=production`) com o modo fixture, o webhook é ignorado.
+
+### Loja online e pedidos
+
+- Vitrine pública `/loja/<slug>` (`GET /publico/loja/:slug`): só produto físico ATIVO com preço e, com `ocultarSemEstoque`, com estoque. Some se a loja estiver desligada, se o plano não tiver `catalogoOnline` ou se a conta não puder operar.
+- `POST /publico/loja/:slug/pedidos`: preço, frete e total recalculados no servidor, estoque conferido, número sequencial por tenant (transação com lock advisory) e token aleatório. Limite de 10 pedidos por hora por IP.
+- Acompanhamento `/pedido/<token>`: mostra o Pix (QR + copia e cola) e atualiza sozinho.
+- Painel `/app/pedidos` (`routes/pedidos.routes.js`): quadro com Novos, Aguardando pagamento, Pago · separar e Entregue. Ações: aceitar (cria a cobrança com origem `PEDIDO` e manda no WhatsApp), reenviar, marcar como pago na mão, entregar ou retirar, cancelar. Também tem "Vender pelo WhatsApp" e a aba "Loja online".
+- Pagamento confirmado: `services/pagamentoHooks/pedido.js` registra a venda pelo `vendaService` (baixa o estoque e abre o caixa automático). O frete entra como receita da mesma venda, o pedido vira PAGO e o cliente é avisado.
+- Pedido sem pagamento é cancelado em 24 h (`pedidos/tarefasPedidos.js`, a cada 10 min no worker). O estoque não muda, porque só baixa quando o pedido é pago.
+
+### Conta de recebimento (subconta Asaas)
+
+- `/app/recebimentos` tem um assistente de 3 passos: negócio (CNPJ, com busca na Receita pela BrasilAPI), responsável e repasse (prazo + chave Pix do mesmo CNPJ).
+- A conta é aberta com `POST /accounts`, usando a chave da plataforma (`pagamentos/subcontaAsaas.js`), e fica EM_ANALISE.
+- A apiKey devolvida vai cifrada para o cofre do tenant, como credencial `ASAAS_KEY` com `ambiente` e `webhookSecret`. Ela nunca volta para o navegador.
+- Se o tenant ainda não recebia por nenhum provedor, `ConfiguracaoPagamento` já aponta para a subconta. Se já recebia (Mercado Pago ou Asaas próprio), a troca só acontece quando a conta fica ATIVA.
+- Status atualizado de dois jeitos:
+  - pelo webhook `ACCOUNT_STATUS_*` em `/webhooks/assinatura/asaas?conta=<id>` (mesmo token da plataforma). O status é reconsultado em `GET /myAccount/status` com a chave da subconta;
+  - pelo botão "Atualizar status", que também traz os links de documentos pendentes.
+- Com a conta ATIVA, a tela mostra saldo (`/finance/balance`), a liberar (`/finance/payment/statistics?status=CONFIRMED`), extrato (`/financialTransactions`) e taxas (`/myAccount/fees`).
+- O saque (`POST /transfers`) vai sempre para a chave Pix cadastrada.
+- O prazo "antecipado" liga `PUT /anticipations/configurations`.
+- Sem `ASAAS_PLATAFORMA_API_KEY`, a tela explica que a abertura automática está desligada e manda para Pagamentos, para conectar Mercado Pago ou Asaas próprio.
+
+### Variáveis novas
+
+| Variável | Para quê | Produção |
+|---|---|---|
+| `PAGAMENTO_LIVE` | `true` liga a cobrança de verdade no PSP do tenant (sem ela: fixture) | `true` |
+| `PAGAMENTO_AMBIENTE_PADRAO` | `producao` ou `sandbox`, para credenciais sem `ambiente` | `producao` (ou vazio) |
+| `API_URL_PUBLICA` | URL https da API. Usada para cadastrar os webhooks da subconta e o `notification_url` do Mercado Pago | `https://api.sellergycloud.com` |
+| `ASAAS_PLATAFORMA_BASE_URL` | Troca a URL do Asaas da plataforma (só para teste com o Asaas simulado) | deixar vazio |
+
+A subconta reaproveita `ASAAS_PLATAFORMA_API_KEY`, `ASAAS_PLATAFORMA_AMBIENTE` e `ASAAS_PLATAFORMA_WEBHOOK_TOKEN`. O Asaas exige token de webhook com 32 caracteres ou mais; com um token mais curto, o status da conta é conferido só pelo botão.
+
+**Não testado** contra o Asaas, o Mercado Pago ou a BrasilAPI de verdade: os testes usaram o modo fixture e um Asaas simulado.
