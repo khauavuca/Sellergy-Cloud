@@ -7,7 +7,7 @@
 
 > **Operacional.** Cobre dois fluxos críticos do dinheiro: (1) o ciclo
 > agendar → atender → fechar a venda, e (2) a cobrança de **sinal** (depósito)
-> com link de pagamento. Deriva do [cérebro](cerebro-do-negocio.md) — onde o
+> com link de pagamento. Deriva do antigo "cérebro do negócio" (removido; está no histórico do git) — onde o
 > *checkout in-chat (Pix/link)* já está marcado como **fase 2**. Iniciado em
 > 2026-06-01.
 

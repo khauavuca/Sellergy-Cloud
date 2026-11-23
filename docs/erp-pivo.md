@@ -2,7 +2,7 @@
 
 > **Documento mestre da virada `chatbot-first → ERP-first`.** Substitui a moldura
 > dos documentos anteriores (`cerebro-do-negocio.md`, `telas-e-fluxos.md`,
-> `plano-de-acao.md`), que passam a ser **histórico** do produto anterior (bot-vendedor
+> `plano-de-acao.md`), que eram **histórico** e foram removidos em 23/11/2026 (ficam no histórico do git) do produto anterior (bot-vendedor
 > de IA). Documento **vivo**: você decide nas tabelas (coluna **Decisão**).
 > Criado em 2026-06-19.
 

@@ -7,3 +7,11 @@ build/
 backend/scratch/
 backend/node_modules/
 frontend/node_modules/
+
+# Segredos: nenhum .env real vai pro git (só os *.example).
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+chave-backup*.txt

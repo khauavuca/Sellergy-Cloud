@@ -1,31 +1,113 @@
-# Stack de PRODUÇÃO do Sellergy Cloud.
+# Stack de PRODUÇÃO do Sellergy Cloud, ajustada pra caber numa VPS de 1 GB de RAM
+# e endurecida contra invasão/malware (ver "Segurança" no DEPLOY.md).
 #
 # Diferenças pro docker-compose.yml (dev):
-#  - sem bind-mount do código (a imagem é imutável) e sem nodemon/vite dev-server;
-#  - front buildado e servido por nginx (Dockerfile.prod);
-#  - backend roda `prisma migrate deploy` e `npm start` (não `dev`);
-#  - Postgres/Redis/MinIO NÃO expõem portas pra internet (só a rede interna) —
-#    segurança: o banco não fica acessível de fora;
-#  - sem pgadmin nem ngrok (ferramentas de dev).
+#  - imagem do backend multi-stage (backend/Dockerfile.prod): sem toolchain de
+#    compilação nem devDependencies, `node` direto (sem npm/nodemon residentes),
+#    rodando como usuário sem privilégio;
+#  - migrações num serviço de uma vez só ("migrate"), que roda e sai;
+#  - Postgres, Redis e MinIO com configuração de pouca memória e SEM portas
+#    pra internet (só a rede interna, que nem tem saída pra internet);
+#  - Caddy na frente com HTTPS automático (Let's Encrypt) pra API e pras mídias;
+#  - limite de memória por container (um estouro não derruba os outros) e
+#    rotação de logs (não enche o disco);
+#  - o front NÃO roda aqui por padrão: vai como arquivos estáticos pra
+#    hospedagem da Hostinger (ver DEPLOY.md). Pra rodar aqui mesmo, use o
+#    profile "frontend".
 #
 # Uso:  docker compose -f docker-compose.prod.yml up -d --build
-# TLS/HTTPS: ponha um reverse proxy (Caddy/Traefik/nginx) na frente — ver DEPLOY.md.
+#
+# Orçamento de memória (limites; o uso real parado fica bem abaixo, ~350 MB):
+#   postgres 160m · redis 64m · minio 160m · backend 384m · worker 320m · caddy 48m
+# Backend e worker têm folga pro Chromium do PDF do catálogo (200-400 MB de pico).
+# A VPS precisa de swap (scripts/preparar-vps.sh cria 2 GB) pra absorver picos.
+# Os tmpfs (/tmp) contam dentro do limite de memória do próprio container.
+#
+# Camadas de segurança aplicadas em TODOS os containers:
+#  - no-new-privileges: nenhum processo ganha privilégio via setuid/setcap;
+#  - cap_drop ALL: tira todas as capabilities do Linux; só são devolvidas as
+#    estritamente necessárias (comentadas em cada serviço);
+#  - pids_limit: segura fork-bomb / mineradores que disparam processos;
+#  - imagens com tag FIXA (nada de :latest) — atualize trocando a tag aqui.
+# Backend, worker e Caddy ainda rodam com o sistema de arquivos SÓ-LEITURA
+# (read_only + tmpfs em /tmp): malware não consegue se gravar no container.
 
 name: sellergy_cloud_prod
 
+x-logs: &logs
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-seguro: &seguro
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+x-backend-env: &backend-env
+  NODE_ENV: production
+  # Senhas em hex (openssl rand -hex 32): não precisam de escape dentro da URL.
+  DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}?connection_limit=5
+  REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+  # Dentro do Docker o backend fala com o MinIO pelo nome do serviço.
+  MINIO_ENDPOINT: http://minio:9000
+  # Host que o NAVEGADOR usa nas URLs assinadas (https://midia.seu-dominio,
+  # servido pelo Caddy). Sem isso, as fotos quebram.
+  MINIO_PUBLIC_ENDPOINT: https://${MIDIA_DOMINIO}
+
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.11-alpine3.22
     container_name: sellergy_cloud_prod-postgres
     restart: unless-stopped
+    <<: [*logs, *seguro]
+    # O entrypoint oficial começa como root, acerta o dono/permissão da pasta de
+    # dados e troca pro usuário `postgres` (su-exec). Pra isso precisa de:
+    #  CHOWN           - chown da pasta de dados / socket
+    #  FOWNER          - chmod em arquivos que não são do root
+    #  DAC_READ_SEARCH - root entrar na pasta de dados (dono postgres, modo 700)
+    #  SETUID, SETGID  - trocar pro usuário postgres
+    # Depois da troca o Postgres roda sem nenhuma dessas (são descartadas no exec).
+    cap_add:
+      - CHOWN
+      - FOWNER
+      - DAC_READ_SEARCH
+      - SETUID
+      - SETGID
     environment:
       POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?defina DB_PASSWORD no .env}
       POSTGRES_DB: ${DB_NAME}
+    # Configuração de pouca memória (padrão do Postgres assume uma máquina maior).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=48MB
+      - -c
+      - effective_cache_size=256MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - wal_buffers=2MB
+      - -c
+      - max_connections=30
+      - -c
+      - max_worker_processes=2
+      - -c
+      - max_parallel_workers=1
+      - -c
+      - max_parallel_workers_per_gather=0
+    mem_limit: 160m
+    pids_limit: 100
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - sellergy_cloud-network
+      - interna
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 10s
@@ -33,120 +115,261 @@ services:
       retries: 5
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.7-alpine
     container_name: sellergy_cloud_prod-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    <<: [*logs, *seguro]
+    # O entrypoint oficial acerta o dono de /data e troca pro usuário `redis`.
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    environment:
+      # Usada só pelo healthcheck (REDISCLI_AUTH evita a senha na linha de comando do redis-cli).
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?defina REDIS_PASSWORD no .env}
+    # requirepass: sem senha, qualquer processo que alcançasse a rede interna
+    # leria/apagaria as filas. noeviction é obrigatório pro BullMQ (ele não pode
+    # perder chave de fila).
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 48mb
+      - --maxmemory-policy
+      - noeviction
+      - --requirepass
+      - ${REDIS_PASSWORD}
+    mem_limit: 64m
+    pids_limit: 64
     volumes:
       - redis_data:/data
     networks:
-      - sellergy_cloud-network
+      - interna
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   minio:
-    image: minio/minio:RELEASE.2025-04-08T15-41-24Z
+    # A imagem oficial minio/minio saiu do Docker Hub; pgsty/minio é o fork
+    # comunitário mantido (mesmo binário e mesmos comandos).
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
     container_name: sellergy_cloud_prod-minio
     restart: unless-stopped
-    command: server /data --console-address ":9001"
+    # Nenhuma capability: o MinIO escuta na 9000 (>1024) e só mexe em /data.
+    <<: [*logs, *seguro]
+    command: server /data
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?defina MINIO_ROOT_PASSWORD no .env}
+      # Console web desligado (não fica exposto e economiza memória).
+      MINIO_BROWSER: "off"
+      # Faz o coletor de lixo do Go segurar a memória abaixo do limite.
+      GOMEMLIMIT: 120MiB
+    mem_limit: 160m
+    pids_limit: 128
     volumes:
       - minio_data:/data
     networks:
-      - sellergy_cloud-network
+      - interna
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 15s
       timeout: 5s
       retries: 5
-    # Pra as imagens (URLs assinadas) carregarem no navegador, exponha o MinIO
-    # por um proxy público e aponte MINIO_ENDPOINT pra essa URL. Ver DEPLOY.md.
+
+  # Roda `prisma migrate deploy` e sai. Usa a etapa "deps" da imagem (que tem o
+  # CLI do Prisma); backend e worker só sobem depois que ele termina com sucesso.
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+      target: deps
+    image: sellergy-backend-migrate
+    container_name: sellergy_cloud_prod-migrate
+    restart: "no"
+    <<: [*logs, *seguro]
+    # A etapa "deps" não troca de usuário (precisa de root pro build); aqui roda
+    # como `node` mesmo assim.
+    user: "1000:1000"
+    environment:
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      HOME: /tmp
+      CHECKPOINT_DISABLE: "1"
+      PRISMA_HIDE_UPDATE_MESSAGE: "1"
+    command: ["npx", "prisma", "migrate", "deploy"]
+    mem_limit: 256m
+    pids_limit: 64
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - interna
 
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.prod
+      target: runtime
+    image: sellergy-backend
     container_name: sellergy_cloud_prod-backend
     restart: unless-stopped
+    # Nenhuma capability: roda como `node` (uid 1000) na porta 3333.
+    <<: [*logs, *seguro]
+    read_only: true
+    tmpfs:
+      # Perfil temporário do Chromium (PDF do catálogo) e arquivos temporários.
+      # noexec: nada gravado ali pode ser executado.
+      - /tmp:rw,noexec,nosuid,nodev,size=128m
     env_file:
       - .env
     environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
-      REDIS_URL: redis://redis:6379
-      # Dentro do Docker o backend fala com o MinIO pelo nome do servico.
-      MINIO_ENDPOINT: http://minio:9000
-      # Host que o NAVEGADOR usa nas URLs assinadas — defina no .env de
-      # producao (ex.: https://midia.seu-dominio, atras do proxy publico
-      # do MinIO). Sem isso, cai no ENDPOINT interno e as fotos quebram.
-      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT}
-    ports:
-      - "${BACKEND_PORT}:3333"
+      <<: *backend-env
+      NODE_OPTIONS: --max-old-space-size=192
+    mem_limit: 384m
+    # Chromium abre dezenas de threads (contam como pids).
+    pids_limit: 512
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
     networks:
-      - sellergy_cloud-network
-    # Aplica migrações pendentes e sobe a API (produção, sem nodemon).
-    command: sh -c "npx prisma migrate deploy && npm start"
+      - interna
+      - internet
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3333/saude"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: sellergy-backend
     container_name: sellergy_cloud_prod-worker
     restart: unless-stopped
+    <<: [*logs, *seguro]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m
     env_file:
       - .env
     environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
-      REDIS_URL: redis://redis:6379
-      # Dentro do Docker o backend fala com o MinIO pelo nome do servico.
-      MINIO_ENDPOINT: http://minio:9000
-      # Host que o NAVEGADOR usa nas URLs assinadas — defina no .env de
-      # producao (ex.: https://midia.seu-dominio, atras do proxy publico
-      # do MinIO). Sem isso, cai no ENDPOINT interno e as fotos quebram.
-      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT}
+      <<: *backend-env
+      NODE_OPTIONS: --max-old-space-size=160
+    mem_limit: 320m
+    pids_limit: 512
+    command: ["node", "src/worker.js"]
     depends_on:
       backend:
         condition: service_started
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     networks:
-      - sellergy_cloud-network
-    command: node src/worker.js
+      - interna
+      # Saída pra internet: WhatsApp (Baileys), Meta, IA, Asaas.
+      - internet
+    # O worker não tem HTTP. O check só confirma que o processo está vivo (um
+    # `node -e` a cada 30 s custaria ~40 MB de pico à toa numa VPS de 1 GB).
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'src/worker.js' >/dev/null"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
+  # HTTPS automático pra API e mídias. Ver caddy/Caddyfile.
+  caddy:
+    image: caddy:2.10.2-alpine
+    container_name: sellergy_cloud_prod-caddy
+    restart: unless-stopped
+    <<: [*logs, *seguro]
+    # Único direito devolvido: abrir as portas 80/443 (<1024).
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    environment:
+      API_DOMINIO: ${API_DOMINIO:?defina API_DOMINIO no .env}
+      MIDIA_DOMINIO: ${MIDIA_DOMINIO:?defina MIDIA_DOMINIO no .env}
+      APP_DOMINIO: ${APP_DOMINIO:-}
+    mem_limit: 48m
+    pids_limit: 64
+    # As ÚNICAS portas publicadas da stack.
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/sites:/etc/caddy/sites:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+    networks:
+      - interna
+      - internet
+    # API de administração do Caddy só escuta dentro do próprio container.
+    healthcheck:
+      # 127.0.0.1 (não "localhost": no Alpine ele resolve primeiro pra ::1, onde o admin não escuta).
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # OPCIONAL: front servido pela própria VPS (em vez da Hostinger).
+  # Ative com:  docker compose -f docker-compose.prod.yml --profile frontend up -d --build
+  # e renomeie caddy/sites/app.caddy.exemplo pra app.caddy.
   frontend:
+    profiles: ["frontend"]
     build:
       context: ./frontend
       dockerfile: Dockerfile.prod
       args:
-        VITE_API_URL: ${VITE_API_URL}
+        VITE_API_URL: https://${API_DOMINIO}
         VITE_URL_PUBLICA: ${VITE_URL_PUBLICA}
     container_name: sellergy_cloud_prod-frontend
     restart: unless-stopped
-    ports:
-      - "${FRONTEND_PORT:-80}:80"
-    depends_on:
-      - backend
+    <<: [*logs, *seguro]
+    # nginx: o processo mestre abre a porta 80 como root e troca pro usuário nginx.
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:rw,noexec,nosuid,size=8m
+      - /var/run:rw,noexec,nosuid,size=1m
+      - /tmp:rw,noexec,nosuid,size=8m
+    mem_limit: 32m
+    pids_limit: 32
     networks:
-      - sellergy_cloud-network
+      - interna
 
 volumes:
   postgres_data:
   redis_data:
   minio_data:
+  caddy_data:
+  caddy_config:
 
 networks:
-  sellergy_cloud-network:
+  # Rede só entre containers, SEM saída pra internet. Postgres, Redis e MinIO
+  # vivem só aqui: mesmo que um deles fosse comprometido, não conseguiria baixar
+  # malware nem mandar dados pra fora.
+  interna:
+    driver: bridge
+    internal: true
+  # Rede com saída pra internet (e portas publicadas): Caddy (Let's Encrypt),
+  # backend e worker (WhatsApp, Asaas, IA).
+  internet:
     driver: bridge

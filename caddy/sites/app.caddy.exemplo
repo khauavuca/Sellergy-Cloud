@@ -1,0 +1,14 @@
+# Só se o front rodar NA VPS (profile "frontend" do docker-compose.prod.yml).
+# Renomeie este arquivo pra app.caddy e defina APP_DOMINIO no .env.
+# A CSP é a mesma do frontend/public/.htaccess (Hostinger): mantenha as duas iguais.
+{$APP_DOMINIO} {
+	import seguranca
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://{$MIDIA_DOMINIO}; connect-src 'self' https://{$API_DOMINIO} wss://{$API_DOMINIO} https://{$MIDIA_DOMINIO}; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+	}
+	request_body {
+		max_size 1MB
+	}
+	encode zstd gzip
+	reverse_proxy frontend:80
+}
