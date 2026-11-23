@@ -39,7 +39,7 @@ export default function BotaoExportar({ montarDados, desabilitado = false }) {
     const dados = typeof montarDados === 'function' ? montarDados() : null;
     if (!dados) return;
     if (formato === 'csv') exportarCSV(dados);
-    else if (formato === 'xlsx') exportarXLSX(dados);
+    else if (formato === 'xlsx') exportarXLSX(dados).catch((e) => console.error('[exportar] xlsx', e));
   };
 
   return (

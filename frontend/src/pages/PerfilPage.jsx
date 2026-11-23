@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   User, Mail, Lock, Save, AlertCircle, CheckCircle2, ShieldCheck,
-  Upload, Trash2, ImageIcon, ArrowLeft
+  Upload, Trash2, ImageIcon, ArrowLeft, ShieldAlert
 } from 'lucide-react';
 import api from '../services/api';
 import { useAuthStore } from '../store/auth.store';
@@ -10,6 +10,7 @@ import {
   Card, CardHeader, CardTitle, CardDescription, Avatar, Button, Input,
   Badge, useToast
 } from '../components/ui';
+import CodigoDuasEtapas from '../components/conta/CodigoDuasEtapas';
 
 const MAX_FOTO_SIZE = 1024 * 1024; // 1 MB
 const PERFIL_LABEL = {
@@ -23,17 +24,24 @@ export default function PerfilPage() {
   const toast = useToast();
   const fileInput = useRef(null);
   const { user, refreshUser } = useAuthStore();
+  const ehAdmin = user?.perfil === 'ADMIN';
+  // Admin barrado por ADMIN_2FA_OBRIGATORIO (rota bloqueada ou 403 da API).
+  const exige2fa = ehAdmin && user?.admin2faObrigatorio === true && user?.mfa !== true;
 
-  const [dados, setDados] = useState({ nome: '', email: '', foto: '' });
+  const [dados, setDados] = useState(() => ({ nome: user?.nome || '', email: user?.email || '', foto: user?.foto || '' }));
+  // Quando o usuario muda no store (refreshUser), recarrega o formulario
+  // durante o render, sem efeito (evita render em cascata).
+  const [userDoFormulario, setUserDoFormulario] = useState(user);
+  if (user !== userDoFormulario) {
+    setUserDoFormulario(user);
+    if (user) setDados({ nome: user.nome || '', email: user.email || '', foto: user.foto || '' });
+  }
   const [salvandoDados, setSalvandoDados] = useState(false);
 
   const [senha, setSenha] = useState({ atual: '', nova: '', confirmar: '' });
   const [salvandoSenha, setSalvandoSenha] = useState(false);
   const [erroSenha, setErroSenha] = useState('');
 
-  useEffect(() => {
-    if (user) setDados({ nome: user.nome || '', email: user.email || '', foto: user.foto || '' });
-  }, [user]);
 
   const handleUploadFoto = (e) => {
     const file = e.target.files?.[0];
@@ -96,7 +104,7 @@ export default function PerfilPage() {
   return (
     <div className="space-y-5">
       <div>
-        <Link to="/app/configuracoes" className="text-xs text-[var(--text-muted)] inline-flex items-center gap-1 hover:text-[var(--text-main)]">
+        <Link to={ehAdmin ? '/admin/configuracoes' : '/app/configuracoes'} className="text-xs text-[var(--text-muted)] inline-flex items-center gap-1 hover:text-[var(--text-main)]">
           <ArrowLeft size={12} /> Configurações
         </Link>
         <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-main)] mt-2">Meu perfil</h1>
@@ -104,6 +112,20 @@ export default function PerfilPage() {
       </div>
 
       <div className="space-y-5 max-w-3xl">
+      {exige2fa && (
+        <div role="alert" className="flex items-start gap-3 px-4 py-3.5 rounded-xl bg-[var(--warning-soft)] text-[var(--warning-text)]">
+          <ShieldAlert size={18} className="flex-shrink-0 mt-0.5" aria-hidden="true" />
+          <div className="text-sm">
+            <p className="font-semibold">Ative o código em 2 etapas para usar o painel admin.</p>
+            <p className="mt-0.5">
+              Por segurança, o administrador do sistema só acessa as outras telas depois de ligar o código do app autenticador.
+              Configure abaixo; leva um minuto.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {exige2fa && <CodigoDuasEtapas />}
       {/* Header com avatar real */}
       <Card padding="lg">
         <div className="flex items-center gap-4">
@@ -241,6 +263,8 @@ export default function PerfilPage() {
           </div>
         </form>
       </Card>
+
+      {!exige2fa && <CodigoDuasEtapas />}
       </div>
     </div>
   );

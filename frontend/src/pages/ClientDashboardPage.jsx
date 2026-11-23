@@ -5,6 +5,7 @@ import api from '../services/api';
 import { useAuthStore } from '../store/auth.store';
 import { Card, CardHeader, CardTitle, EmptyState, Badge } from '../components/ui';
 import { moduloLiberado } from '../constants/permissoes';
+import InicioChecklist from '../components/conta/InicioChecklist';
 
 const fmtBRL = (v) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const horaDe = (d) => new Date(d).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -82,6 +83,8 @@ export default function ClientDashboardPage() {
         <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-main)] mt-1">Olá, {primeiroNome}</h1>
         <p className="text-sm text-[var(--text-muted)] mt-1">Como está o seu negócio hoje.</p>
       </div>
+
+      <InicioChecklist />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {temVendas && <Kpi label="Vendas hoje" valor={fmtBRL(m.totalHoje)} sub={`${m.qtdHoje} ${m.qtdHoje === 1 ? 'venda' : 'vendas'}`} />}

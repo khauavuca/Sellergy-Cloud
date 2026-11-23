@@ -3,10 +3,11 @@ import { Outlet, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingBag, Kanban, Calendar, Package, Box,
   DollarSign, MessageCircle, Send, Bot, Settings, BarChart3, UserCog,
-  CreditCard, Receipt, RotateCcw
+  CreditCard, Receipt, RotateCcw, BadgeCheck
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
+import AssinaturaBanner from './conta/AssinaturaBanner';
 import { useAuthStore } from '../store/auth.store';
 import { moduloLiberado } from '../constants/permissoes';
 
@@ -74,6 +75,11 @@ const NAV_AUTOMACAO = [
   { to: '/app/campanhas', label: 'Campanhas', icon: Send, modulo: 'CRM' },
 ];
 
+// Conta: assinatura do negocio. Fica perto de Configuracoes (no menu do usuario).
+const NAV_CONTA = [
+  { to: '/app/plano', label: 'Meu plano', icon: BadgeCheck, perfis: ['CLIENT', 'ADMINISTRADOR'] },
+];
+
 const TITULOS = {
   '/app/dashboard': { titulo: 'Início', breadcrumb: 'Painel' },
   '/app/crm': { titulo: 'Clientes', breadcrumb: 'Atendimento' },
@@ -109,27 +115,32 @@ const TITULOS = {
   '/app/campanhas': { titulo: 'Campanhas', breadcrumb: 'Automacao' },
   '/app/usuarios': { titulo: 'Equipe', breadcrumb: 'Conta' },
   '/app/configuracoes': { titulo: 'Configuracoes', breadcrumb: 'Conta' },
+  '/app/plano': { titulo: 'Meu plano', breadcrumb: 'Conta' },
 };
 
 export default function ClientLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
-  const modulosLiberados = user?.modulosLiberados || {};
+  const modulosLiberados = user?.modulosLiberados;
+  const perfil = user?.perfil;
 
   // Filtra os itens conforme os modulos liberados pelo admin para este tenant.
   const sections = useMemo(() => {
-    const filtra = (arr) => arr.filter((item) => !item.modulo || moduloLiberado(modulosLiberados, item.modulo));
+    const liberados = modulosLiberados || {};
+    const filtra = (arr) => arr.filter((item) => !item.modulo || moduloLiberado(liberados, item.modulo));
     const operacao = filtra(NAV_OPERACAO);
     const gestao = filtra(NAV_GESTAO);
-    const automacao = NAV_AUTOMACAO.filter((item) => moduloLiberado(modulosLiberados, item.modulo));
+    const automacao = NAV_AUTOMACAO.filter((item) => moduloLiberado(liberados, item.modulo));
 
     const result = [];
     if (operacao.length) result.push({ titulo: 'Operação', items: operacao });
     if (gestao.length) result.push({ titulo: 'Gestão', items: gestao });
     if (automacao.length) result.push({ titulo: 'Automação', items: automacao });
+    const conta = NAV_CONTA.filter((item) => item.perfis.includes(perfil));
+    if (conta.length) result.push({ titulo: 'Conta', items: conta });
     return result;
-  }, [modulosLiberados]);
+  }, [modulosLiberados, perfil]);
 
   const meta = TITULOS[location.pathname] || { titulo: 'Sellergy Cloud', breadcrumb: '' };
 
@@ -160,6 +171,7 @@ export default function ClientLayout() {
               com formulario (Configuracoes, PerfilPage, CrmUsersPage) tem
               max-w proprio e continuam centradas — listas/tabelas/dashboards
               esticam pra aproveitar a tela inteira. */}
+          <AssinaturaBanner />
           <Outlet />
         </main>
       </div>

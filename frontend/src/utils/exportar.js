@@ -24,7 +24,6 @@
 //     ],
 //   }
 
-import * as XLSX from 'xlsx';
 
 // Converte um array de objetos em string CSV com separador de vírgula.
 // Escapa aspas duplas, envolve em aspas quando o valor contém vírgula,
@@ -85,7 +84,11 @@ export function exportarCSV({ nome, titulo, periodo, filtrosAtivos = [], secoes 
 // =====================================================================
 // XLSX — uma aba (sheet) por seção
 // =====================================================================
-export function exportarXLSX({ nome, titulo, periodo, filtrosAtivos = [], secoes = [] }) {
+// A biblioteca de planilha so baixa quando alguem exporta (fora do pacote inicial).
+// Versao oficial da SheetJS (cdn.sheetjs.com): a do npm parou na 0.18.5, com
+// falhas conhecidas. Aqui so escrevemos planilha, nunca lemos arquivo de fora.
+export async function exportarXLSX({ nome, titulo, periodo, filtrosAtivos = [], secoes = [] }) {
+  const XLSX = await import('xlsx');
   const workbook = XLSX.utils.book_new();
 
   // Sheet "Resumo" no início com metadados

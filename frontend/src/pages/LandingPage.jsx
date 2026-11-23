@@ -1,105 +1,78 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, MessageCircle, Calendar, ShoppingBag, BarChart3, ShieldCheck, Sparkles } from 'lucide-react';
-import { Button } from '../components/ui';
-import SellergyLogo from '../components/SellergyLogo';
+import { ArrowRight, Check } from 'lucide-react';
+import LandingHeader from '../components/landing/LandingHeader';
+import MockProduto from '../components/landing/MockProduto';
+import AbasSegmento from '../components/landing/AbasSegmento';
+import Recursos from '../components/landing/Recursos';
+import ComoFunciona from '../components/landing/ComoFunciona';
+import Precos from '../components/landing/Precos';
+import Faq from '../components/landing/Faq';
+import LandingRodape from '../components/landing/LandingRodape';
+import { ROTA_CADASTRO, ROTA_LOGIN } from '../components/landing/conteudo';
+import { botaoPrimario, botaoSecundario, container, foco, titulo } from '../components/landing/estilo';
+
+const GARANTIAS = ['14 dias com tudo do Profissional', 'Sem cartão de crédito', 'Cancele quando quiser'];
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-[var(--bg-app)]">
-      {/* Header */}
-      <header className="px-6 lg:px-12 py-5 flex items-center justify-between max-w-[1400px] mx-auto">
-        <Link to="/" className="flex items-center gap-2.5">
-          <SellergyLogo size={36} />
-          <span className="text-base font-semibold tracking-tight text-[var(--text-main)]">
-            Sellergy Cloud
-          </span>
-        </Link>
-        <div className="flex items-center gap-2">
-          <Link to="/app/login">
-            <Button variant="primary" size="md">Entrar</Button>
-          </Link>
-        </div>
-      </header>
+    // Cores fixas: a landing nao segue o tema escuro do painel.
+    <div className="min-h-screen bg-[#F6F7F5] text-[#15171A] font-[family-name:Inter,system-ui,sans-serif] antialiased">
+      <a
+        href="#conteudo"
+        className={`sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:px-4 focus:py-3 focus:rounded-lg focus:bg-white focus:text-[#15171A] focus:shadow-lg ${foco}`}
+      >
+        Pular para o conteúdo
+      </a>
 
-      {/* Hero */}
-      <section className="px-6 lg:px-12 pt-12 pb-20 max-w-[1400px] mx-auto">
-        <div className="text-center max-w-3xl mx-auto">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] text-xs font-semibold tracking-tight mb-6">
-            <Sparkles size={12} />
-            Plataforma premium de atendimento via bots
+      <LandingHeader />
+
+      <main id="conteudo" tabIndex={-1} className="outline-none">
+        {/* Hero */}
+        <section aria-labelledby="titulo-hero" className={`${container} pt-12 pb-16 md:pt-[72px] md:pb-20 grid gap-12 lg:gap-14 lg:grid-cols-2 items-center`}>
+          <div>
+            <p className="inline-flex m-0 px-3 py-1.5 rounded-full bg-[#E3F1EA] text-[#0E5C34] font-semibold text-[13px]">
+              Para clínicas de estética e lojas pequenas
+            </p>
+            <h1
+              id="titulo-hero"
+              className={`${titulo} text-[40px] sm:text-[48px] lg:text-[60px] leading-[1.03] tracking-[-0.035em] font-bold mt-5 mb-0`}
+            >
+              Saia do caderno. Venda, agende e receba pelo WhatsApp.
+            </h1>
+            <p className="text-lg md:text-[19px] leading-relaxed text-[#4A5059] mt-5 mb-0 max-w-[540px]">
+              Agenda com lembrete automático, venda no balcão com Pix, caixa que abre sozinho, estoque e nota fiscal.
+              Tudo num lugar só, por um preço fixo e sem fidelidade.
+            </p>
+            <div className="flex flex-wrap gap-3 mt-8">
+              <Link to={ROTA_CADASTRO} className={`${botaoPrimario} min-h-[52px] px-6 text-base`}>
+                Testar grátis por 14 dias
+                <ArrowRight size={18} aria-hidden="true" />
+              </Link>
+              <Link to={ROTA_LOGIN} className={`${botaoSecundario} min-h-[52px] px-6 text-base`}>
+                Entrar
+              </Link>
+            </div>
+            <ul className="list-none p-0 mt-6 mb-0 flex flex-wrap gap-x-6 gap-y-2 text-[#4A5059] text-sm">
+              {GARANTIAS.map((g) => (
+                <li key={g} className="flex gap-1.5 items-center">
+                  <Check size={18} strokeWidth={2.2} className="text-[#136F4D]" aria-hidden="true" />
+                  {g}
+                </li>
+              ))}
+            </ul>
           </div>
-          <h1 className="text-4xl md:text-6xl font-semibold tracking-tight text-[var(--text-main)] leading-[1.05]">
-            Atendimento automatizado.<br />
-            Vendas humanizadas.
-          </h1>
-          <p className="text-base md:text-lg text-[var(--text-secondary)] mt-6 max-w-xl mx-auto leading-relaxed">
-            Bots inteligentes integrados a CRM, agenda, estoque e financeiro. Tudo o que sua loja precisa em um unico painel premium.
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-3 mt-8">
-            <Link to="/app/login">
-              <Button variant="primary" size="lg" icon={ArrowRight} iconPosition="right">
-                Acessar minha loja
-              </Button>
-            </Link>
-          </div>
-        </div>
 
-        {/* Recursos */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-20">
-          <Recurso
-            icon={MessageCircle}
-            titulo="Inbox unificada"
-            desc="Atenda o WhatsApp por um painel so. Bot responde sozinho ou passa pra voce."
-          />
-          <Recurso
-            icon={Calendar}
-            titulo="Agenda integrada"
-            desc="Agendamentos automaticos via bot. Confirma, cancela e lembra os clientes pra voce."
-          />
-          <Recurso
-            icon={ShoppingBag}
-            titulo="Vendas e estoque"
-            desc="Cada venda baixa estoque e gera lancamento financeiro. Sem planilha paralela."
-          />
-          <Recurso
-            icon={BarChart3}
-            titulo="Relatorios premium"
-            desc="DRE, fluxo de caixa, CMV e dashboards. Saiba o que ta dando lucro de verdade."
-          />
-          <Recurso
-            icon={ShieldCheck}
-            titulo="Multi-usuario com permissoes"
-            desc="Cadastre vendedores e administradores com permissoes granulares por modulo."
-          />
-          <Recurso
-            icon={Sparkles}
-            titulo="Premium por padrao"
-            desc="Interface limpa, light/dark, mobile-first. Sua equipe vai querer usar."
-          />
-        </div>
-      </section>
+          <MockProduto />
+        </section>
 
-      {/* Footer */}
-      <footer className="border-t border-[var(--border-main)] px-6 lg:px-12 py-8">
-        <div className="max-w-[1400px] mx-auto flex flex-wrap items-center justify-between gap-4 text-xs text-[var(--text-muted)]">
-          <div>© {new Date().getFullYear()} Sellergy Cloud — Todos os direitos reservados</div>
-          <div className="flex gap-4">
-            <Link to="/app/login" className="hover:text-[var(--text-main)] transition-colors">Acessar</Link>
-          </div>
-        </div>
-      </footer>
-    </div>
-  );
-}
+        <AbasSegmento />
+        <Recursos />
+        <ComoFunciona />
+        <Precos />
+        <Faq />
+      </main>
 
-function Recurso({ icon: Icon, titulo, desc }) {
-  return (
-    <div className="p-6 rounded-2xl border border-[var(--border-main)] bg-[var(--bg-card)] hover:border-[var(--text-muted)] hover:shadow-[var(--shadow-sm)] transition-all">
-      <div className="w-10 h-10 rounded-xl bg-[var(--bg-subtle)] flex items-center justify-center mb-4">
-        <Icon size={18} strokeWidth={1.75} className="text-[var(--accent)]" />
-      </div>
-      <h3 className="text-base font-semibold tracking-tight text-[var(--text-main)]">{titulo}</h3>
-      <p className="text-sm text-[var(--text-secondary)] mt-1.5 leading-relaxed">{desc}</p>
+      <LandingRodape />
     </div>
   );
 }

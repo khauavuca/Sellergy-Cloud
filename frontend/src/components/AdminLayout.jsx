@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Users, ShieldCheck, Bot, Bell, BarChart3,
-  Settings, Sparkles
+  Settings, Sparkles, CreditCard
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
@@ -19,6 +19,7 @@ const SECTIONS = [
     items: [
       { to: '/admin/clientes', label: 'Lista de clientes', icon: Users },
       { to: '/admin/clientes/permissoes', label: 'Permissoes', icon: ShieldCheck },
+      { to: '/admin/assinaturas', label: 'Assinaturas', icon: CreditCard },
     ],
   },
   {
@@ -42,6 +43,8 @@ const TITULOS = {
   '/admin/dashboard': { titulo: 'Visao geral', breadcrumb: 'Dashboard' },
   '/admin/clientes': { titulo: 'Clientes', breadcrumb: 'Gestao' },
   '/admin/clientes/permissoes': { titulo: 'Permissoes por cliente', breadcrumb: 'Gestao · Clientes' },
+  '/admin/assinaturas': { titulo: 'Assinaturas', breadcrumb: 'Gestão · Clientes' },
+  '/admin/configuracoes/perfil': { titulo: 'Meu perfil', breadcrumb: 'Sistema' },
   '/admin/bots': { titulo: 'Bots', breadcrumb: 'Operacao' },
   '/admin/campanhas': { titulo: 'Campanhas', breadcrumb: 'Operacao' },
   '/admin/alertas': { titulo: 'Alertas', breadcrumb: 'Operacao' },

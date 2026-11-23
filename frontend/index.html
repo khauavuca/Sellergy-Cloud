@@ -4,7 +4,21 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sellergy Cloud — Painel de Controle</title>
+    <title>Sellergy Cloud — Agenda, vendas e Pix pelo WhatsApp para clínicas e lojas</title>
+    <meta name="description" content="Agenda com lembrete no WhatsApp, PDV com Pix, caixa automático, estoque, catálogo online e nota fiscal para clínicas de estética e lojas pequenas. Teste grátis por 14 dias, sem cartão de crédito." />
+    <meta name="theme-color" content="#136F4D" />
+
+    <!-- Open Graph / redes sociais -->
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="pt_BR" />
+    <meta property="og:site_name" content="Sellergy Cloud" />
+    <meta property="og:url" content="https://sellergycloud.com/" />
+    <meta property="og:title" content="Sellergy Cloud — Venda, agende e receba pelo WhatsApp" />
+    <meta property="og:description" content="Agenda com lembrete automático, PDV com Pix, estoque e nota fiscal num lugar só. Preço fixo por negócio. Teste grátis por 14 dias, sem cartão." />
+    <meta property="og:image" content="https://sellergycloud.com/logo-sellergy.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Sellergy Cloud — Venda, agende e receba pelo WhatsApp" />
+    <meta name="twitter:description" content="Agenda com lembrete automático, PDV com Pix, estoque e nota fiscal num lugar só. Teste grátis por 14 dias, sem cartão." />
 
     <!-- Desabilita extensoes que injetam overlay (Grammarly, LanguageTool, etc.) -->
     <meta name="grammarly" content="false" />
@@ -14,26 +28,11 @@
     <!-- Google Fonts: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
 
-    <!-- Anti-flash: aplica o tema antes do React carregar -->
-    <script>
-      (function () {
-        try {
-          var stored = localStorage.getItem('sellergy-ui-storage');
-          var parsed = stored ? JSON.parse(stored) : null;
-          var theme = parsed?.state?.theme ?? 'light';
-          if (theme === 'dark') {
-            document.documentElement.classList.add('dark');
-            document.documentElement.style.backgroundColor = '#0A0A0A';
-          } else {
-            document.documentElement.style.backgroundColor = '#FAFAF7';
-          }
-        } catch (e) {
-          document.documentElement.style.backgroundColor = '#FAFAF7';
-        }
-      })();
-    </script>
+    <!-- Anti-flash: aplica o tema antes do React carregar (arquivo em public/,
+         sem script inline, por causa da CSP de producao) -->
+    <script src="/tema-inicial.js"></script>
   </head>
   <body data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false">
     <div id="root"></div>

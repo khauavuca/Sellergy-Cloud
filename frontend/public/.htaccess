@@ -1,0 +1,74 @@
+# Hospedagem Apache (Hostinger): o Vite copia este arquivo pra raiz do dist.
+# Faz: HTTPS forçado, headers de segurança (com CSP), cache e o fallback de
+# rota do React Router pro index.html.
+#
+# A CSP abaixo libera só o que o SPA usa:
+#  - scripts/estilos do próprio site (sem script inline: o anti-flash do tema
+#    fica em /tema-inicial.js);
+#  - Google Fonts (CSS em fonts.googleapis.com, arquivos em fonts.gstatic.com);
+#  - API e Socket.io em api.sellergycloud.com (https + wss);
+#  - imagens do MinIO em midia.sellergycloud.com, data: e blob: (prévias).
+# Se algo quebrar depois de um deploy, abra o console do navegador (F12): a
+# CSP diz o que bloqueou. Pra investigar sem bloquear, troque temporariamente
+# "Content-Security-Policy" por "Content-Security-Policy-Report-Only".
+# Se o front também rodar na VPS, mantenha igual ao caddy/sites/app.caddy.exemplo.
+
+Options -Indexes -MultiViews
+ServerSignature Off
+AddDefaultCharset UTF-8
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Força HTTPS (atrás do Cloudflare, o HTTPS chega em X-Forwarded-Proto)
+  RewriteCond %{HTTPS} off
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+  # Bloqueia arquivos ocultos (.git, .env, .htaccess...) e backups/sources.
+  RewriteRule (^|/)\.(?!well-known/) - [F,L]
+  RewriteRule \.(bak|old|orig|swp|sql|gz|zip|tar|env|log|map|sh|php|phtml|phar)$ - [F,L,NC]
+
+  # Arquivo ou pasta que existe: serve direto
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Asset que não existe (ex.: /assets/velho-abc123.js de um deploy antigo):
+  # 404 de verdade, em vez de devolver o index.html com tipo errado.
+  RewriteRule ^assets/ - [R=404,L]
+
+  # Qualquer outra rota: index.html (SPA)
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+# Nada de PHP/CGI aqui: o site é só arquivo estático. Se alguém conseguir subir
+# um .php pela hospedagem, ele não roda.
+<IfModule mod_php.c>
+  php_flag engine off
+</IfModule>
+<FilesMatch "\.(php|phtml|phar|cgi|pl|py|sh)$">
+  Require all denied
+</FilesMatch>
+
+<IfModule mod_headers.c>
+  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+  Header always set Cross-Origin-Opener-Policy "same-origin"
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://midia.sellergycloud.com; connect-src 'self' https://api.sellergycloud.com wss://api.sellergycloud.com https://midia.sellergycloud.com; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+  Header always unset X-Powered-By
+
+  # index.html nunca em cache (senão o navegador segura versão antiga)
+  <FilesMatch "index\.html$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+  # (O cache longo dos assets com hash fica em public/assets/.htaccess.)
+</IfModule>
+
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css text/plain application/javascript application/json image/svg+xml
+</IfModule>
