@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check } from 'lucide-react';
 import api from '../../services/api';
+import { IconeCheck } from './Icones';
 import {
-  DESCONTO_ANUAL, DIAS_DE_TESTE_PADRAO, PLANO_RECOMENDADO, PLANOS_RESERVA, ROTA_CADASTRO, ROTULO_RECURSO,
+  DESCONTO_ANUAL, DIAS_DE_TESTE_PADRAO, PLANO_RECOMENDADO, PLANOS_RESERVA, ROTA_CADASTRO, ROTULO_RECURSO, TEXTO_PLANO,
 } from './conteudo';
-import { botaoPrimario, botaoSecundario, container, foco, titulo } from './estilo';
+import { aba, botaoPrimario, botaoSecundario, container, titulo, tituloSecao } from './estilo';
 
 const brl = (v) => Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const inteiro = (v) => Number(v).toLocaleString('pt-BR');
@@ -39,17 +39,20 @@ const textoLimite = (valor, singular, plural) => {
   return `${inteiro(valor)} ${valor === 1 ? singular : plural}`;
 };
 
-/** Lista o que o plano tem; a partir do 2o, resume como "Tudo do anterior" + novidades. */
+/** Itens do card: texto do prototipo para planos conhecidos; senao, monta pelos recursos. */
 function itensDoPlano(plano, anterior) {
+  if (TEXTO_PLANO[plano.codigo]) return TEXTO_PLANO[plano.codigo].itens;
   const chaves = Object.keys(ROTULO_RECURSO).filter((k) => plano.recursos[k]);
-  // Recurso que vier da API e ainda nao tiver rotulo aqui nao aparece (evita
-  // mostrar chave crua para o visitante).
   if (!anterior) return chaves.map((k) => ROTULO_RECURSO[k]);
   const herdaTudo = Object.keys(anterior.recursos).every((k) => !anterior.recursos[k] || plano.recursos[k]);
   if (!herdaTudo) return chaves.map((k) => ROTULO_RECURSO[k]);
   const novos = chaves.filter((k) => !anterior.recursos[k]).map((k) => ROTULO_RECURSO[k]);
   return [`Tudo do ${anterior.nome}`, ...novos];
 }
+
+const descricaoDoPlano = (p) => TEXTO_PLANO[p.codigo]?.desc || (p.descricao ? `Para ${p.descricao}.` : null);
+
+const chip = 'text-[13px] font-semibold bg-[#F1F2EF] rounded-lg px-2.5 py-1.5';
 
 export default function Precos() {
   const [anual, setAnual] = useState(false);
@@ -69,16 +72,12 @@ export default function Precos() {
   const { planos, diasDeTeste } = dados;
 
   return (
-    <section id="precos" aria-labelledby="titulo-precos" className="scroll-mt-20 bg-[#EEF0EC]">
-      <div className={`${container} py-16 md:py-20`}>
+    <section id="precos" aria-labelledby="titulo-precos" className="bg-[#EEF0EC]">
+      <div className={`${container} py-16 sm:py-20`}>
         <div className="flex flex-wrap justify-between items-end gap-6">
           <div>
-            <h2 id="titulo-precos" className={`${titulo} text-[32px] md:text-[40px] leading-[1.1] font-bold m-0`}>
-              Preço fixo por negócio
-            </h2>
-            <p className="mt-2.5 mb-0 text-[#4A5059] text-[17px]">
-              Sem cobrar por profissional e sem fidelidade. Troque de plano quando quiser.
-            </p>
+            <h2 id="titulo-precos" className={`${tituloSecao} m-0`}>Preço fixo por negócio</h2>
+            <p className="mt-2.5 mb-0 text-[#4A5059] text-[17px]">Sem fidelidade. Troque de plano quando quiser.</p>
           </div>
           <div role="group" aria-label="Forma de cobrança" className="flex gap-1 p-1 bg-white rounded-full border border-[#E3E5E8]">
             {[
@@ -90,9 +89,7 @@ export default function Precos() {
                 type="button"
                 aria-pressed={anual === op.valor}
                 onClick={() => setAnual(op.valor)}
-                className={`min-h-11 px-[18px] rounded-full text-[15px] font-semibold transition-colors cursor-pointer ${foco} ${
-                  anual === op.valor ? 'bg-[#15171A] text-white' : 'text-[#4A5059] hover:text-[#15171A]'
-                }`}
+                className={aba(anual === op.valor)}
               >
                 {op.rotulo}
               </button>
@@ -100,7 +97,7 @@ export default function Precos() {
           </div>
         </div>
 
-        <div className="grid gap-5 mt-12 md:grid-cols-3 items-start">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,310px),1fr))] gap-5 mt-10 items-start">
           {planos.map((p, i) => {
             const destaque = p.codigo === PLANO_RECOMENDADO;
             const valor = anual ? p.precoAnualMensal : p.precoMensal;
@@ -111,6 +108,7 @@ export default function Precos() {
             const lembretes = p.limites.lembretesMes === null
               ? 'Lembretes ilimitados'
               : p.limites.lembretesMes !== undefined ? `${inteiro(p.limites.lembretesMes)} lembretes/mês` : null;
+            const descricao = descricaoDoPlano(p);
             const idTitulo = `plano-${p.codigo || i}`;
 
             return (
@@ -122,18 +120,18 @@ export default function Precos() {
                 }`}
               >
                 {destaque && (
-                  <span className="absolute -top-[13px] left-7 bg-[#136F4D] text-white text-xs font-bold px-3 py-[5px] rounded-full">
+                  <span className="absolute -top-[13px] left-7 bg-[#136F4D] text-white text-[12px] font-bold px-3 py-[5px] rounded-full">
                     Recomendado
                   </span>
                 )}
                 <div>
-                  <h3 id={idTitulo} className={`${titulo} m-0 text-2xl font-bold`}>{p.nome}</h3>
-                  {p.descricao && <p className="mt-1.5 mb-0 text-[#4A5059] text-[15px]">Para {p.descricao}</p>}
+                  <h3 id={idTitulo} className={`${titulo} m-0 text-[24px] font-bold`}>{p.nome}</h3>
+                  {descricao && <p className="mt-1.5 mb-0 text-[#4A5059] text-[15px]">{descricao}</p>}
                 </div>
                 <div>
                   <p className="m-0 flex items-baseline gap-1.5">
-                    <span className="text-base font-semibold">R$</span>
-                    <span className={`${titulo} text-5xl font-bold tabular-nums`}>{brl(valor)}</span>
+                    <span className="text-[16px] font-semibold">R$</span>
+                    <span className={`${titulo} text-[48px] leading-[normal] font-bold tracking-[-0.03em] tabular-nums`}>{brl(valor)}</span>
                     <span className="sr-only">por mês</span>
                   </p>
                   <p className="mt-0.5 mb-0 text-[#5B616B] text-[13px]">
@@ -143,19 +141,18 @@ export default function Precos() {
                   </p>
                 </div>
                 <Link to={ROTA_CADASTRO} className={destaque ? botaoPrimario : botaoSecundario}>
-                  Testar grátis
-                  <span className="sr-only"> o plano {p.nome}</span>
+                  Testar o {p.nome} grátis
                 </Link>
                 {(limites || lembretes) && (
                   <div className="flex gap-2 flex-wrap">
-                    {limites && <span className="text-[13px] font-semibold bg-[#F1F2EF] rounded-lg px-2.5 py-1.5">{limites}</span>}
-                    {lembretes && <span className="text-[13px] font-semibold bg-[#F1F2EF] rounded-lg px-2.5 py-1.5">{lembretes}</span>}
+                    {limites && <span className={chip}>{limites}</span>}
+                    {lembretes && <span className={chip}>{lembretes}</span>}
                   </div>
                 )}
                 <ul className="list-none p-0 m-0 flex flex-col gap-2.5">
                   {itensDoPlano(p, planos[i - 1]).map((r) => (
-                    <li key={r} className="flex gap-2.5 items-start text-[15px] leading-snug">
-                      <Check size={18} strokeWidth={2.2} className="text-[#136F4D] shrink-0 mt-px" aria-hidden="true" />
+                    <li key={r} className="flex gap-2.5 items-start text-[15px] leading-[1.4]">
+                      <IconeCheck className="text-[#136F4D] mt-px" />
                       {r}
                     </li>
                   ))}
@@ -165,9 +162,9 @@ export default function Precos() {
           })}
         </div>
 
-        <p className="mt-7 mb-0 text-[#4A5059] text-[15px] leading-relaxed max-w-[760px]">
-          Todo cadastro começa com {diasDeTeste} dias do plano Profissional liberado, sem cartão de crédito.
-          Se o teste acabar sem plano escolhido, nada é apagado: a conta fica só para consulta até você assinar.
+        <p className="mt-7 mb-0 text-[#4A5059] text-[15px] leading-[1.55] max-w-[760px]">
+          Todo cadastro começa com {diasDeTeste} dias do Profissional liberado. Se o teste acabar sem plano, nada é
+          apagado: a conta fica só para consulta até você escolher.
         </p>
       </div>
     </section>

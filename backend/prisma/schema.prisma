@@ -29,6 +29,10 @@ model Usuario {
   // null = DONO (compatibilidade com o admin que ja existe).
   papelAdmin         String?
   telefone           String?
+  // Aceite dos Termos de uso e da Politica de privacidade (LGPD): quando e
+  // qual versao. Ver src/legal/versao.js.
+  termosAceitosEm    DateTime?
+  versaoTermos       String?
   criadoEm           DateTime                 @default(now())
   atualizadoEm       DateTime                 @updatedAt
   clienteId          String?

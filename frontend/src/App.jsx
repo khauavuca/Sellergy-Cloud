@@ -7,6 +7,7 @@ import { ToastProvider } from './components/ui';
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const ClientLoginPage = lazy(() => import('./pages/ClientLoginPage'));
 import LandingPage from './pages/LandingPage';
+import AvisoCookies from './components/legal/AvisoCookies';
 const TrocaSenhaPage = lazy(() => import('./pages/TrocaSenhaPage'));
 const CadastroPage = lazy(() => import('./pages/CadastroPage'));
 const AgendarPage = lazy(() => import('./pages/AgendarPage'));
@@ -51,6 +52,8 @@ const ConfiguracoesAdminPage = lazy(() => import('./pages/ConfiguracoesAdminPage
 const CampanhasPage = lazy(() => import('./pages/CampanhasPage'));
 const BotsClientePage = lazy(() => import('./pages/BotsClientePage'));
 const AdminAssinaturasPage = lazy(() => import('./pages/AdminAssinaturasPage'));
+const TermosPage = lazy(() => import('./pages/TermosPage'));
+const PrivacidadePage = lazy(() => import('./pages/PrivacidadePage'));
 // Fase 2
 const EncaixePage = lazy(() => import('./pages/EncaixePage'));
 const PacotesPage = lazy(() => import('./pages/PacotesPage'));
@@ -165,6 +168,8 @@ export default function App() {
           {/* Publicas, sem login: agendamento pelo link e confirmacao do lembrete */}
           <Route path="/agendar/:slug" element={<AgendarPage />} />
           <Route path="/confirmar/:token" element={<ConfirmarPage />} />
+          <Route path="/termos" element={<TermosPage />} />
+          <Route path="/privacidade" element={<PrivacidadePage />} />
           <Route path="/encaixe/:token" element={<EncaixeRespostaPage />} />
           <Route path="/loja/:slug" element={<LojaPage />} />
           <Route path="/pedido/:token" element={<PedidoPublicoPage />} />
@@ -269,6 +274,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         </Suspense>
+        <AvisoCookies />
       </BrowserRouter>
     </ToastProvider>
   );

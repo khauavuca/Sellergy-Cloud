@@ -2,20 +2,18 @@ import { useEffect, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Menu, X } from 'lucide-react';
 import { ROTA_CADASTRO, ROTA_LOGIN } from './conteudo';
-import { botaoPrimario, container, foco } from './estilo';
+import { botaoPrimario, foco, linkNav } from './estilo';
 import Marca from './Marca';
 
+// "Para lojas" / "Para clinicas" levam a #negocios ja com a aba certa aberta.
 const NAV = [
-  { href: '#negocios', rotulo: 'Para clínicas e lojas' },
-  { href: '#recursos', rotulo: 'Recursos' },
-  { href: '#como-funciona', rotulo: 'Como funciona' },
+  { href: '#negocios', rotulo: 'Para lojas', segmento: 'lojas' },
+  { href: '#negocios', rotulo: 'Para clínicas', segmento: 'clinicas' },
   { href: '#precos', rotulo: 'Preços' },
   { href: '#duvidas', rotulo: 'Dúvidas' },
 ];
 
-const linkNav = `inline-flex items-center min-h-11 px-3 rounded-lg text-[15px] font-medium text-[#3D434B] no-underline hover:bg-[#ECEEEA] hover:text-[#15171A] ${foco}`;
-
-export default function LandingHeader() {
+export default function LandingHeader({ aoEscolherSegmento }) {
   const [aberto, setAberto] = useState(false);
   const idMenu = useId();
 
@@ -31,27 +29,35 @@ export default function LandingHeader() {
     };
   }, [aberto]);
 
-  const fechar = () => setAberto(false);
+  const aoClicar = (item) => {
+    if (item.segmento) aoEscolherSegmento?.(item.segmento);
+    setAberto(false);
+  };
+
+  const links = NAV.map((item) => (
+    <a key={item.rotulo} href={item.href} className={linkNav} onClick={() => aoClicar(item)}>
+      {item.rotulo}
+    </a>
+  ));
 
   return (
-    <header className="sticky top-0 z-40 border-b border-[#E3E5E8] bg-[#F6F7F5]/95 backdrop-blur supports-[backdrop-filter]:bg-[#F6F7F5]/85">
-      <div className={`${container} flex items-center gap-4 py-3`}>
+    <header className="border-b border-[#E3E5E8] bg-[#F6F7F5]">
+      <div className="max-w-[1200px] mx-auto px-6 py-3.5 flex items-center gap-5">
         <Marca />
 
-        <nav aria-label="Principal" className="hidden lg:flex items-center gap-0.5 flex-1 ml-4">
-          {NAV.map((item) => (
-            <a key={item.href} href={item.href} className={linkNav}>{item.rotulo}</a>
-          ))}
+        <nav aria-label="Principal" className="hidden lg:flex flex-wrap gap-0.5 flex-1">
+          {links}
         </nav>
-
-        <div className="hidden lg:flex items-center gap-2 ml-auto">
+        <div className="hidden lg:block">
           <Link to={ROTA_LOGIN} className={linkNav}>Entrar</Link>
+        </div>
+        <div className="hidden sm:block ml-auto lg:ml-0">
           <Link to={ROTA_CADASTRO} className={botaoPrimario}>Testar grátis</Link>
         </div>
 
         <button
           type="button"
-          className={`lg:hidden ml-auto inline-flex items-center justify-center w-11 h-11 rounded-lg text-[#15171A] hover:bg-[#ECEEEA] ${foco}`}
+          className={`lg:hidden ml-auto sm:ml-0 inline-flex items-center justify-center w-11 h-11 rounded-lg text-[#15171A] hover:bg-[#ECEEEA] cursor-pointer ${foco}`}
           aria-expanded={aberto}
           aria-controls={idMenu}
           aria-label={aberto ? 'Fechar menu' : 'Abrir menu'}
@@ -61,16 +67,14 @@ export default function LandingHeader() {
         </button>
       </div>
 
-      <div id={idMenu} hidden={!aberto} className="lg:hidden border-t border-[#E3E5E8] bg-[#F6F7F5]">
-        <nav aria-label="Principal (celular)" className={`${container} flex flex-col py-3`}>
-          {NAV.map((item) => (
-            <a key={item.href} href={item.href} className={linkNav} onClick={fechar}>{item.rotulo}</a>
-          ))}
-          <div className="flex flex-col sm:flex-row gap-2 pt-3 mt-2 border-t border-[#E3E5E8]">
-            <Link to={ROTA_CADASTRO} className={`${botaoPrimario} w-full sm:w-auto`} onClick={fechar}>
-              Testar grátis por 14 dias
+      <div id={idMenu} hidden={!aberto} className="lg:hidden border-t border-[#E3E5E8]">
+        <nav aria-label="Principal (celular)" className="max-w-[1200px] mx-auto px-6 py-3 flex flex-col">
+          {links}
+          <div className="flex flex-col gap-2 pt-3 mt-2 border-t border-[#E3E5E8]">
+            <Link to={ROTA_LOGIN} className={linkNav} onClick={() => setAberto(false)}>Entrar</Link>
+            <Link to={ROTA_CADASTRO} className={`${botaoPrimario} w-full`} onClick={() => setAberto(false)}>
+              Testar grátis
             </Link>
-            <Link to={ROTA_LOGIN} className={`${linkNav} justify-center`} onClick={fechar}>Entrar</Link>
           </div>
         </nav>
       </div>

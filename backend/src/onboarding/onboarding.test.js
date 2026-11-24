@@ -8,7 +8,7 @@ const { competenciaDe, somarUmMes, valorDaFatura } = require('../assinatura/cobr
 
 const valido = {
   nomeNegocio: 'Clínica Bem Estar', nomeResponsavel: 'Ana Lima', email: ' Ana@Exemplo.com ',
-  senha: 'segura123', telefone: '(11) 98888-7777', segmento: 'servico',
+  senha: 'segura123', telefone: '(11) 98888-7777', segmento: 'servico', aceiteTermos: true,
 };
 
 test('cadastro valido normaliza e-mail, telefone e segmento', () => {
@@ -66,4 +66,11 @@ test('fatura: competencia, mes seguinte sem pular mes e valor do plano', () => {
   assert.equal(fimJan.getMonth(), 1); // fevereiro, nao marco
   assert.equal(valorDaFatura({ plano: 'PRO', mensalidade: 0 }), 119);
   assert.equal(valorDaFatura({ plano: 'PRO', mensalidade: 89.9 }), 89.9);
+});
+
+test('cadastro sem aceitar os Termos e recusado', () => {
+  const { erro, campos } = validarCadastro({ ...valido, aceiteTermos: undefined });
+  assert.ok(erro);
+  assert.deepEqual(campos, ['aceiteTermos']);
+  assert.match(erro, /Termos de uso/);
 });

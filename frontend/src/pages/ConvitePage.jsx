@@ -9,6 +9,7 @@ import api from '../services/api';
 import { useAuthStore } from '../store/auth.store';
 import { Button, Input } from '../components/ui';
 import SellergyLogo from '../components/SellergyLogo';
+import AceiteTermos from '../components/legal/AceiteTermos';
 
 function Caixa({ children }) {
   return (
@@ -32,6 +33,8 @@ export default function ConvitePage() {
   const [senha, setSenha] = useState('');
   const [erroSenha, setErroSenha] = useState(null);
   const [enviando, setEnviando] = useState(false);
+  const [aceite, setAceite] = useState(false);
+  const [erroAceite, setErroAceite] = useState(false);
 
   useEffect(() => {
     api.get(`/publico/convite/${encodeURIComponent(token)}`)
@@ -42,18 +45,24 @@ export default function ConvitePage() {
   const aceitar = async (e) => {
     e.preventDefault();
     setErroSenha(null);
+    setErroAceite(false);
+    if (!aceite) {
+      setErroAceite(true);
+      return;
+    }
     if (senha.length < (convite?.senhaMinima || 8)) {
       setErroSenha(`Use pelo menos ${convite?.senhaMinima || 8} caracteres.`);
       return;
     }
     setEnviando(true);
     try {
-      const r = await api.post(`/publico/convite/${encodeURIComponent(token)}`, { senha });
+      const r = await api.post(`/publico/convite/${encodeURIComponent(token)}`, { senha, aceiteTermos: aceite });
       await entrarComSessao(r.data);
       navigate('/app/dashboard', { replace: true });
     } catch (err) {
       const d = err.response?.data;
-      if (d?.campos?.includes('senha')) setErroSenha(d.erro);
+      if (d?.campos?.includes('aceiteTermos')) setErroAceite(true);
+      else if (d?.campos?.includes('senha')) setErroSenha(d.erro);
       else setErro(d?.erro || 'Não foi possível criar seu acesso. Tente de novo.');
     } finally {
       setEnviando(false);
@@ -131,6 +140,7 @@ export default function ConvitePage() {
               : TEXTO_PERFIL[convite.perfil] || TEXTO_PERFIL.VENDEDOR}
           </p>
         </div>
+        <AceiteTermos marcado={aceite} onChange={setAceite} erro={erroAceite} />
         <Button type="submit" size="lg" fullWidth loading={enviando} icon={ArrowRight} iconPosition="right">Entrar</Button>
       </form>
     </Caixa>

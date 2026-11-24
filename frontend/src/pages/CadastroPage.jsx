@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import { useAuthStore } from '../store/auth.store';
 import { Button, Input } from '../components/ui';
 import SellergyLogo from '../components/SellergyLogo';
+import AceiteTermos from '../components/legal/AceiteTermos';
 
 const SEGMENTOS = [
   { valor: 'SERVICO', titulo: 'Clínica ou serviço', descricao: 'Estética, fisioterapia, psicologia, salão', icone: Stethoscope },
@@ -23,7 +24,7 @@ const VANTAGENS = [
 export default function CadastroPage() {
   const navigate = useNavigate();
   const { cadastrar, isLoading } = useAuthStore();
-  const [form, setForm] = useState({ nomeNegocio: '', nomeResponsavel: '', email: '', telefone: '', senha: '', segmento: 'SERVICO' });
+  const [form, setForm] = useState({ nomeNegocio: '', nomeResponsavel: '', email: '', telefone: '', senha: '', segmento: 'SERVICO', aceiteTermos: false });
   const [erro, setErro] = useState(null);
   const [camposComErro, setCamposComErro] = useState([]);
 
@@ -116,6 +117,12 @@ export default function CadastroPage() {
             <Input label="E-mail" type="email" icon={Mail} value={form.email} onChange={set('email')} autoComplete="email" error={temErro('email') ? 'Confira o e-mail' : undefined} required />
             <Input label="WhatsApp (opcional)" type="tel" placeholder="(11) 98888-7777" value={form.telefone} onChange={set('telefone')} autoComplete="tel" error={temErro('telefone') ? 'Confira o número com DDD' : undefined} />
             <Input label="Crie uma senha" type="password" value={form.senha} onChange={set('senha')} autoComplete="new-password" error={temErro('senha') ? 'Use pelo menos 8 caracteres' : undefined} required />
+
+            <AceiteTermos
+              marcado={form.aceiteTermos}
+              onChange={(v) => setForm((f) => ({ ...f, aceiteTermos: v }))}
+              erro={temErro('aceiteTermos')}
+            />
 
             <Button type="submit" variant="primary" size="lg" fullWidth loading={isLoading} icon={ArrowRight} iconPosition="right">
               Criar conta e começar

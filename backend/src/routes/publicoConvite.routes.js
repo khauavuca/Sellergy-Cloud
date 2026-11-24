@@ -8,6 +8,7 @@
 // (JWT no cookie httpOnly + segredo de CSRF no corpo, ver utils/sessaoCookie).
 
 const express = require('express');
+const { VERSAO_TERMOS, aceitouTermos } = require('../legal/versao');
 const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
 const prisma = require('../prisma');
@@ -86,6 +87,9 @@ roteador.post('/:token', limitadorAceite, async (req, res) => {
   try {
     const erroSenha = regras.validarSenha(req.body?.senha);
     if (erroSenha) return res.status(422).json({ erro: erroSenha, campos: ['senha'] });
+    if (!aceitouTermos(req.body)) {
+      return res.status(422).json({ erro: 'Para criar seu acesso, aceite os Termos de uso e a Política de privacidade.', campos: ['aceiteTermos'] });
+    }
 
     const convite = await carregar(req.params.token);
     if (!convite) return res.status(404).json({ erro: 'Convite não encontrado. Peça um novo link pra quem te convidou.' });
@@ -132,6 +136,8 @@ roteador.post('/:token', limitadorAceite, async (req, res) => {
           perfil: convite.perfil === 'ADMINISTRADOR' ? 'ADMINISTRADOR' : 'VENDEDOR',
           permissoes: permissoesIniciais(convite.perfil, cliente.segmento, Boolean(especialista)),
           deveTrocarSenha: false,
+          termosAceitosEm: new Date(),
+          versaoTermos: VERSAO_TERMOS,
         },
       });
       if (especialista) await tx.especialista.update({ where: { id: especialista.id }, data: { usuarioId: criado.id } });

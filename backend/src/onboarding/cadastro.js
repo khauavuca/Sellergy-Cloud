@@ -13,6 +13,7 @@
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const prisma = require('../prisma');
+const { VERSAO_TERMOS, aceitouTermos } = require('../legal/versao');
 const { modulosLiberadosPorSegmento } = require('../utils/modulosSegmento');
 const { DIAS_DE_TRIAL } = require('../planos/catalogo');
 const { DIA_MS } = require('../assinatura/situacao');
@@ -60,12 +61,15 @@ function validarCadastro(corpo = {}) {
   if (senha.length < SENHA_MINIMA || senha.length > 128) campos.push('senha');
   if (telefone && (telefone.length < 10 || telefone.length > 13)) campos.push('telefone');
   if (!SEGMENTOS_VALIDOS.includes(segmento)) campos.push('segmento');
+  if (!aceitouTermos(corpo)) campos.push('aceiteTermos');
 
   if (campos.length) {
     return {
       erro: campos.includes('senha')
         ? `Confira os campos destacados. A senha precisa de pelo menos ${SENHA_MINIMA} caracteres.`
-        : 'Confira os campos destacados.',
+        : campos.length === 1 && campos[0] === 'aceiteTermos'
+          ? 'Para criar a conta, aceite os Termos de uso e a Política de privacidade.'
+          : 'Confira os campos destacados.',
       campos,
     };
   }
@@ -110,6 +114,8 @@ async function criarContaComTeste(dados, agora = new Date()) {
         perfil: 'CLIENT', // explicito: o default do schema e ADMIN
         clienteId: cliente.id,
         deveTrocarSenha: false,
+        termosAceitosEm: agora,
+        versaoTermos: VERSAO_TERMOS,
       },
     });
     return { cliente, usuario };

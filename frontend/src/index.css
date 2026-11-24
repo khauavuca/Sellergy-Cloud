@@ -224,30 +224,10 @@ a:focus-visible {
   outline-offset: 3px;
 }
 
-/* ===========================================================
-   COMPATIBILIDADE COM PAGINAS LEGADAS
-   (componentes antigos com classes hardcoded estilo dark)
-   Vamos remover esses overrides quando reescrevermos cada pagina.
-   =========================================================== */
-
-:not(.dark) .text-white {
-  color: var(--text-main) !important;
-}
-:not(.dark) .text-gray-200,
-:not(.dark) .text-gray-300 { color: var(--text-secondary) !important; }
-:not(.dark) .text-gray-400,
-:not(.dark) .text-gray-500,
-:not(.dark) .text-gray-600 { color: var(--text-muted) !important; }
-
-:not(.dark) [class*="bg-white\/"] {
-  background-color: var(--bg-subtle) !important;
-}
-:not(.dark) [class*="bg-black\/"] {
-  background-color: var(--bg-subtle) !important;
-}
-:not(.dark) [class*="border-white\/"] {
-  border-color: var(--border-main) !important;
-}
+/* Placeholder legivel no tema claro. (Os overrides antigos de text-white,
+   text-gray-* e bg-white/ das paginas legadas foram removidos em 24/11/2026:
+   nenhuma pagina usava mais, e eles escureciam texto branco em fundo
+   escuro na landing, em botoes de perigo e nos avisos.) */
 
 :not(.dark) input::placeholder,
 :not(.dark) textarea::placeholder {
