@@ -90,7 +90,9 @@ function CarregandoPagina() {
 
 const ProtectedRoute = ({ children }) => {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  if (!isAuthenticated) return <Navigate to="/admin/login" replace />;
+  // Sem sessao vai sempre pro login do cliente: o do admin nao aparece pra
+  // quem so tentou abrir uma tela interna.
+  if (!isAuthenticated) return <Navigate to="/app/login" replace />;
   return children;
 };
 
@@ -174,7 +176,7 @@ export default function App() {
           <Route path="/loja/:slug" element={<LojaPage />} />
           <Route path="/pedido/:token" element={<PedidoPublicoPage />} />
           <Route path="/convite/:token" element={<ConvitePage />} />
-          <Route path="/login" element={<Navigate to="/admin/login" replace />} />
+          <Route path="/login" element={<Navigate to="/app/login" replace />} />
 
           {/* Troca de senha (autenticado, mas fora dos layouts) */}
           <Route

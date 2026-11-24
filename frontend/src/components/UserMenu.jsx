@@ -13,9 +13,12 @@ export default function UserMenu() {
   const { user, logout } = useAuthStore();
   const { theme, toggleTheme } = useUiStore();
 
-  const handleLogout = () => {
-    logout();
-    navigate(user?.perfil === 'ADMIN' ? '/admin/login' : '/app/login');
+  // Recarrega direto na tela de login certa. Com navigate() a sessao some
+  // antes da troca de rota e a protecao das telas redirecionava por conta propria.
+  const handleLogout = async () => {
+    const destino = user?.perfil === 'ADMIN' ? '/admin/login' : '/app/login';
+    await logout();
+    window.location.assign(destino);
   };
 
   const ehAdmin = user?.perfil === 'ADMIN';

@@ -134,15 +134,6 @@ export default function ClientLoginPage() {
             Ainda não tem conta?{' '}
             <Link to="/cadastro" className="font-semibold text-[var(--text-main)] hover:underline">Teste grátis por 14 dias</Link>
           </p>
-
-          <div className="mt-8 text-center">
-            <Link
-              to="/admin/login"
-              className="text-sm text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors font-medium"
-            >
-              Você é administrador do sistema? Acesse aqui
-            </Link>
-          </div>
         </div>
       </div>
     </div>

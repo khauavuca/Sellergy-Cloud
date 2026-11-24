@@ -29,6 +29,15 @@ export default function LoginPage() {
     }
   }, [isAuthenticated, user, navigate, logout]);
 
+  // Tela interna: pede pros buscadores nao indexarem.
+  useEffect(() => {
+    const meta = document.createElement('meta');
+    meta.name = 'robots';
+    meta.content = 'noindex, nofollow';
+    document.head.appendChild(meta);
+    return () => meta.remove();
+  }, []);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     await login(email, senha);
