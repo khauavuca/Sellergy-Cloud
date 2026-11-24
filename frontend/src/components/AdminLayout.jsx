@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Users, ShieldCheck, Bot, Bell, BarChart3,
-  Settings, Sparkles, CreditCard, LifeBuoy, Activity, Megaphone, Gauge, Tags, ScrollText
+  LayoutDashboard, Users, ShieldCheck, CreditCard, LifeBuoy, Activity, Megaphone, Gauge, Tags, ScrollText
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import { useAuthStore } from '../store/auth.store';
+import { useUiStore } from '../store/ui.store';
+import { AcaoTopoContext } from '../hooks/useAcaoTopo';
 import Topbar from './Topbar';
 
 const SECTIONS = [
@@ -28,9 +29,6 @@ const SECTIONS = [
   {
     titulo: 'Operacao',
     items: [
-      { to: '/admin/bots', label: 'Bots', icon: Bot, acao: null },
-      { to: '/admin/alertas', label: 'Alertas', icon: Bell, acao: null },
-      { to: '/admin/relatorios', label: 'Relatorios', icon: BarChart3, acao: null },
       { to: '/admin/suporte', label: 'Suporte', icon: LifeBuoy, acao: 'suporte.ver' },
       { to: '/admin/comunicados', label: 'Comunicados', icon: Megaphone, acao: 'comunicados.ver' },
       { to: '/admin/saude', label: 'Saúde do sistema', icon: Activity, acao: 'saude.ver' },
@@ -40,8 +38,6 @@ const SECTIONS = [
     titulo: 'Sistema',
     items: [
       { to: '/admin/equipe', label: 'Equipe e auditoria', icon: ScrollText, acao: 'equipe.gerenciar' },
-      { to: '/admin/usuarios', label: 'Usuários', icon: Users, acao: null },
-      { to: '/admin/configuracoes', label: 'Configuracoes', icon: Settings, acao: null },
     ],
   },
 ];
@@ -58,13 +54,6 @@ const TITULOS = {
   '/admin/saude': { titulo: 'Saúde do sistema', breadcrumb: 'Operação' },
   '/admin/equipe': { titulo: 'Equipe e auditoria', breadcrumb: 'Sistema' },
   '/admin/configuracoes/perfil': { titulo: 'Meu perfil', breadcrumb: 'Sistema' },
-  '/admin/bots': { titulo: 'Bots', breadcrumb: 'Operacao' },
-  '/admin/campanhas': { titulo: 'Campanhas', breadcrumb: 'Operacao' },
-  '/admin/alertas': { titulo: 'Alertas', breadcrumb: 'Operacao' },
-  '/admin/relatorios': { titulo: 'Relatorios', breadcrumb: 'Operacao' },
-  '/admin/usuarios': { titulo: 'Equipe', breadcrumb: 'Sistema' },
-  '/admin/configuracoes': { titulo: 'Configuracoes', breadcrumb: 'Sistema' },
-  '/admin/_design': { titulo: 'Design system', breadcrumb: 'Sistema' },
 };
 
 // Esconde do menu o que o papel nao pode (Suporte, Financeiro). acao null =
@@ -80,9 +69,13 @@ function secoesDoPapel(user) {
 
 export default function AdminLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [acaoTopo, setAcaoTopo] = useState(null);
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
   const secoes = secoesDoPapel(user);
+  const menuAberto = useUiStore((s) => s.menuAberto);
+  const alternarMenu = useUiStore((s) => s.alternarMenu);
+  const atalhos = secoes.flatMap((sec) => sec.items.map((i) => ({ to: i.to, label: i.label, grupo: sec.titulo })));
 
   const meta = TITULOS[location.pathname] || resolveDinamico(location.pathname);
 
@@ -90,8 +83,11 @@ export default function AdminLayout() {
     <div className="min-h-screen bg-[var(--bg-app)]">
       <Sidebar
         sections={secoes}
+        aberto={menuAberto}
         mobileOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        onToggle={alternarMenu}
+        subtitulo="Painel Sellergy"
       />
 
       {sidebarOpen && (
@@ -101,16 +97,19 @@ export default function AdminLayout() {
         />
       )}
 
-      <div className="lg:pl-20 min-h-screen flex flex-col">
+      <div className={`min-h-screen flex flex-col transition-[padding] duration-200 ease-out ${menuAberto ? 'lg:pl-[240px]' : 'lg:pl-[68px]'}`}>
         <Topbar
           titulo={meta.titulo}
           breadcrumb={meta.breadcrumb}
           onMenuClick={() => setSidebarOpen(true)}
+          onToggleMenu={alternarMenu}
+          atalhos={atalhos}
+          actions={acaoTopo}
         />
-        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
-          <div className="max-w-[1400px] mx-auto">
+        <main className="flex-1 min-w-0 px-4 sm:px-6 py-5">
+          <AcaoTopoContext.Provider value={setAcaoTopo}>
             <Outlet />
-          </div>
+          </AcaoTopoContext.Provider>
         </main>
       </div>
     </div>
@@ -119,6 +118,5 @@ export default function AdminLayout() {
 
 function resolveDinamico(path) {
   if (path.startsWith('/admin/clientes/')) return { titulo: 'Detalhes do cliente', breadcrumb: 'Clientes' };
-  if (path.match(/^\/admin\/bots\/[^/]+\/canal$/)) return { titulo: 'Canal do bot', breadcrumb: 'Bots' };
   return { titulo: 'Sellergy Cloud', breadcrumb: 'Admin' };
 }

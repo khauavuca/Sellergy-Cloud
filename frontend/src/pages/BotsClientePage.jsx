@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import {
-  Bot as BotIcon, MessageCircle, Plus, Trash2, Wifi, WifiOff, Settings, Copy, Sparkles, Save,
-  Send, Activity, Clock, ShieldAlert, QrCode,
+  Bot as BotIcon, Plus, WifiOff, ShieldAlert, QrCode, Link2,
 } from 'lucide-react';
 import {
-  Card, CardHeader, CardTitle, CardDescription, Button, Input, Textarea, Select, Badge, IconButton,
-  EmptyState, Switch, LabelAjuda, useToast, KpiCard, Tabs, TabsList, TabsTrigger, TabsContent,
+  Button, Badge, EmptyState, useToast, Pagina, ColunasPagina, Painel,
 } from '../components/ui';
 import Modal from '../components/Modal';
+import CartaoConexao from '../components/bots/CartaoConexao';
+import PassoAPassoOficial from '../components/bots/PassoAPassoOficial';
+import PainelBotAtendimento from '../components/bots/PainelBotAtendimento';
+import PainelPerguntasBot from '../components/bots/PainelPerguntasBot';
+import { useAcaoTopo } from '../hooks/useAcaoTopo';
 import api, { urlPublica } from '../services/api';
 import credenciaisService from '../services/credenciaisService';
 import faqService from '../services/faqService';
@@ -29,15 +32,19 @@ const STATUS_BAILEYS_VARIANT = {
   CONECTADO: 'success',
   LOGOUT: 'danger',
 };
+// Mesmo status, no tom do ponto de situacao do cartao.
+const TOM_POR_VARIANT = { neutral: 'neutro', warning: 'alerta', success: 'sucesso', danger: 'perigo' };
+const ID_PASSO_OFICIAL = 'passo-oficial';
 
 // Tela do tenant pro bot WhatsApp: quando o bot NAO tem IA (padrao pos-pivo),
 // o conteudo principal e o menu de FAQ. Quando o administrador libera o
 // atendimento com IA pro bot (em admin/bots), esta tela troca o FAQ pelo
 // prompt/ações da IA — as duas coisas nao coexistem em runtime (ver
-// webhooksWhatsapp.routes.js: com iaAtiva, o FAQ nem e consultado). A conexao
-// tecnica (phoneNumberId, verify token, credencial, callback URL) fica
-// escondida atras da engrenagem: mexe uma vez, na hora de configurar, e nao
-// compete com o conteudo do dia a dia.
+// webhooksWhatsapp.routes.js: com iaAtiva, o FAQ nem e consultado). Layout:
+// dois cartoes comparando a conexao oficial e a por QR Code, o passo a passo
+// do oficial (campos tecnicos: phoneNumberId, credencial, verify token,
+// callback URL) e, na coluna da direita, o bot de atendimento. O QR Code do
+// WhatsApp Web abre num modal (com socket so enquanto ele esta aberto).
 const TIPO_CRED_WHATSAPP = 'WHATSAPP_CLOUD_TOKEN';
 
 const TAM_MAX_PROMPT_IA = 4000;
@@ -88,9 +95,8 @@ export default function BotsClientePage() {
   const [faqs, setFaqs] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [salvandoCanal, setSalvandoCanal] = useState(false);
-  const [conexaoAberta, setConexaoAberta] = useState(false);
+  const [qrAberto, setQrAberto] = useState(false);
   const [conexao, setConexao] = useState({ credencialCanalId: '', identificadorCanal: '', verifyTokenCanal: '' });
-  const [abaConexao, setAbaConexao] = useState('META_CLOUD');
   const [conectandoBaileys, setConectandoBaileys] = useState(false);
   const [desconectandoBaileys, setDesconectandoBaileys] = useState(false);
   const [statusBaileys, setStatusBaileys] = useState({ statusConexaoBaileys: null, qrCodeAtual: null, baileysNumeroConectado: null });
@@ -114,7 +120,9 @@ export default function BotsClientePage() {
       setFaqs(listaFaq || []);
       if (b) {
         setConexao({
-          credencialCanalId: b.credencialCanalId || '',
+          // No provedor BAILEYS esse campo guarda a sessao do WhatsApp Web, nao
+          // o token da Meta: nao pre-preenche o passo a passo do oficial com ela.
+          credencialCanalId: (b.provedorCanal || 'META_CLOUD') === 'META_CLOUD' ? (b.credencialCanalId || '') : '',
           identificadorCanal: b.identificadorCanal || '',
           verifyTokenCanal: b.verifyTokenCanal || '',
         });
@@ -122,7 +130,6 @@ export default function BotsClientePage() {
           iaPromptSistema: b.iaPromptSistema || '',
           acoesPermitidas: Array.isArray(b.acoesPermitidas) ? b.acoesPermitidas : [],
         });
-        setAbaConexao(b.provedorCanal || 'META_CLOUD');
         setStatusBaileys({
           statusConexaoBaileys: b.statusConexaoBaileys || null,
           qrCodeAtual: b.qrCodeAtual || null,
@@ -139,11 +146,11 @@ export default function BotsClientePage() {
     carregar();
   }, []);
 
-  // Socket.io so enquanto o modal de conexao esta aberto — o QR/status do
+  // Socket.io so enquanto o modal do QR Code esta aberto — o QR/status do
   // pareamento Baileys chega em tempo real pela sala do proprio bot (ver
   // backend/src/index.js: relay Redis -> socket.io -> sala bot:<id>).
   useEffect(() => {
-    if (!conexaoAberta || !bot?.id) return;
+    if (!qrAberto || !bot?.id) return;
 
     const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:3333', {
       withCredentials: true,
@@ -160,7 +167,7 @@ export default function BotsClientePage() {
     api.get(`/bots/${bot.id}/canal/baileys/status`).then((r) => setStatusBaileys(r.data)).catch(() => {});
 
     return () => socket.disconnect();
-  }, [conexaoAberta, bot?.id]);
+  }, [qrAberto, bot?.id]);
 
   const conectarBaileys = async () => {
     if (!bot) return;
@@ -181,6 +188,8 @@ export default function BotsClientePage() {
     try {
       await api.post(`/bots/${bot.id}/canal/baileys/desconectar`);
       toast.success('Desconectado.');
+      // Fora do modal nao ha socket: rele o status pra atualizar o cartao.
+      api.get(`/bots/${bot.id}/canal/baileys/status`).then((r) => setStatusBaileys(r.data)).catch(() => {});
     } catch (e) {
       toast.error(e.response?.data?.erro || 'Falha ao desconectar.');
     } finally {
@@ -203,6 +212,10 @@ export default function BotsClientePage() {
   // mensagens). Ver backend/src/routes/webhooksWhatsapp.routes.js.
   const urlWebhook = `${urlPublica()}/webhooks/whatsapp`;
 
+  const irParaPassoOficial = () => {
+    document.getElementById(ID_PASSO_OFICIAL)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   const copiar = (texto, label) => {
     navigator.clipboard?.writeText(texto).then(
       () => toast.success(`${label} copiado.`),
@@ -214,8 +227,7 @@ export default function BotsClientePage() {
     try {
       const r = await api.post('/bots', { nome: 'WhatsApp', canal: 'WHATSAPP' });
       setBot(r.data);
-      toast.success('Bot criado. Configure a conexao na engrenagem.');
-      setConexaoAberta(true);
+      toast.success('Bot criado. Siga o passo a passo para conectar o WhatsApp.');
     } catch (e) {
       toast.error(e.response?.data?.erro || 'Falha ao criar bot.');
     }
@@ -233,9 +245,9 @@ export default function BotsClientePage() {
         verifyTokenCanal: conexao.verifyTokenCanal.trim() || null,
       });
       setBot((b) => ({ ...b, ...r.data }));
-      toast.success('Conexao salva.');
+      toast.success('Conexão salva.');
     } catch (e) {
-      toast.error(e.response?.data?.erro || 'Falha ao salvar conexao.');
+      toast.error(e.response?.data?.erro || 'Falha ao salvar conexão.');
     } finally {
       setSalvandoCanal(false);
     }
@@ -328,316 +340,196 @@ export default function BotsClientePage() {
     }
   };
 
+  // Botao principal no topo (Topbar): sem bot, cria; com bot, leva ao passo a
+  // passo da conexao oficial (a recomendada).
+  useAcaoTopo(
+    bot
+      ? <Button size="sm" icon={Link2} onClick={irParaPassoOficial}>Conectar número</Button>
+      : (carregando ? null : <Button size="sm" icon={Plus} onClick={criarBot}>Criar bot</Button>),
+    [bot?.id, carregando],
+  );
+
   if (carregando) {
     return <div className="text-sm text-[var(--text-muted)] py-10 text-center">Carregando...</div>;
   }
 
-  return (
-    <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-main)]">Bot WhatsApp</h1>
-          <p className="text-sm text-[var(--text-muted)] mt-1">
-            {bot?.iaAtiva
-              ? 'Configure o que a IA sabe sobre sua empresa e o que ela pode fazer sozinha durante o atendimento.'
-              : 'Configure o atendimento automatico por menu (sem IA): o bot responde com base nas perguntas e respostas abaixo.'}
-          </p>
-        </div>
-        {bot && (
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <Badge variant={online ? 'success' : 'neutral'} size="sm">
-              {online ? <Wifi size={12} /> : <WifiOff size={12} />} {online ? 'Online' : 'Offline'}
-            </Badge>
-            <IconButton
-              icon={Settings} variant="secondary" size="sm" ariaLabel="Conexao do WhatsApp"
-              onClick={() => setConexaoAberta(true)}
-            />
-          </div>
-        )}
-      </div>
-
-      {bot && (
-        <div className={`grid grid-cols-2 ${bot.iaAtiva ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-3`}>
-          <KpiCard icon={Send} color="info" label="Mensagens hoje" valor={bot.mensagensHoje ?? 0} />
-          <KpiCard icon={MessageCircle} color="success" label="Total de mensagens" valor={bot.totalMensagens ?? 0} />
-          <KpiCard icon={Clock} color="warning" label="Última atividade" valor={tempoRelativo(bot.ultimaAtividadeEm)} />
-          {bot.iaAtiva && (
-            <KpiCard
-              icon={Activity}
-              color="accent"
-              label="Consumo de IA (mês)"
-              valor={consumoIA ? `${consumoIA.tokensUsados.toLocaleString('pt-BR')} / ${consumoIA.tokensIncluidosMes.toLocaleString('pt-BR')}` : '—'}
-            />
-          )}
-        </div>
-      )}
-
-      {!bot ? (
-        <Card padding="md">
+  if (!bot) {
+    return (
+      <Pagina>
+        <Painel titulo="Bot do WhatsApp">
           <EmptyState
             icon={BotIcon}
             title="Nenhum bot ainda"
-            description="Crie o bot do seu WhatsApp para comecar a configurar a conexao e o atendimento."
+            description="Crie o bot do seu WhatsApp para começar a configurar a conexão e o atendimento."
             action={<Button variant="primary" icon={Plus} onClick={criarBot}>Criar bot</Button>}
           />
-        </Card>
-      ) : bot.iaAtiva ? (
-        <Card padding="md">
-          <CardHeader>
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Sparkles size={16} className="text-[var(--text-muted)]" /> Atendimento com IA
-              </CardTitle>
-              <CardDescription>
-                Modelo: {bot.iaModelo}. A ativação/desativação da IA e o modelo usado são definidos pelo administrador.
-              </CardDescription>
-            </div>
-          </CardHeader>
+        </Painel>
+      </Pagina>
+    );
+  }
 
-          <div className="space-y-5">
-            <Textarea
-              label={
-                <LabelAjuda
-                  texto="Informações da empresa para a IA"
-                  ajuda="Escreva em texto livre: nome do negócio, horários, políticas de troca, formas de pagamento, tom de voz. A IA usa esse texto como contexto para responder o cliente com precisão."
-                />
-              }
-              rows={8}
-              value={iaForm.iaPromptSistema}
-              onChange={(e) => setIaForm((f) => ({ ...f, iaPromptSistema: e.target.value.slice(0, TAM_MAX_PROMPT_IA) }))}
-              placeholder="Ex: Somos a Boutique Bella, funcionamos de seg a sab das 9h as 18h. Trocas em ate 7 dias com nota fiscal. Aceitamos Pix e cartao..."
-              hint={`${iaForm.iaPromptSistema.length}/${TAM_MAX_PROMPT_IA} caracteres`}
-            />
+  const baileysLiberado = !!user?.modulosLiberados?.WHATSAPP_BAILEYS;
+  // O bot usa um provedor por vez: salvar o oficial volta pra META_CLOUD;
+  // conectar por QR troca pra BAILEYS (ver bots.routes.js).
+  const ehOficial = (bot.provedorCanal || 'META_CLOUD') === 'META_CLOUD';
+  const oficialConfigurado = ehOficial && !!bot.identificadorCanal && !!bot.credencialCanalId && !!bot.verifyTokenCanal;
+  const stBaileys = statusBaileys.statusConexaoBaileys;
+  const baileysConectado = !ehOficial && stBaileys === 'CONECTADO';
 
-            <div>
-              <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">
-                Ações que o bot pode fazer sozinho
-              </div>
-              <div className="space-y-2">
-                {ACOES_BOT_DISPONIVEIS.map((acao) => {
-                  const ativa = iaForm.acoesPermitidas.includes(acao.chave);
-                  return (
-                    <div
-                      key={acao.chave}
-                      className={`flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border ${
-                        ativa ? 'border-[var(--success-soft)] bg-[var(--success-soft)]/20' : 'border-[var(--border-main)] bg-[var(--bg-subtle)]/40'
-                      }`}
-                    >
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-[var(--text-main)]">{acao.titulo}</div>
-                        <div className="text-xs text-[var(--text-muted)] mt-0.5 leading-relaxed">{acao.descricao}</div>
-                      </div>
-                      <Switch checked={ativa} onChange={() => alternarAcaoBot(acao.chave)} ariaLabel={acao.titulo} />
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+  let situacaoQr = { texto: 'Não está em uso', tom: 'neutro', detalhe: 'o bot usa a API oficial' };
+  if (!baileysLiberado) {
+    situacaoQr = { texto: 'Não liberado', tom: 'neutro', detalhe: 'fale com o administrador para liberar' };
+  } else if (!ehOficial) {
+    situacaoQr = {
+      texto: STATUS_BAILEYS_LABEL[stBaileys] || 'Desconectado',
+      tom: TOM_POR_VARIANT[STATUS_BAILEYS_VARIANT[stBaileys]] || 'neutro',
+      detalhe: statusBaileys.baileysNumeroConectado ? `+${statusBaileys.baileysNumeroConectado}` : undefined,
+    };
+  }
 
-            <div className="flex justify-end">
-              <Button variant="primary" icon={Save} onClick={salvarIA} loading={salvandoIA}>
-                Salvar configuração da IA
-              </Button>
-            </div>
-          </div>
-        </Card>
-      ) : (
-        <Card padding="md">
-          <CardHeader>
-            <div>
-              <CardTitle>Atendimento automatico (FAQ)</CardTitle>
-              <CardDescription>Perguntas e respostas que viram o menu do bot. Sem IA.</CardDescription>
-            </div>
-          </CardHeader>
-
-          <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr_auto] gap-3 items-end">
-            <Input
-              label="Pergunta"
-              value={novaFaq.pergunta}
-              onChange={(e) => setNovaFaq({ ...novaFaq, pergunta: e.target.value })}
-              placeholder="Ex: Qual o horario?"
-            />
-            <Input
-              label="Resposta"
-              value={novaFaq.resposta}
-              onChange={(e) => setNovaFaq({ ...novaFaq, resposta: e.target.value })}
-              placeholder="Ex: Seg a Sex, 9h as 18h."
-            />
-            <Input
-              label="Palavras-chave (opcional)"
-              value={novaFaq.palavrasChave}
-              onChange={(e) => setNovaFaq({ ...novaFaq, palavrasChave: e.target.value })}
-              placeholder="horario, abre, fecha"
-              hint="Separe por virgula. O bot tambem responde se o cliente usar essas palavras."
-            />
-            <Button variant="secondary" icon={Plus} onClick={adicionarFaq}>Adicionar</Button>
-          </div>
-
-          {faqs.length === 0 ? (
-            <div className="mt-4">
-              <EmptyState
-                icon={MessageCircle}
-                title="Sem perguntas ainda"
-                description="Adicione a primeira pergunta para o bot comecar a responder."
-              />
-            </div>
-          ) : (
-            <div className="divide-y divide-[var(--border)] mt-4">
-              {faqs.map((f) => (
-                <div key={f.id} className="py-3">
-                  <div className="flex flex-wrap items-start gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-[var(--text-main)]">{f.pergunta}</div>
-                      <div className="text-xs text-[var(--text-muted)] mt-0.5">{f.resposta}</div>
-                    </div>
-                    <button
-                      type="button"
-                      className="text-xs hover:underline"
-                      onClick={() => alternarFaqAtivo(f)}
-                    >
-                      <Badge variant={f.ativo ? 'success' : 'neutral'} size="sm">{f.ativo ? 'Ativa' : 'Inativa'}</Badge>
-                    </button>
-                    <Button variant="ghost" size="sm" icon={Trash2} onClick={() => excluirFaq(f)}>Excluir</Button>
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-2 max-w-md">
-                    <Input
-                      size="sm"
-                      placeholder="Palavras-chave (separadas por virgula)"
-                      value={editandoChaves[f.id] ?? (f.palavrasChave || []).join(', ')}
-                      onChange={(e) => setEditandoChaves((s) => ({ ...s, [f.id]: e.target.value }))}
-                      onBlur={() => { if (editandoChaves[f.id] !== undefined) salvarChaves(f); }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      )}
-
-      <Modal
-        isOpen={conexaoAberta}
-        onClose={() => setConexaoAberta(false)}
-        title="Conexao do WhatsApp"
-        description="Escolha como o bot se conecta ao WhatsApp — mexe uma vez, na configuracao."
-        size="lg"
+  return (
+    <Pagina>
+      <ColunasPagina
+        lateral={(
+          <PainelBotAtendimento
+            bot={bot}
+            online={online}
+            alternarStatus={alternarStatus}
+            iaForm={iaForm}
+            setIaForm={setIaForm}
+            alternarAcaoBot={alternarAcaoBot}
+            acoesDisponiveis={ACOES_BOT_DISPONIVEIS}
+            tamMaxPrompt={TAM_MAX_PROMPT_IA}
+            salvarIA={salvarIA}
+            salvandoIA={salvandoIA}
+            consumoIA={consumoIA}
+            faqs={faqs}
+            tempoRelativo={tempoRelativo}
+          />
+        )}
       >
-        <div className="space-y-5">
-          <Tabs value={abaConexao} onValueChange={setAbaConexao}>
-            <TabsList>
-              <TabsTrigger value="META_CLOUD">WhatsApp Cloud API (oficial)</TabsTrigger>
-              {user?.modulosLiberados?.WHATSAPP_BAILEYS && (
-                <TabsTrigger value="BAILEYS">WhatsApp Web (não oficial, QR Code)</TabsTrigger>
-              )}
-            </TabsList>
-            {!user?.modulosLiberados?.WHATSAPP_BAILEYS && (
-              <p className="text-[11px] text-[var(--text-muted)] mt-2">
-                Existe uma opção de conexão não oficial (QR Code) — fale com o administrador pra liberar.
-              </p>
+        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
+          <CartaoConexao
+            id="conexao-oficial"
+            titulo="WhatsApp oficial (Meta)"
+            destaque={ehOficial}
+            etiqueta={<Badge variant="success" size="sm">Recomendado</Badge>}
+            situacao={!ehOficial ? 'Não está em uso' : oficialConfigurado ? 'Configurado' : 'Falta configurar'}
+            tomSituacao={!ehOficial ? 'neutro' : oficialConfigurado ? 'sucesso' : 'alerta'}
+            detalheSituacao={!ehOficial
+              ? 'o bot usa o número por QR Code'
+              : bot.identificadorCanal ? `Phone Number ID ${bot.identificadorCanal}` : 'siga o passo a passo abaixo'}
+            itens={[
+              { texto: 'Conexão aprovada pela Meta, sem risco de bloqueio do número', tipo: 'ok' },
+              { texto: 'Campanhas e avisos com modelos de mensagem aprovados', tipo: 'ok' },
+              { texto: 'Funciona com o celular desligado', tipo: 'ok' },
+            ]}
+            rodape="Cobrado por mensagem pela Meta. Precisa do Gerenciador de Negócios da Meta."
+            acoes={(
+              <Button variant="secondary" size="sm" onClick={irParaPassoOficial}>
+                {oficialConfigurado ? 'Dados técnicos' : 'Configurar'}
+              </Button>
             )}
+          />
 
-            <TabsContent value="META_CLOUD">
-              <div className="space-y-4">
-                <Input
-                  label="Phone Number ID"
-                  value={conexao.identificadorCanal}
-                  onChange={(e) => setConexao({ ...conexao, identificadorCanal: e.target.value })}
-                  placeholder="Ex: 1290672074119010"
-                  hint="Vem do painel da Meta (Identificacao do numero de telefone). Obrigatorio: sem ele, mensagens recebidas nao chegam ao bot."
-                />
-                <Select
-                  label="Credencial (token do canal)"
-                  value={conexao.credencialCanalId}
-                  onChange={(e) => setConexao({ ...conexao, credencialCanalId: e.target.value })}
-                  options={[
-                    { value: '', label: credsWhatsapp.length ? 'Selecione...' : 'Nenhuma credencial WhatsApp' },
-                    ...credsWhatsapp.map((c) => ({ value: c.id, label: c.nome })),
-                  ]}
-                  hint={credsWhatsapp.length === 0 ? 'Cadastre a integracao do WhatsApp com o administrador.' : undefined}
-                />
-                <div>
-                  <Input
-                    label="Verify token"
-                    value={conexao.verifyTokenCanal}
-                    onChange={(e) => setConexao({ ...conexao, verifyTokenCanal: e.target.value })}
-                    placeholder="Use no painel da Meta ao configurar o webhook"
-                  />
-                  <button
-                    type="button"
-                    className="text-xs text-[var(--accent)] mt-1 hover:underline"
-                    onClick={() => setConexao({ ...conexao, verifyTokenCanal: gerarVerifyToken() })}
-                  >
-                    Gerar verify token
-                  </button>
-                </div>
-              </div>
-
-              <div className="border-t border-[var(--border-main)] pt-4 mt-4">
-                <label className="block text-xs font-semibold tracking-wide text-[var(--text-secondary)] mb-1.5">
-                  Callback URL (cole no painel da Meta)
-                </label>
-                <div className="flex gap-1.5">
-                  <Input value={urlWebhook} readOnly />
-                  <IconButton
-                    icon={Copy} variant="secondary" size="sm" ariaLabel="Copiar URL"
-                    onClick={() => copiar(urlWebhook, 'URL')}
-                  />
-                </div>
-                <p className="text-[10px] text-[var(--text-muted)] mt-1">
-                  Essa URL e a mesma pra todo mundo — o que identifica o seu bot e o verify token acima.
-                </p>
-              </div>
-
-              <div className="flex justify-end mt-5">
-                <Button variant="primary" onClick={salvarCanal} loading={salvandoCanal}>Salvar conexao</Button>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="BAILEYS">
-              <div className="space-y-4">
-                <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-[var(--warning-soft)] border border-[var(--warning-soft)]">
-                  <ShieldAlert size={16} className="text-[var(--warning)] flex-shrink-0 mt-0.5" />
-                  <p className="text-xs text-[var(--warning-text)] leading-relaxed">
-                    Conexão não oficial (WhatsApp Web via QR Code) — não passa pela Meta, sem aprovação, mas com risco real de banimento do número, principalmente em disparo de mensagens em massa. Use com moderação.
-                  </p>
-                </div>
-
-                {statusBaileys.statusConexaoBaileys && (
-                  <Badge variant={STATUS_BAILEYS_VARIANT[statusBaileys.statusConexaoBaileys] || 'neutral'} size="sm">
-                    {STATUS_BAILEYS_LABEL[statusBaileys.statusConexaoBaileys] || statusBaileys.statusConexaoBaileys}
-                    {statusBaileys.baileysNumeroConectado ? ` — +${statusBaileys.baileysNumeroConectado}` : ''}
-                  </Badge>
-                )}
-
-                {statusBaileys.statusConexaoBaileys === 'CONECTADO' ? (
-                  <Button variant="danger-soft" icon={WifiOff} onClick={desconectarBaileys} loading={desconectandoBaileys}>
+          <CartaoConexao
+            id="conexao-qr"
+            titulo="Número do negócio por QR Code"
+            destaque={!ehOficial}
+            etiqueta={<Badge variant="neutral" size="sm">Não oficial</Badge>}
+            situacao={situacaoQr.texto}
+            tomSituacao={situacaoQr.tom}
+            detalheSituacao={situacaoQr.detalhe}
+            itens={[
+              { texto: 'Conecta em 1 minuto, igual WhatsApp Web', tipo: 'ok' },
+              { texto: 'Clientes falam com o número que já conhecem', tipo: 'ok' },
+              { texto: 'Não passa pela Meta: use com moderação', tipo: 'aviso' },
+              { texto: 'Risco real de banimento do número em disparo de mensagens em massa', tipo: 'nao' },
+            ]}
+            acoes={baileysLiberado ? (
+              baileysConectado ? (
+                <>
+                  <Button variant="secondary" size="sm" icon={QrCode} onClick={() => setQrAberto(true)}>Ver conexão</Button>
+                  <Button variant="danger-soft" size="sm" icon={WifiOff} onClick={desconectarBaileys} loading={desconectandoBaileys}>
                     Desconectar
                   </Button>
-                ) : statusBaileys.qrCodeAtual ? (
-                  <div className="flex flex-col items-center gap-2 py-2">
-                    <img src={statusBaileys.qrCodeAtual} alt="QR Code do WhatsApp Web" className="w-56 h-56 border border-[var(--border-main)] rounded-lg" />
-                    <p className="text-xs text-[var(--text-muted)]">Abra o WhatsApp no celular → Aparelhos conectados → Conectar um aparelho.</p>
-                  </div>
-                ) : (
-                  <Button variant="primary" icon={QrCode} onClick={conectarBaileys} loading={conectandoBaileys}>
-                    Conectar via QR Code
-                  </Button>
-                )}
-              </div>
-            </TabsContent>
-          </Tabs>
+                </>
+              ) : (
+                <Button variant="secondary" size="sm" icon={QrCode} onClick={() => setQrAberto(true)}>
+                  {!ehOficial && statusBaileys.qrCodeAtual ? 'Ver QR de novo' : 'Conectar por QR Code'}
+                </Button>
+              )
+            ) : null}
+          />
+        </div>
 
-          <div className="border-t border-[var(--border-main)] pt-4 flex items-center justify-between">
-            <div>
-              <div className="text-sm font-semibold text-[var(--text-main)]">Status do bot</div>
-              <div className="text-xs text-[var(--text-muted)]">{online ? 'Online' : 'Offline'}</div>
-            </div>
-            <Button variant={online ? 'secondary' : 'primary'} size="sm" onClick={alternarStatus}>
-              {online ? 'Desligar' : 'Ligar'}
-            </Button>
+        <PassoAPassoOficial
+          key={bot.id}
+          id={ID_PASSO_OFICIAL}
+          bot={bot}
+          conexao={conexao}
+          setConexao={setConexao}
+          credsWhatsapp={credsWhatsapp}
+          urlWebhook={urlWebhook}
+          copiar={copiar}
+          gerarVerifyToken={gerarVerifyToken}
+          salvarCanal={salvarCanal}
+          salvandoCanal={salvandoCanal}
+        />
+
+        {!bot.iaAtiva && (
+          <PainelPerguntasBot
+            faqs={faqs}
+            novaFaq={novaFaq}
+            setNovaFaq={setNovaFaq}
+            adicionarFaq={adicionarFaq}
+            alternarFaqAtivo={alternarFaqAtivo}
+            editandoChaves={editandoChaves}
+            setEditandoChaves={setEditandoChaves}
+            salvarChaves={salvarChaves}
+            excluirFaq={excluirFaq}
+          />
+        )}
+      </ColunasPagina>
+
+      <Modal
+        isOpen={qrAberto}
+        onClose={() => setQrAberto(false)}
+        title="Número do negócio por QR Code"
+        description="Conecte o WhatsApp do seu celular ao bot, como no WhatsApp Web."
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-[var(--warning-soft)] border border-[var(--warning-soft)]">
+            <ShieldAlert size={16} className="text-[var(--warning)] flex-shrink-0 mt-0.5" aria-hidden="true" />
+            <p className="text-xs text-[var(--warning-text)] leading-relaxed">
+              Conexão não oficial (WhatsApp Web via QR Code) — não passa pela Meta, sem aprovação, mas com risco real de banimento do número, principalmente em disparo de mensagens em massa. Use com moderação.
+            </p>
           </div>
+
+          {stBaileys && (
+            <Badge variant={STATUS_BAILEYS_VARIANT[stBaileys] || 'neutral'} size="sm">
+              {STATUS_BAILEYS_LABEL[stBaileys] || stBaileys}
+              {statusBaileys.baileysNumeroConectado ? ` — +${statusBaileys.baileysNumeroConectado}` : ''}
+            </Badge>
+          )}
+
+          {stBaileys === 'CONECTADO' ? (
+            <Button variant="danger-soft" icon={WifiOff} onClick={desconectarBaileys} loading={desconectandoBaileys}>
+              Desconectar
+            </Button>
+          ) : statusBaileys.qrCodeAtual ? (
+            <div className="flex flex-col items-center gap-2 py-2">
+              <img src={statusBaileys.qrCodeAtual} alt="QR Code do WhatsApp Web" className="w-56 h-56 border border-[var(--border-main)] rounded-lg" />
+              <p className="text-xs text-[var(--text-muted)]">Abra o WhatsApp no celular → Aparelhos conectados → Conectar um aparelho.</p>
+            </div>
+          ) : (
+            <Button variant="primary" icon={QrCode} onClick={conectarBaileys} loading={conectandoBaileys}>
+              Conectar via QR Code
+            </Button>
+          )}
         </div>
       </Modal>
-    </div>
+    </Pagina>
   );
 }

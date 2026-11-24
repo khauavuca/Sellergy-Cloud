@@ -1,10 +1,15 @@
 // Página de detalhe do snapshot mensal. Lê o JSON salvo no backend e
-// renderiza um resumo executivo: financeiro, caixa, vendas, CRM.
+// renderiza um resumo executivo: financeiro, caixa, vendas, CRM
+// (layout novo: faixa de números + principal + coluna lateral).
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, DollarSign, ShoppingBag, Wallet, Users, AlertCircle } from 'lucide-react';
-import { Card, Badge, KpiCard, Button, BotaoExportar } from '../components/ui';
+import { ArrowLeft, AlertCircle } from 'lucide-react';
+import {
+  Badge, Button, BotaoExportar,
+  Pagina, FaixaNumeros, Numero, ColunasPagina, Painel, LinhaInfo,
+} from '../components/ui';
+import { useAcaoTopo } from '../hooks/useAcaoTopo';
 import relatorioMensalService from '../services/relatorioMensalService';
 
 const NOMES_MES = [
@@ -15,6 +20,9 @@ const NOMES_MES = [
 const fmtBRL = (v) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtNum = (v) => Number(v ?? 0).toLocaleString('pt-BR');
 const fmtPct = (v) => `${Number(v ?? 0).toFixed(1)}%`;
+
+const TH = 'text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap';
+const TD = 'px-4 py-2.5 border-b border-[var(--border-subtle)]';
 
 export default function RelatorioMensalDetalhePage() {
   const { periodo } = useParams(); // formato "YYYY-MM"
@@ -42,34 +50,7 @@ export default function RelatorioMensalDetalhePage() {
       .finally(() => setCarregando(false));
   }, [ano, mes, periodoValido]);
 
-  if (carregando) {
-    return (
-      <div className="space-y-4">
-        <Card padding="lg"><div className="text-sm text-[var(--text-muted)] text-center py-6">Carregando…</div></Card>
-      </div>
-    );
-  }
-
-  if (erro || !dados) {
-    return (
-      <div className="space-y-4">
-        <Button variant="ghost" icon={ArrowLeft} onClick={() => navigate('/app/relatorios/mensais')}>
-          Voltar
-        </Button>
-        <Card padding="lg">
-          <div className="text-sm text-center py-6 text-[var(--text-secondary)]">
-            <AlertCircle size={20} className="mx-auto text-[var(--text-muted)] mb-2" />
-            <div className="font-semibold text-[var(--text-main)]">{erro || 'Sem dados'}</div>
-            <div className="text-[var(--text-muted)] mt-1">
-              Este mês ainda não tem fechamento gerado. Você pode disparar manualmente em <Link to="/app/relatorios/mensais" className="text-[var(--accent)] hover:underline">Fechamento mensal</Link>.
-            </div>
-          </div>
-        </Card>
-      </div>
-    );
-  }
-
-  const snap = dados.dados || {};
+  const snap = dados?.dados || {};
   const fin = snap.financeiro || {};
   const cx = snap.caixa || {};
   const vd = snap.vendas || {};
@@ -129,112 +110,141 @@ export default function RelatorioMensalDetalhePage() {
     ],
   });
 
-  return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <Button variant="ghost" icon={ArrowLeft} size="sm" onClick={() => navigate('/app/relatorios/mensais')}>
-            Voltar
-          </Button>
-          <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-main)] mt-2">
-            {NOMES_MES[mes]} de {ano}
-          </h1>
-          <div className="text-xs text-[var(--text-muted)] mt-1">
-            Fechado em {new Date(dados.geradoEm).toLocaleDateString('pt-BR')}
-            {dados.geradoPor === 'CRON' ? ' · automático' : ' · gerado manualmente'}
-          </div>
-        </div>
-        <div className="flex items-center gap-2" data-no-print>
-          <Badge variant="neutral" size="sm">Snapshot imutável</Badge>
-          <BotaoExportar montarDados={montarDados} />
-        </div>
-      </div>
+  // Exportar vai pro topo da tela. O ref guarda o montarDados mais recente
+  // (o hook tem que rodar antes dos retornos antecipados abaixo).
+  const refMontar = useRef(montarDados);
+  useEffect(() => { refMontar.current = montarDados; });
+  const montar = useCallback(() => refMontar.current(), []);
+  const pronto = !!dados && !erro;
+  useAcaoTopo(pronto ? <BotaoExportar montarDados={montar} /> : null, [pronto, montar]);
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard
-          icon={DollarSign}
-          color="success"
-          label="Total que entrou"
-          valor={fmtBRL(fin.receitaBruta)}
-          subvalor={`${fmtNum(fin.totalLancamentos)} lançamento(s) pagos`}
-          info="Soma de todas as receitas pagas no período."
-        />
-        <KpiCard
-          icon={DollarSign}
-          color="danger"
-          label="Total que saiu"
-          valor={fmtBRL(fin.despesasTotais)}
-          subvalor={`Variáveis ${fmtBRL(fin.despesasVariaveis)} · Fixas ${fmtBRL(fin.despesasFixas)}`}
-        />
-        <KpiCard
-          icon={DollarSign}
-          color="accent"
-          label="Lucro do período"
-          valor={fmtBRL(fin.lucroLiquido)}
-          subvalor={`Margem ${fmtPct(fin.margemLiquida)}`}
-          info="Receitas menos despesas. É o que sobrou no bolso depois de pagar tudo."
-        />
-        <KpiCard
-          icon={ShoppingBag}
-          color="info"
-          label="Vendas"
-          valor={fmtNum(vd.total)}
-          subvalor={`Faturamento ${fmtBRL(vd.faturamento)} · Ticket médio ${fmtBRL(vd.ticketMedio)}`}
-        />
-        <KpiCard
-          icon={Wallet}
-          color="neutral"
-          label="Sessões de caixa"
-          valor={fmtNum(cx.sessoesFechadas)}
-          subvalor={`Diferença acumulada ${fmtBRL(cx.diferencaAcumulada)}`}
-        />
-        <KpiCard
-          icon={Wallet}
-          color="warning"
-          label="Retiradas"
-          valor={fmtBRL(cx.totalSangrias)}
-        />
-        <KpiCard
-          icon={Wallet}
-          color="success"
-          label="Entradas no caixa"
-          valor={fmtBRL(cx.totalSuprimentos)}
-        />
-        <KpiCard
-          icon={Users}
-          color="info"
-          label="Clientes novos"
-          valor={fmtNum(crm.leadsCriados)}
-          subvalor="Cadastrados no período"
-        />
-      </div>
-
-      {Array.isArray(vd.topProdutos) && vd.topProdutos.length > 0 && (
-        <Card padding="none">
-          <div className="px-5 py-4 border-b border-[var(--border-main)]">
-            <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Top produtos do mês</div>
-            <div className="text-sm text-[var(--text-secondary)] mt-0.5">Os que mais geraram receita</div>
-          </div>
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-[var(--border-main)]">
-                <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Produto</th>
-                <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Quantidade</th>
-                <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Receita</th>
-              </tr>
-            </thead>
-            <tbody>
-              {vd.topProdutos.map((p, i) => (
-                <tr key={i} className="border-b border-[var(--border-subtle)] last:border-b-0">
-                  <td className="py-3 px-5 text-sm font-semibold text-[var(--text-main)]">{p.nome}</td>
-                  <td className="py-3 px-5 text-right text-sm tabular-nums">{fmtNum(p.quantidade)}</td>
-                  <td className="py-3 px-5 text-right text-sm font-bold tabular-nums text-[var(--success)]">{fmtBRL(p.receita)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
+  const voltar = (
+    <div>
+      <Button variant="ghost" icon={ArrowLeft} size="sm" onClick={() => navigate('/app/relatorios/mensais')}>
+        Voltar pro fechamento mensal
+      </Button>
     </div>
+  );
+
+  if (carregando) {
+    return (
+      <Pagina>
+        {voltar}
+        <FaixaNumeros min={200}>
+          {[0, 1, 2, 3].map((i) => <Numero key={i} rotulo="Carregando…" carregando destaque={i === 0} />)}
+        </FaixaNumeros>
+      </Pagina>
+    );
+  }
+
+  if (erro || !dados) {
+    return (
+      <Pagina>
+        {voltar}
+        <Painel>
+          <div className="text-[13px] text-center py-6 text-[var(--text-secondary)]">
+            <AlertCircle size={20} className="mx-auto text-[var(--text-muted)] mb-2" aria-hidden="true" />
+            <div className="font-semibold text-[var(--text-main)]">{erro || 'Sem dados'}</div>
+            <div className="text-[var(--text-muted)] mt-1">
+              Este mês ainda não tem fechamento gerado. Você pode disparar manualmente em <Link to="/app/relatorios/mensais" className="text-[var(--primary)] font-semibold hover:underline">Fechamento mensal</Link>.
+            </div>
+          </div>
+        </Painel>
+      </Pagina>
+    );
+  }
+
+  const top = Array.isArray(vd.topProdutos) ? vd.topProdutos : [];
+  const dif = Number(cx.diferencaAcumulada || 0);
+
+  return (
+    <Pagina>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          {voltar}
+          <h2 className="m-0 text-base font-bold tracking-tight text-[var(--text-main)]">
+            Fechamento de {NOMES_MES[mes]} de {ano}
+          </h2>
+        </div>
+        <span className="text-xs text-[var(--text-muted)]">
+          Fechado em {new Date(dados.geradoEm).toLocaleDateString('pt-BR')}
+          {dados.geradoPor === 'CRON' ? ' · automático' : ' · gerado manualmente'}
+        </span>
+      </div>
+
+      <FaixaNumeros min={200}>
+        <Numero destaque rotulo={<span title="Soma de todas as receitas pagas no período.">Total que entrou</span>}
+          valor={fmtBRL(fin.receitaBruta)}
+          detalhe={`${fmtNum(fin.totalLancamentos)} lançamento(s) pagos`} />
+        <Numero rotulo="Total que saiu" valor={fmtBRL(fin.despesasTotais)}
+          detalhe={`Variáveis ${fmtBRL(fin.despesasVariaveis)} · Fixas ${fmtBRL(fin.despesasFixas)}`} />
+        <Numero rotulo={<span title="Receitas menos despesas. É o que sobrou no bolso depois de pagar tudo.">Lucro do período</span>}
+          valor={fmtBRL(fin.lucroLiquido)}
+          tom={Number(fin.lucroLiquido) < 0 ? 'perigo' : 'sucesso'}
+          detalhe={`Margem ${fmtPct(fin.margemLiquida)}`} />
+        <Numero rotulo="Vendas" valor={fmtNum(vd.total)}
+          detalhe={`Ticket médio ${fmtBRL(vd.ticketMedio)}`} />
+      </FaixaNumeros>
+
+      <ColunasPagina
+        lateral={(
+          <>
+            <Painel titulo="Situação" acoes={<Badge variant="neutral">Snapshot imutável</Badge>} semPadding>
+              <LinhaInfo rotulo="Fechado em" valor={new Date(dados.geradoEm).toLocaleDateString('pt-BR')} />
+              <LinhaInfo rotulo="Como foi gerado" valor={dados.geradoPor === 'CRON' ? 'Automático' : 'Manual'} />
+            </Painel>
+            <Painel titulo="Caixa" semPadding>
+              <LinhaInfo rotulo="Sessões fechadas" valor={fmtNum(cx.sessoesFechadas)} />
+              <LinhaInfo rotulo="Retiradas" valor={fmtBRL(cx.totalSangrias)} />
+              <LinhaInfo rotulo="Entradas no caixa" valor={fmtBRL(cx.totalSuprimentos)} />
+              <LinhaInfo rotulo="Diferença acumulada">
+                <span className={`font-bold tabular-nums ${dif > 0 ? 'text-[var(--success-text)]' : dif < 0 ? 'text-[var(--danger-text)]' : 'text-[var(--text-main)]'}`}>
+                  {fmtBRL(dif)}
+                </span>
+              </LinhaInfo>
+            </Painel>
+            <Painel titulo="Clientes" semPadding>
+              <LinhaInfo rotulo="Clientes novos cadastrados" valor={fmtNum(crm.leadsCriados)} />
+            </Painel>
+          </>
+        )}
+      >
+        <Painel titulo="Resultado do mês" subtitulo="Só o que foi pago no mês" semPadding>
+          <LinhaInfo rotulo="Total que entrou" valor={fmtBRL(fin.receitaBruta)} />
+          <LinhaInfo rotulo="Despesas variáveis" valor={`− ${fmtBRL(fin.despesasVariaveis)}`} />
+          <LinhaInfo rotulo="Despesas fixas" valor={`− ${fmtBRL(fin.despesasFixas)}`} />
+          <LinhaInfo rotulo="Lucro do período" forte valor={fmtBRL(fin.lucroLiquido)} />
+          <LinhaInfo rotulo="Margem de lucro" valor={fmtPct(fin.margemLiquida)} />
+          <LinhaInfo rotulo="Faturamento em vendas" valor={fmtBRL(vd.faturamento)} />
+        </Painel>
+
+        <Painel titulo="O que mais vendeu no mês" subtitulo="Os que mais geraram receita" semPadding corpoClassName="overflow-x-auto">
+          {top.length === 0 ? (
+            <div className="px-4 py-10 text-center text-[13px] text-[var(--text-muted)]">Nenhum produto vendido neste mês.</div>
+          ) : (
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr>
+                  <th className={`${TH} text-left w-10`}>#</th>
+                  <th className={`${TH} text-left`}>Produto</th>
+                  <th className={`${TH} text-right`}>Qtd</th>
+                  <th className={`${TH} text-right`}>Receita</th>
+                </tr>
+              </thead>
+              <tbody>
+                {top.map((p, i) => (
+                  <tr key={i}>
+                    <td className={`${TD} text-[var(--text-muted)]`}>{i + 1}</td>
+                    <td className={`${TD} font-semibold text-[var(--text-main)]`}>{p.nome}</td>
+                    <td className={`${TD} text-right tabular-nums`}>{fmtNum(p.quantidade)}</td>
+                    <td className={`${TD} text-right font-semibold tabular-nums`}>{fmtBRL(p.receita)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Painel>
+      </ColunasPagina>
+    </Pagina>
   );
 }

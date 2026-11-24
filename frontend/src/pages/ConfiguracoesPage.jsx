@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import clsx from 'clsx';
 import {
-  Sun, Moon, Upload, ImageIcon, Trash2, Save, ShieldCheck,
-  Building2, ChevronRight, AlertCircle, Clock, Bell
+  Sun, Moon, Upload, ImageIcon, Trash2, Save, Building2, AlertCircle, Clock, Bell,
+  Users, CreditCard, LayoutGrid, CalendarDays, BellRing, Link2, MessageCircle,
+  BookOpen, RotateCcw, Receipt, FileUp, Palette, ArrowUpRight
 } from 'lucide-react';
 import api from '../services/api';
 import notificacaoService from '../services/notificacaoService';
@@ -11,155 +13,347 @@ import devolucaoService from '../services/devolucaoService';
 import SellergyLogo from '../components/SellergyLogo';
 import { useAuthStore } from '../store/auth.store';
 import { useUiStore } from '../store/ui.store';
+import { useResumoConta } from '../components/conta/useResumoConta';
+import ProntidaoNegocio from '../components/configuracoes/ProntidaoNegocio';
 import {
-  Card, CardHeader, CardTitle, CardDescription, Button, Input, Select, Badge,
-  Tabs, TabsList, TabsTrigger, TabsContent, useToast, Switch
+  BlocoLembretes, BlocoLinkAgendamento, PreviaLembrete, LinhaOpcao
+} from '../components/configuracoes/BlocosAtendimento';
+import {
+  Button, Input, Select, Badge, useToast, Switch, Pagina, Painel
 } from '../components/ui';
 
 const MAX_LOGO_SIZE = 1024 * 1024; // 1 MB
 
 /**
- * Configuracoes do CLIENTE.
+ * Configurações do CLIENTE — central de ajustes.
  *
- * Abas compactas:
- *  - Aparencia: tema (light/dark) + branding (logo + nome customizado)
- *  - Operacao: horario de funcionamento da loja (usado pelo cron do caixa)
- *  - Catalogo: layout do PDF que o bot envia (template, cor, agrupamento)
- *  - Notificacoes: preferencias de aviso
- *  - Conta: links pra Perfil, Equipe, Permissoes
- *  - Plano: modulos liberados
+ * Menu de seções à esquerda (dentro do conteúdo), agrupado em Negócio,
+ * Atendimento, Vendas e Sistema. Cada seção abre o seu formulário no meio;
+ * itens que são outra tela (Equipe, Meu plano, WhatsApp e bot, Nota fiscal,
+ * Importar) são links. A seção aberta fica na URL (?secao=horario).
+ * Coluna da direita: "seu negócio está X% pronto" (checklist do Início) e
+ * uma dica da seção.
  *
- * IMPORTANTE: a edicao da identidade visual (logo + nome) eh diferente
+ * IMPORTANTE: a edição da identidade visual (logo + nome) é diferente
  * de "Meu perfil" (foto + dados pessoais).
  */
 export default function ConfiguracoesPage() {
-  const navigate = useNavigate();
   const toast = useToast();
   const { user, refreshUser } = useAuthStore();
-  const { theme, setTheme } = useUiStore();
+  const { theme, setTheme, menuAberto, alternarMenu } = useUiStore();
+  const { resumo, recarregar } = useResumoConta();
+  const [params, setParams] = useSearchParams();
 
-  const [tab, setTab] = useState('aparencia');
   const podeEditarOperacao = user?.perfil === 'CLIENT' || user?.perfil === 'ADMINISTRADOR';
   const podeVerCatalogo = !!user?.modulosLiberados?.CATALOGO;
+  const temAgenda = !!user?.modulosLiberados?.AGENDA;
+  const vendeSoProduto = resumo?.negocio?.segmento === 'PRODUTO';
+
+  // Monta o menu (só com o que esta conta tem).
+  const grupos = [
+    {
+      titulo: 'Negócio',
+      itens: [
+        { id: 'negocio', rotulo: 'Dados e marca', icone: Building2 },
+        { id: 'horario', rotulo: 'Horário de funcionamento', icone: Clock, pendente: podeEditarOperacao && !user?.horarioFuncionamento },
+        { href: '/app/usuarios', rotulo: 'Equipe e permissões', icone: Users },
+        { href: '/app/plano', rotulo: 'Meu plano', icone: CreditCard },
+        { id: 'modulos', rotulo: 'Módulos liberados', icone: LayoutGrid },
+      ],
+    },
+    {
+      titulo: 'Atendimento',
+      itens: [
+        temAgenda && { id: 'agenda', rotulo: 'Agenda e sinal', icone: CalendarDays },
+        temAgenda && { id: 'lembretes', rotulo: 'Lembretes', icone: BellRing },
+        temAgenda && !vendeSoProduto && { id: 'link', rotulo: 'Link de agendamento', icone: Link2 },
+        { href: '/app/bots', rotulo: 'WhatsApp e bot', icone: MessageCircle },
+      ].filter(Boolean),
+    },
+    {
+      titulo: 'Vendas',
+      itens: [
+        { id: 'catalogo', rotulo: 'Catálogo', icone: BookOpen },
+        { id: 'devolucao', rotulo: 'Devoluções e aluguel', icone: RotateCcw },
+        { href: '/app/fiscal/ativar', rotulo: 'Nota fiscal', icone: Receipt },
+        { href: '/app/importar', rotulo: 'Importar planilha', icone: FileUp },
+      ],
+    },
+    {
+      titulo: 'Sistema',
+      itens: [
+        { id: 'notificacoes', rotulo: 'Notificações', icone: Bell },
+        { id: 'aparencia', rotulo: 'Aparência', icone: Palette },
+      ],
+    },
+  ];
+
+  const secoesValidas = grupos.flatMap((g) => g.itens.filter((i) => i.id).map((i) => i.id));
+  const pedida = params.get('secao');
+  const secao = secoesValidas.includes(pedida) ? pedida : 'negocio';
+  const abrir = (id) => setParams((p) => { const n = new URLSearchParams(p); n.set('secao', id); return n; }, { replace: true });
+
+  const ajuda = AJUDA[secao];
 
   return (
-    <div className="space-y-5">
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList variant="pills">
-          <TabsTrigger value="aparencia" variant="pills">Aparencia</TabsTrigger>
-          <TabsTrigger value="operacao" variant="pills">Operacao</TabsTrigger>
-          <TabsTrigger value="catalogo" variant="pills">Catálogo</TabsTrigger>
-          <TabsTrigger value="notificacoes" variant="pills">Notificações</TabsTrigger>
-          <TabsTrigger value="conta" variant="pills">Conta</TabsTrigger>
-          <TabsTrigger value="plano" variant="pills">Plano</TabsTrigger>
-        </TabsList>
+    <Pagina>
+      <div className="flex flex-wrap gap-4 items-start">
+        <MenuSecoes grupos={grupos} secao={secao} onAbrir={abrir} />
 
-        <TabsContent value="aparencia" className="mt-5 space-y-5">
-          <BlocoTema theme={theme} setTheme={setTheme} />
-          {user?.perfil === 'CLIENT' ? (
-            <BlocoBranding key={JSON.stringify(user?.branding || null)} user={user} refreshUser={refreshUser} toast={toast} />
-          ) : (
-            <Card padding="lg">
-              <div className="flex items-start gap-3">
-                <AlertCircle size={18} className="text-[var(--text-muted)] flex-shrink-0 mt-0.5" />
-                <div className="text-sm text-[var(--text-muted)]">
-                  Apenas o dono da conta pode personalizar a marca da plataforma.
-                </div>
-              </div>
-            </Card>
+        <div className="min-w-0 flex flex-col gap-4" style={{ flex: '999 1 520px' }}>
+          {secao === 'negocio' && (
+            user?.perfil === 'CLIENT' ? (
+              <BlocoBranding key={JSON.stringify(user?.branding || null)} user={user} refreshUser={refreshUser} toast={toast} />
+            ) : (
+              <AvisoPainel titulo="Marca">Apenas o dono da conta pode personalizar a marca da plataforma.</AvisoPainel>
+            )
           )}
-        </TabsContent>
 
-        <TabsContent value="operacao" className="mt-5 space-y-5">
-          {podeEditarOperacao ? (
-            <>
+          {secao === 'horario' && (
+            podeEditarOperacao ? (
               <BlocoHorarioFuncionamento key={JSON.stringify(user?.horarioFuncionamento || null)} user={user} refreshUser={refreshUser} toast={toast} />
-              {user?.modulosLiberados?.AGENDA && <BlocoAgendaSinal toast={toast} />}
+            ) : (
+              <AvisoPainel titulo="Horário de funcionamento">Apenas o dono da conta ou administradores podem alterar o horário de funcionamento.</AvisoPainel>
+            )
+          )}
+
+          {secao === 'modulos' && <BlocoModulos modulos={user?.modulosLiberados} />}
+
+          {secao === 'agenda' && (
+            podeEditarOperacao ? (
+              <BlocoAgendaSinal toast={toast} />
+            ) : (
+              <AvisoPainel titulo="Agenda e sinal">Apenas o dono da conta ou administradores podem alterar as regras da agenda.</AvisoPainel>
+            )
+          )}
+
+          {secao === 'lembretes' && (
+            resumo ? (
+              <BlocoLembretes
+                key={JSON.stringify(resumo.configuracoes?.lembrete || null)}
+                resumo={resumo}
+                recarregar={recarregar}
+                podeEditar={podeEditarOperacao}
+                toast={toast}
+              />
+            ) : <CarregandoPainel titulo="Lembretes automáticos" />
+          )}
+
+          {secao === 'link' && (
+            !resumo ? (
+              <CarregandoPainel titulo="Link de agendamento" />
+            ) : resumo.plano?.recursos?.linkAgendamento ? (
+              <BlocoLinkAgendamento
+                key={resumo.configuracoes?.slugPublico || ''}
+                resumo={resumo}
+                recarregar={recarregar}
+                podeEditar={podeEditarOperacao}
+                toast={toast}
+              />
+            ) : (
+              <AvisoPainel titulo="Link de agendamento">
+                Seu plano não inclui o link de agendamento.{' '}
+                <Link to="/app/plano" className="font-semibold text-[var(--primary)] underline">Ver planos</Link>
+              </AvisoPainel>
+            )
+          )}
+
+          {secao === 'catalogo' && (
+            podeVerCatalogo ? (
+              <BlocoCatalogo toast={toast} />
+            ) : (
+              <AvisoPainel titulo="Catálogo">O módulo de Catálogo não está liberado para sua conta. Fale com o administrador.</AvisoPainel>
+            )
+          )}
+
+          {secao === 'devolucao' && (
+            podeEditarOperacao ? (
               <BlocoDevolucao toast={toast} />
-            </>
-          ) : (
-            <Card padding="lg">
-              <div className="flex items-start gap-3">
-                <AlertCircle size={18} className="text-[var(--text-muted)] flex-shrink-0 mt-0.5" />
-                <div className="text-sm text-[var(--text-muted)]">
-                  Apenas o dono da conta ou administradores podem alterar o horario de funcionamento.
-                </div>
-              </div>
-            </Card>
+            ) : (
+              <AvisoPainel titulo="Devoluções e aluguel">Apenas o dono da conta ou administradores podem alterar o aviso de devolução.</AvisoPainel>
+            )
           )}
-        </TabsContent>
 
-        <TabsContent value="catalogo" className="mt-5 space-y-5">
-          {podeVerCatalogo ? (
-            <BlocoCatalogo toast={toast} />
-          ) : (
-            <Card padding="lg">
-              <div className="flex items-start gap-3">
-                <AlertCircle size={18} className="text-[var(--text-muted)] flex-shrink-0 mt-0.5" />
-                <div className="text-sm text-[var(--text-muted)]">
-                  O modulo de Catalogo nao esta liberado para sua conta. Fale com o administrador.
-                </div>
-              </div>
-            </Card>
+          {secao === 'notificacoes' && <BlocoNotificacoes toast={toast} />}
+
+          {secao === 'aparencia' && (
+            <BlocoTema theme={theme} setTheme={setTheme} menuAberto={menuAberto} alternarMenu={alternarMenu} />
           )}
-        </TabsContent>
+        </div>
 
-        <TabsContent value="notificacoes" className="mt-5 space-y-5">
-          <BlocoNotificacoes toast={toast} />
-        </TabsContent>
-
-        <TabsContent value="conta" className="mt-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <ConfigLink icon={ShieldCheck} titulo="Equipe" descricao="Cadastrar colaboradores e especialistas, e definir permissões" onClick={() => navigate('/app/usuarios')} />
-          </div>
-        </TabsContent>
-
-        <TabsContent value="plano" className="mt-5">
-          <Card padding="lg">
-            <CardHeader>
-              <div>
-                <CardTitle>Modulos do plano</CardTitle>
-                <CardDescription>Modulos liberados pelo administrador para sua conta.</CardDescription>
-              </div>
-            </CardHeader>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-              {Object.entries(user?.modulosLiberados || {}).map(([modulo, liberado]) => (
-                <div key={modulo} className={`flex items-center justify-between px-3 py-2 rounded-lg border ${
-                  liberado ? 'border-[var(--success-soft)] bg-[var(--success-soft)]/30' : 'border-[var(--border-main)] bg-[var(--bg-subtle)]/50'
-                }`}>
-                  <span className="text-xs font-semibold text-[var(--text-main)] tracking-tight">{modulo}</span>
-                  <Badge variant={liberado ? 'success' : 'neutral'} size="sm">
-                    {liberado ? 'Liberado' : 'Bloqueado'}
-                  </Badge>
-                </div>
-              ))}
-              {Object.keys(user?.modulosLiberados || {}).length === 0 && (
-                <div className="col-span-full text-xs text-[var(--text-muted)] text-center py-4">
-                  Nenhum modulo configurado. Fale com o suporte.
-                </div>
-              )}
-            </div>
-          </Card>
-        </TabsContent>
-      </Tabs>
-    </div>
+        <aside aria-label="Andamento e ajuda" className="min-w-0 flex flex-col gap-4" style={{ flex: '1 1 280px' }}>
+          <ProntidaoNegocio inicio={resumo?.inicio} carregando={!resumo} />
+          {secao === 'lembretes' && resumo?.plano?.recursos?.lembretesWhatsapp && (
+            <PreviaLembrete nomeNegocio={resumo?.negocio?.nome} />
+          )}
+          {ajuda && (
+            <Painel titulo={ajuda.titulo}>
+              <p className="m-0 text-[13px] leading-relaxed text-[var(--text-secondary)]">{ajuda.texto}</p>
+            </Painel>
+          )}
+        </aside>
+      </div>
+    </Pagina>
   );
 }
 
-function BlocoTema({ theme, setTheme }) {
+// Dica da coluna direita, por seção.
+const AJUDA = {
+  negocio: { titulo: 'Onde isso aparece', texto: 'O nome e a logo substituem "Sellergy Cloud" no menu lateral que você e a sua equipe veem. Sua foto e seus dados pessoais ficam em Meu perfil.' },
+  horario: { titulo: 'Pra que serve', texto: 'Define quando a loja está aberta. O bot do WhatsApp atende 24 h; o caixa automático do bot fecha e reabre às 00:01 todos os dias.' },
+  modulos: { titulo: 'Quem libera', texto: 'Os módulos são liberados pelo administrador conforme o seu plano. Pra trocar de plano, abra Meu plano.' },
+  agenda: { titulo: 'Por que cobrar sinal', texto: 'Quem paga sinal falta menos. Sem pagamento dentro do prazo, o horário volta pra agenda, e a fila de encaixe pode ocupar o horário que vagou.' },
+  lembretes: { titulo: 'Por onde sai', texto: 'Pelo WhatsApp conectado em WhatsApp e bot: no oficial, com o modelo aprovado e botões; no número por QR, em texto com 1 e 2. Cada lembrete enviado conta na cota mensal do plano.' },
+  link: { titulo: 'Onde divulgar', texto: 'Coloque o link na bio do Instagram, no status do WhatsApp e na resposta automática. A cliente escolhe o serviço, o dia e o horário sozinha.' },
+  catalogo: { titulo: 'Como funciona', texto: 'O bot do WhatsApp manda esse PDF quando a cliente pede o catálogo. Ele usa os produtos, preços e estoque cadastrados.' },
+  devolucao: { titulo: 'Quando usar', texto: 'Só vale pros produtos marcados como alugado no Estoque. A lista das devoluções pendentes fica na tela Devoluções.' },
+  notificacoes: { titulo: 'Só pra você', texto: 'Essas escolhas valem pro seu usuário e controlam o que aparece no sino do topo. Cada pessoa da equipe escolhe as suas.' },
+  aparencia: { titulo: 'Só neste aparelho', texto: 'Tema e menu recolhido ficam salvos neste navegador.' },
+};
+
+function MenuSecoes({ grupos, secao, onAbrir }) {
+  const base = 'w-full flex items-center gap-2.5 h-10 px-3 rounded-lg text-sm text-left transition-colors';
   return (
-    <Card padding="lg">
-      <CardHeader>
-        <div>
-          <CardTitle>Tema</CardTitle>
-          <CardDescription>Escolha como o sistema aparece pra voce.</CardDescription>
+    <nav
+      aria-label="Seções das configurações"
+      className="rounded-[10px] border border-[var(--border-main)] bg-[var(--bg-card)] px-2 pt-1.5 pb-2.5 min-w-[200px]"
+      style={{ flex: '0 1 240px' }}
+    >
+      {grupos.map((g) => (
+        <div key={g.titulo}>
+          <div className="px-3 pt-3.5 pb-1 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--text-muted)]">{g.titulo}</div>
+          <ul className="m-0 p-0 list-none">
+            {g.itens.map((n) => {
+              const Icone = n.icone;
+              if (n.href) {
+                return (
+                  <li key={n.href}>
+                    <Link to={n.href} className={clsx(base, 'font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-main)]')}>
+                      <Icone size={16} aria-hidden="true" className="flex-shrink-0" />
+                      <span className="flex-1 min-w-0 truncate">{n.rotulo}</span>
+                      <ArrowUpRight size={14} aria-hidden="true" className="flex-shrink-0 text-[var(--text-muted)]" />
+                    </Link>
+                  </li>
+                );
+              }
+              const ativa = n.id === secao;
+              return (
+                <li key={n.id}>
+                  <button
+                    type="button"
+                    onClick={() => onAbrir(n.id)}
+                    aria-current={ativa ? 'page' : undefined}
+                    className={clsx(
+                      base,
+                      ativa
+                        ? 'bg-[var(--primary-soft)] text-[var(--primary)] font-bold'
+                        : 'font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-main)]'
+                    )}
+                  >
+                    <Icone size={16} aria-hidden="true" className="flex-shrink-0" />
+                    <span className="flex-1 min-w-0 truncate">{n.rotulo}</span>
+                    {n.pendente && (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-[var(--warning)] flex-shrink-0" aria-hidden="true" />
+                        <span className="sr-only">(pendente)</span>
+                      </>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         </div>
-      </CardHeader>
-      <div className="grid grid-cols-2 gap-3">
-        <ThemeOption value="light" current={theme} onChange={setTheme} icon={Sun} label="Claro" desc="Padrao premium light" />
-        <ThemeOption value="dark" current={theme} onChange={setTheme} icon={Moon} label="Escuro" desc="Estilo Linear/Vercel" />
+      ))}
+    </nav>
+  );
+}
+
+function AvisoPainel({ titulo, children }) {
+  return (
+    <Painel titulo={titulo}>
+      <div className="flex items-start gap-3">
+        <AlertCircle size={16} className="text-[var(--text-muted)] flex-shrink-0 mt-0.5" aria-hidden="true" />
+        <div className="text-[13px] text-[var(--text-muted)]">{children}</div>
       </div>
-    </Card>
+    </Painel>
+  );
+}
+
+function CarregandoPainel({ titulo }) {
+  return (
+    <Painel titulo={titulo}>
+      <div className="text-[13px] text-[var(--text-muted)] py-4 text-center">Carregando…</div>
+    </Painel>
+  );
+}
+
+/** Rótulo de grupo de campos dentro de um Painel. */
+function RotuloGrupo({ children }) {
+  return <div className="text-xs font-medium text-[var(--text-muted)] mb-2">{children}</div>;
+}
+
+/** Cartão de escolha (modelo, tema): borda verde quando escolhido. */
+function Escolha({ ativo, onClick, titulo, descricao, icone: Icone }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={ativo}
+      className={clsx(
+        'p-3.5 rounded-[10px] border text-left transition-colors bg-[var(--bg-card)]',
+        ativo
+          ? 'border-[var(--primary)] ring-2 ring-[var(--primary-soft)]'
+          : 'border-[var(--border-main)] hover:border-[var(--border-strong)]'
+      )}
+    >
+      {Icone && <Icone size={16} aria-hidden="true" className={clsx('mb-1.5', ativo ? 'text-[var(--primary)]' : 'text-[var(--text-secondary)]')} />}
+      <div className="text-sm font-semibold text-[var(--text-main)]">{titulo}</div>
+      <div className="text-[13px] text-[var(--text-muted)] mt-1 leading-relaxed">{descricao}</div>
+    </button>
+  );
+}
+
+function BlocoModulos({ modulos }) {
+  const lista = Object.entries(modulos || {});
+  return (
+    <Painel
+      titulo="Módulos do plano"
+      subtitulo="Módulos liberados pelo administrador para sua conta."
+      acoes={<Link to="/app/plano" className="text-[13px] font-semibold text-[var(--primary)] hover:underline">Ver meu plano</Link>}
+    >
+      {lista.length === 0 ? (
+        <div className="text-[13px] text-[var(--text-muted)] text-center py-4">Nenhum módulo configurado. Fale com o suporte.</div>
+      ) : (
+        <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
+          {lista.map(([modulo, liberado]) => (
+            <div
+              key={modulo}
+              className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)]"
+            >
+              <span className="text-xs font-semibold text-[var(--text-main)] tracking-tight truncate">{modulo}</span>
+              <Badge variant={liberado ? 'success' : 'neutral'} size="sm">
+                {liberado ? 'Liberado' : 'Bloqueado'}
+              </Badge>
+            </div>
+          ))}
+        </div>
+      )}
+    </Painel>
+  );
+}
+
+function BlocoTema({ theme, setTheme, menuAberto, alternarMenu }) {
+  return (
+    <Painel titulo="Aparência" subtitulo="Vale só pra este aparelho." semPadding>
+      <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3 border-b border-[var(--border-subtle)]">
+        <Escolha ativo={theme === 'light'} onClick={() => setTheme('light')} icone={Sun} titulo="Claro" descricao="Fundo claro, ideal de dia." />
+        <Escolha ativo={theme === 'dark'} onClick={() => setTheme('dark')} icone={Moon} titulo="Escuro" descricao="Cansa menos a vista à noite." />
+      </div>
+      <LinhaOpcao titulo="Menu lateral recolhido" descricao="Mais espaço pra agenda e tabelas. Você também abre e fecha o menu pelo botão dele.">
+        <Switch checked={!menuAberto} onChange={() => alternarMenu()} ariaLabel="Menu lateral recolhido" />
+      </LinhaOpcao>
+    </Painel>
   );
 }
 
@@ -178,7 +372,7 @@ function BlocoBranding({ user, refreshUser, toast }) {
       return;
     }
     if (file.size > MAX_LOGO_SIZE) {
-      toast.error('Imagem muito grande. Maximo 1MB.');
+      toast.error('Imagem muito grande. Máximo 1 MB.');
       return;
     }
     const reader = new FileReader();
@@ -204,21 +398,14 @@ function BlocoBranding({ user, refreshUser, toast }) {
   };
 
   return (
-    <Card padding="lg">
-      <CardHeader>
-        <div>
-          <CardTitle>Identidade visual</CardTitle>
-          <CardDescription>Personalize logo e nome que sua equipe ve no menu lateral.</CardDescription>
-        </div>
-      </CardHeader>
-
-      <div className="grid grid-cols-1 md:grid-cols-[120px_1fr] gap-5 items-start">
-        <div className="flex flex-col items-center gap-2">
-          <div className="w-24 h-24 rounded-2xl border-2 border-dashed border-[var(--border-main)] bg-[var(--bg-subtle)] flex items-center justify-center overflow-hidden">
+    <Painel titulo="Marca" subtitulo="Logo e nome que sua equipe vê no menu lateral.">
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="w-16 h-16 rounded-[10px] border border-dashed border-[var(--border-strong)] bg-[var(--bg-subtle)] flex items-center justify-center overflow-hidden flex-shrink-0">
             {logo ? (
-              <img src={logo} alt="Logo" className="w-full h-full object-cover" />
+              <img src={logo} alt="Logo atual" className="w-full h-full object-cover" />
             ) : (
-              <ImageIcon size={28} className="text-[var(--text-muted)] opacity-50" strokeWidth={1.5} />
+              <ImageIcon size={24} className="text-[var(--text-muted)]" strokeWidth={1.5} aria-hidden="true" />
             )}
           </div>
           <input
@@ -227,55 +414,53 @@ function BlocoBranding({ user, refreshUser, toast }) {
             accept="image/*"
             className="hidden"
             onChange={handleUpload}
+            aria-label="Arquivo da logo"
           />
-          <Button variant="ghost" size="sm" icon={Upload} onClick={() => fileInput.current?.click()}>
-            Enviar
+          <Button variant="secondary" size="sm" icon={Upload} onClick={() => fileInput.current?.click()}>
+            {logo ? 'Trocar logo' : 'Enviar logo'}
           </Button>
           {logo && (
-            <button
-              type="button"
-              onClick={handleRemoverLogo}
-              className="text-[10px] font-bold uppercase tracking-tight text-[var(--text-muted)] hover:text-[var(--danger)] flex items-center gap-1"
-            >
-              <Trash2 size={10} /> Remover
-            </button>
+            <Button variant="ghost" size="sm" icon={Trash2} onClick={handleRemoverLogo}>
+              Remover
+            </Button>
           )}
+          <span className="text-xs text-[var(--text-muted)]">Imagem quadrada, até 1 MB.</span>
         </div>
 
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
           <Input
-            label="Nome customizado"
+            label="Nome exibido no menu"
             value={nome}
             onChange={(e) => setNome(e.target.value)}
-            placeholder="Ex: Boutique Bella, Barbearia do Joao"
-            hint="Substitui 'Sellergy Cloud' no menu lateral. Deixe em branco para usar o padrao."
+            placeholder="Ex: Boutique Bella, Barbearia do João"
+            hint="Substitui 'Sellergy Cloud' no menu lateral. Deixe em branco para usar o padrão."
           />
 
-          <div className="bg-[var(--bg-subtle)] rounded-xl p-3">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Pre-visualizacao</div>
-            <div className="flex items-center gap-2 mt-2">
+          <div>
+            <RotuloGrupo>Pré-visualização</RotuloGrupo>
+            <div className="flex items-center gap-2 rounded-lg bg-[var(--bg-subtle)] px-3 py-2.5">
               {logo ? (
                 <div className="w-8 h-8 rounded-lg bg-[var(--primary)] flex items-center justify-center overflow-hidden flex-shrink-0">
-                  <img src={logo} alt="Logo" className="w-full h-full object-cover" />
+                  <img src={logo} alt="" className="w-full h-full object-cover" />
                 </div>
               ) : (
                 <SellergyLogo size={32} className="flex-shrink-0" />
               )}
-              <div>
-                <div className="text-sm font-semibold text-[var(--text-main)]">{nome || 'Sellergy Cloud'}</div>
-                <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Plataforma</div>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-[var(--text-main)] truncate">{nome || 'Sellergy Cloud'}</div>
+                <div className="text-[11px] text-[var(--text-muted)]">Plataforma</div>
               </div>
             </div>
           </div>
+        </div>
 
-          <div className="flex justify-end">
-            <Button variant="primary" icon={Save} onClick={handleSalvar} loading={salvando}>
-              Salvar marca
-            </Button>
-          </div>
+        <div className="flex justify-end">
+          <Button variant="primary" icon={Save} onClick={handleSalvar} loading={salvando}>
+            Salvar marca
+          </Button>
         </div>
       </div>
-    </Card>
+    </Painel>
   );
 }
 
@@ -284,11 +469,11 @@ function BlocoBranding({ user, refreshUser, toast }) {
 const DIAS_SEMANA = [
   { valor: 0, label: 'Dom', completo: 'Domingo' },
   { valor: 1, label: 'Seg', completo: 'Segunda' },
-  { valor: 2, label: 'Ter', completo: 'Terca' },
+  { valor: 2, label: 'Ter', completo: 'Terça' },
   { valor: 3, label: 'Qua', completo: 'Quarta' },
   { valor: 4, label: 'Qui', completo: 'Quinta' },
   { valor: 5, label: 'Sex', completo: 'Sexta' },
-  { valor: 6, label: 'Sab', completo: 'Sabado' },
+  { valor: 6, label: 'Sab', completo: 'Sábado' },
 ];
 
 function BlocoHorarioFuncionamento({ user, refreshUser, toast }) {
@@ -313,14 +498,14 @@ function BlocoHorarioFuncionamento({ user, refreshUser, toast }) {
       return;
     }
     if (abertura >= fechamento) {
-      toast.error('Horario de fechamento deve ser depois da abertura.');
+      toast.error('Horário de fechamento deve ser depois da abertura.');
       return;
     }
     setSalvando(true);
     try {
       await api.put('/autenticacao/horario-funcionamento', { abertura, fechamento, dias });
       await refreshUser();
-      toast.success('Horario atualizado');
+      toast.success('Horário atualizado');
     } catch (e) {
       toast.error(e.response?.data?.erro || 'Erro ao salvar');
     } finally {
@@ -329,75 +514,63 @@ function BlocoHorarioFuncionamento({ user, refreshUser, toast }) {
   };
 
   return (
-    <Card padding="lg">
-      <CardHeader>
-        <div>
-          <CardTitle>Horario de funcionamento</CardTitle>
-          <CardDescription>
-            Define quando a loja esta aberta. O bot do WhatsApp opera 24h, mas o caixa
-            automatico fecha e reabre as 00:01 todos os dias.
-          </CardDescription>
-        </div>
-      </CardHeader>
-
-      <div className="space-y-5">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Input
-            label="Abertura"
-            type="time"
-            value={abertura}
-            onChange={(e) => setAbertura(e.target.value)}
-          />
-          <Input
-            label="Fechamento"
-            type="time"
-            value={fechamento}
-            onChange={(e) => setFechamento(e.target.value)}
-          />
-        </div>
-
-        <div>
-          <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">
-            Dias de funcionamento
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {DIAS_SEMANA.map((dia) => {
-              const ativo = dias.includes(dia.valor);
-              return (
-                <button
-                  key={dia.valor}
-                  type="button"
-                  onClick={() => toggleDia(dia.valor)}
-                  title={dia.completo}
-                  className={`px-4 py-2 rounded-lg border-2 text-xs font-semibold uppercase tracking-tight transition-colors ${
-                    ativo
-                      ? 'border-[var(--accent)] bg-[var(--accent-soft)]/40 text-[var(--accent)]'
-                      : 'border-[var(--border-main)] text-[var(--text-muted)] hover:border-[var(--text-muted)]'
-                  }`}
-                >
-                  {dia.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="bg-[var(--bg-subtle)] rounded-xl p-3 flex items-start gap-2">
-          <Clock size={14} className="text-[var(--text-muted)] flex-shrink-0 mt-0.5" />
-          <div className="text-xs text-[var(--text-muted)] leading-relaxed">
-            O caixa automatico do bot (vendas via WhatsApp) e fechado e reaberto todos os
-            dias as 00:01, com o fundo igual ao saldo final do dia anterior. O caixa manual
-            so e tocado pelo usuario.
-          </div>
-        </div>
-
-        <div className="flex justify-end">
-          <Button variant="primary" icon={Save} onClick={handleSalvar} loading={salvando}>
-            Salvar horario
-          </Button>
-        </div>
+    <Painel
+      titulo="Horário de funcionamento"
+      subtitulo="Quando a loja está aberta. Vale o mesmo horário pra todos os dias abertos."
+      acoes={!user?.horarioFuncionamento ? <Badge variant="warning" size="sm">Ainda não salvo</Badge> : null}
+      semPadding
+    >
+      <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4 border-b border-[var(--border-subtle)]">
+        <Input
+          label="Abre"
+          type="time"
+          value={abertura}
+          onChange={(e) => setAbertura(e.target.value)}
+        />
+        <Input
+          label="Fecha"
+          type="time"
+          value={fechamento}
+          onChange={(e) => setFechamento(e.target.value)}
+        />
       </div>
-    </Card>
+
+      <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-3 items-center px-4 py-2 bg-[var(--bg-subtle)] border-b border-[var(--border-subtle)] text-xs font-semibold text-[var(--text-muted)]">
+        <span>Dia</span><span>Aberto</span><span>Horário</span>
+      </div>
+      <ul className="m-0 p-0 list-none">
+        {DIAS_SEMANA.map((dia) => {
+          const ativo = dias.includes(dia.valor);
+          return (
+            <li key={dia.valor} className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-3 items-center px-4 py-2.5 border-b border-[var(--border-subtle)] text-[13px]">
+              <strong className="font-semibold text-[var(--text-main)]">{dia.completo}</strong>
+              <Switch
+                checked={ativo}
+                onChange={() => toggleDia(dia.valor)}
+                ariaLabel={`${dia.completo} ${ativo ? 'aberto' : 'fechado'}`}
+              />
+              <span className={clsx('tabular-nums', ativo ? 'text-[var(--text-secondary)]' : 'text-[var(--text-muted)]')}>
+                {ativo ? `${abertura} às ${fechamento}` : 'Fechado'}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="p-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-2 flex-1 min-w-[240px]">
+          <Clock size={14} className="text-[var(--text-muted)] flex-shrink-0 mt-0.5" aria-hidden="true" />
+          <p className="m-0 text-xs text-[var(--text-muted)] leading-relaxed">
+            O caixa automático do bot (vendas via WhatsApp) é fechado e reaberto todos os
+            dias às 00:01, com o fundo igual ao saldo final do dia anterior. O caixa manual
+            só é tocado pelo usuário.
+          </p>
+        </div>
+        <Button variant="primary" icon={Save} onClick={handleSalvar} loading={salvando}>
+          Salvar horário
+        </Button>
+      </div>
+    </Painel>
   );
 }
 
@@ -409,9 +582,9 @@ function BlocoHorarioFuncionamento({ user, refreshUser, toast }) {
 const REGEX_COR_HEX = /^#[0-9a-fA-F]{6}$/;
 
 const TEMPLATES_CATALOGO = [
-  { valor: 'FOTOS_GRANDES', titulo: 'Fotos grandes', descricao: 'Uma foto por linha — bom pra poucos produtos com apelo visual.' },
-  { valor: 'LISTA_COMPACTA', titulo: 'Lista compacta', descricao: 'Varios itens por pagina — ideal pra catalogos com muitos produtos.' },
-  { valor: 'MINIMALISTA', titulo: 'Minimalista', descricao: 'So nome e preco, sem foto — rapido de gerar e ler.' },
+  { valor: 'FOTOS_GRANDES', titulo: 'Fotos grandes', descricao: 'Uma foto por linha. Bom pra poucos produtos com apelo visual.' },
+  { valor: 'LISTA_COMPACTA', titulo: 'Lista compacta', descricao: 'Vários itens por página. Ideal pra catálogos com muitos produtos.' },
+  { valor: 'MINIMALISTA', titulo: 'Minimalista', descricao: 'Só nome e preço, sem foto. Rápido de gerar e ler.' },
 ];
 
 const CONFIG_CATALOGO_PADRAO = {
@@ -432,7 +605,7 @@ function BlocoCatalogo({ toast }) {
   useEffect(() => {
     catalogoService.obterConfig()
       .then((r) => setConfig(r ? { ...CONFIG_CATALOGO_PADRAO, ...r } : CONFIG_CATALOGO_PADRAO))
-      .catch(() => toast.error('Nao foi possivel carregar a configuracao do catalogo.'))
+      .catch(() => toast.error('Não foi possível carregar a configuração do catálogo.'))
       .finally(() => setCarregando(false));
   }, [toast]);
 
@@ -449,7 +622,7 @@ function BlocoCatalogo({ toast }) {
         ocultarSemEstoque: config.ocultarSemEstoque,
       });
       setConfig({ ...CONFIG_CATALOGO_PADRAO, ...atualizado });
-      toast.success('Layout do catalogo atualizado.');
+      toast.success('Layout do catálogo atualizado.');
     } catch (e) {
       toast.error(e.response?.data?.erro || 'Erro ao salvar.');
     } finally {
@@ -458,182 +631,130 @@ function BlocoCatalogo({ toast }) {
   };
 
   if (carregando) {
-    return (
-      <Card padding="lg">
-        <div className="text-sm text-[var(--text-muted)] py-6 text-center">Carregando…</div>
-      </Card>
-    );
+    return <CarregandoPainel titulo="Catálogo pra enviar no WhatsApp" />;
   }
 
   const corValida = REGEX_COR_HEX.test(config.corDestaque) ? config.corDestaque : '#2563EB';
+  const minimalista = config.template === 'MINIMALISTA';
 
   return (
-    <Card padding="lg">
-      <CardHeader>
-        <div>
-          <CardTitle>Layout do catalogo em PDF</CardTitle>
-          <CardDescription>
-            Como o catalogo enviado pelo bot no WhatsApp e organizado e exibido pro cliente final.
-          </CardDescription>
-        </div>
-      </CardHeader>
-
-      <div className="space-y-5">
-        <div>
-          <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">
-            Modelo
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {TEMPLATES_CATALOGO.map((t) => {
-              const ativo = config.template === t.valor;
-              return (
-                <button
-                  key={t.valor}
-                  type="button"
-                  onClick={() => setConfig((c) => ({ ...c, template: t.valor }))}
-                  className={`p-4 rounded-xl border-2 transition-colors text-left ${
-                    ativo ? 'border-[var(--accent)] bg-[var(--accent-soft)]/40' : 'border-[var(--border-main)] hover:border-[var(--text-muted)]'
-                  }`}
-                >
-                  <div className="text-sm font-semibold text-[var(--text-main)]">{t.titulo}</div>
-                  <div className="text-xs text-[var(--text-muted)] mt-1 leading-relaxed">{t.descricao}</div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <>
+      <Painel
+        titulo="Catálogo pra enviar no WhatsApp"
+        subtitulo="Como o catálogo em PDF que o bot envia é organizado e exibido pro cliente final."
+        semPadding
+      >
+        <div className="p-4 flex flex-col gap-4 border-b border-[var(--border-subtle)]">
           <div>
-            <label className="block text-xs font-semibold tracking-wide text-[var(--text-secondary)] mb-1.5">
-              Cor de destaque
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="color"
-                value={corValida}
-                onChange={(e) => setConfig((c) => ({ ...c, corDestaque: e.target.value }))}
-                className="w-10 h-10 rounded-lg border border-[var(--border-main)] cursor-pointer bg-transparent flex-shrink-0"
-                aria-label="Cor de destaque do catalogo"
-              />
-              <Input
-                value={config.corDestaque}
-                onChange={(e) => setConfig((c) => ({ ...c, corDestaque: e.target.value }))}
-                placeholder="#2563EB"
-              />
+            <RotuloGrupo>Modelo</RotuloGrupo>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {TEMPLATES_CATALOGO.map((t) => (
+                <Escolha
+                  key={t.valor}
+                  ativo={config.template === t.valor}
+                  onClick={() => setConfig((c) => ({ ...c, template: t.valor }))}
+                  titulo={t.titulo}
+                  descricao={t.descricao}
+                />
+              ))}
             </div>
           </div>
 
-          <Select
-            label="Agrupar produtos por"
-            value={config.agruparPor}
-            onChange={(e) => setConfig((c) => ({ ...c, agruparPor: e.target.value }))}
-            options={[
-              { value: 'CATEGORIA', label: 'Categoria' },
-              { value: 'NENHUM', label: 'Sem agrupamento' },
-            ]}
-          />
-        </div>
-
-        <div>
-          <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">
-            O que aparece no catalogo
-          </div>
-          <div className="space-y-2">
-            <TogglePreferenciaCatalogo
-              label="Preco"
-              descricao="Mostra o valor de cada produto."
-              checked={config.mostrarPreco}
-              onChange={(v) => setConfig((c) => ({ ...c, mostrarPreco: v }))}
-            />
-            <TogglePreferenciaCatalogo
-              label="Foto"
-              descricao={
-                config.template === 'MINIMALISTA'
-                  ? 'O modelo Minimalista nunca mostra foto, mesmo com esta opcao ligada.'
-                  : 'Mostra a imagem cadastrada do produto.'
-              }
-              checked={config.mostrarFoto}
-              disabled={config.template === 'MINIMALISTA'}
-              onChange={(v) => setConfig((c) => ({ ...c, mostrarFoto: v }))}
-            />
-            <TogglePreferenciaCatalogo
-              label="Descricao"
-              descricao={
-                config.template === 'MINIMALISTA'
-                  ? 'O modelo Minimalista nunca mostra descricao, mesmo com esta opcao ligada.'
-                  : 'Mostra o texto de descricao do produto, quando existir.'
-              }
-              checked={config.mostrarDescricao}
-              disabled={config.template === 'MINIMALISTA'}
-              onChange={(v) => setConfig((c) => ({ ...c, mostrarDescricao: v }))}
-            />
-          </div>
-        </div>
-
-        <div>
-          <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">
-            Regras do catalogo
-          </div>
-          <div className="space-y-2">
-            <TogglePreferenciaCatalogo
-              label="Ocultar produtos sem estoque"
-              descricao="Produtos fisicos com estoque zerado nao aparecem no catalogo enviado pelo bot. Servicos nao sao afetados (nao controlam estoque)."
-              checked={config.ocultarSemEstoque}
-              onChange={(v) => setConfig((c) => ({ ...c, ocultarSemEstoque: v }))}
-            />
-          </div>
-        </div>
-
-        <div className="border-t border-[var(--border-main)] pt-4">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">
-            Pre-visualizacao
-          </div>
-          <div className="rounded-xl border border-[var(--border-main)] overflow-hidden bg-white">
-            <div className="p-3" style={{ borderBottom: `3px solid ${corValida}` }}>
-              <div className="text-xs font-bold" style={{ color: corValida }}>Sua Loja</div>
-            </div>
-            <div className="p-3 space-y-2">
-              {config.template !== 'MINIMALISTA' && config.agruparPor === 'CATEGORIA' && (
-                <div className="text-[10px] font-bold uppercase text-gray-500">Categoria exemplo</div>
-              )}
-              <div className={`flex gap-2 ${config.template === 'LISTA_COMPACTA' ? 'items-center' : 'items-start'}`}>
-                {config.mostrarFoto && config.template !== 'MINIMALISTA' && (
-                  <div className={`bg-gray-200 rounded flex-shrink-0 ${config.template === 'FOTOS_GRANDES' ? 'w-16 h-16' : 'w-8 h-8'}`} />
-                )}
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold text-gray-800">Produto exemplo</div>
-                  {config.mostrarDescricao && config.template !== 'MINIMALISTA' && (
-                    <div className="text-[10px] text-gray-500">Descricao curta do produto</div>
-                  )}
-                  {config.mostrarPreco && (
-                    <div className="text-[10px] font-bold text-gray-700 mt-0.5">R$ 49,90</div>
-                  )}
-                </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="cor-destaque-catalogo" className="block text-xs font-semibold tracking-wide text-[var(--text-secondary)] mb-1.5">
+                Cor de destaque
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={corValida}
+                  onChange={(e) => setConfig((c) => ({ ...c, corDestaque: e.target.value }))}
+                  className="w-10 h-10 rounded-lg border border-[var(--border-main)] cursor-pointer bg-transparent flex-shrink-0"
+                  aria-label="Escolher cor de destaque do catálogo"
+                />
+                <Input
+                  id="cor-destaque-catalogo"
+                  value={config.corDestaque}
+                  onChange={(e) => setConfig((c) => ({ ...c, corDestaque: e.target.value }))}
+                  placeholder="#2563EB"
+                />
               </div>
             </div>
+
+            <Select
+              label="Agrupar produtos por"
+              value={config.agruparPor}
+              onChange={(e) => setConfig((c) => ({ ...c, agruparPor: e.target.value }))}
+              options={[
+                { value: 'CATEGORIA', label: 'Categoria' },
+                { value: 'NENHUM', label: 'Sem agrupamento' },
+              ]}
+            />
           </div>
         </div>
 
-        <div className="flex justify-end">
+        <div className="px-4 pt-3 text-xs font-medium text-[var(--text-muted)]">O que aparece no catálogo</div>
+        <LinhaOpcao titulo="Preço" descricao="Mostra o valor de cada produto.">
+          <Switch checked={config.mostrarPreco} onChange={(v) => setConfig((c) => ({ ...c, mostrarPreco: v }))} ariaLabel="Mostrar preço" />
+        </LinhaOpcao>
+        <LinhaOpcao
+          titulo="Foto"
+          descricao={minimalista ? 'O modelo Minimalista nunca mostra foto, mesmo com esta opção ligada.' : 'Mostra a imagem cadastrada do produto.'}
+          desativada={minimalista}
+        >
+          <Switch checked={config.mostrarFoto} disabled={minimalista} onChange={(v) => setConfig((c) => ({ ...c, mostrarFoto: v }))} ariaLabel="Mostrar foto" />
+        </LinhaOpcao>
+        <LinhaOpcao
+          titulo="Descrição"
+          descricao={minimalista ? 'O modelo Minimalista nunca mostra descrição, mesmo com esta opção ligada.' : 'Mostra o texto de descrição do produto, quando existir.'}
+          desativada={minimalista}
+        >
+          <Switch checked={config.mostrarDescricao} disabled={minimalista} onChange={(v) => setConfig((c) => ({ ...c, mostrarDescricao: v }))} ariaLabel="Mostrar descrição" />
+        </LinhaOpcao>
+
+        <div className="px-4 pt-3 text-xs font-medium text-[var(--text-muted)] border-t border-[var(--border-subtle)]">Regras do catálogo</div>
+        <LinhaOpcao
+          titulo="Esconder itens sem estoque"
+          descricao="Produtos físicos com estoque zerado não aparecem no catálogo enviado pelo bot. Serviços não são afetados (não controlam estoque)."
+        >
+          <Switch checked={config.ocultarSemEstoque} onChange={(v) => setConfig((c) => ({ ...c, ocultarSemEstoque: v }))} ariaLabel="Esconder itens sem estoque" />
+        </LinhaOpcao>
+
+        <div className="p-4 flex justify-end border-t border-[var(--border-subtle)]">
           <Button variant="primary" icon={Save} onClick={handleSalvar} loading={salvando}>
             Salvar layout
           </Button>
         </div>
-      </div>
-    </Card>
-  );
-}
+      </Painel>
 
-function TogglePreferenciaCatalogo({ label, descricao, checked, onChange, disabled = false }) {
-  return (
-    <div className={`flex items-center justify-between px-3 py-2.5 rounded-lg border border-[var(--border-main)] bg-[var(--bg-subtle)]/40 ${disabled ? 'opacity-70' : ''}`}>
-      <div>
-        <div className="text-sm font-semibold text-[var(--text-main)]">{label}</div>
-        <div className="text-xs text-[var(--text-muted)]">{descricao}</div>
-      </div>
-      <Switch checked={checked} onChange={onChange} disabled={disabled} ariaLabel={label} />
-    </div>
+      <Painel titulo="Pré-visualização" subtitulo="Como fica a primeira página do PDF.">
+        <div className="rounded-[10px] border border-[var(--border-main)] overflow-hidden bg-white max-w-[420px]">
+          <div className="p-3" style={{ borderBottom: `3px solid ${corValida}` }}>
+            <div className="text-xs font-bold" style={{ color: corValida }}>Sua Loja</div>
+          </div>
+          <div className="p-3 space-y-2">
+            {!minimalista && config.agruparPor === 'CATEGORIA' && (
+              <div className="text-[10px] font-bold uppercase text-gray-500">Categoria exemplo</div>
+            )}
+            <div className={`flex gap-2 ${config.template === 'LISTA_COMPACTA' ? 'items-center' : 'items-start'}`}>
+              {config.mostrarFoto && !minimalista && (
+                <div className={`bg-gray-200 rounded flex-shrink-0 ${config.template === 'FOTOS_GRANDES' ? 'w-16 h-16' : 'w-8 h-8'}`} />
+              )}
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-gray-800">Produto exemplo</div>
+                {config.mostrarDescricao && !minimalista && (
+                  <div className="text-[10px] text-gray-500">Descrição curta do produto</div>
+                )}
+                {config.mostrarPreco && (
+                  <div className="text-[10px] font-bold text-gray-700 mt-0.5">R$ 49,90</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </Painel>
+    </>
   );
 }
 
@@ -669,27 +790,16 @@ function BlocoDevolucao({ toast }) {
   };
 
   if (carregando) {
-    return (
-      <Card padding="lg">
-        <div className="text-sm text-[var(--text-muted)] py-6 text-center">Carregando…</div>
-      </Card>
-    );
+    return <CarregandoPainel titulo="Devoluções e aluguel" />;
   }
 
   return (
-    <Card padding="lg">
-      <CardHeader>
-        <div>
-          <CardTitle>Aviso de devolução (aluguel)</CardTitle>
-          <CardDescription>
-            Produtos marcados como "alugado" no Estoque avisam o cliente e geram alerta aqui
-            quando a devolução se aproxima.
-          </CardDescription>
-        </div>
-      </CardHeader>
-
-      <div className="flex items-end gap-3">
-        <div className="max-w-[180px]">
+    <Painel
+      titulo="Devoluções e aluguel"
+      subtitulo='Produtos marcados como "alugado" no Estoque avisam o cliente e geram alerta aqui quando a devolução se aproxima.'
+    >
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="w-full max-w-[220px]">
           <Input
             label="Avisar quantos dias antes"
             type="number"
@@ -704,7 +814,7 @@ function BlocoDevolucao({ toast }) {
           Salvar
         </Button>
       </div>
-    </Card>
+    </Painel>
   );
 }
 
@@ -737,95 +847,54 @@ function BlocoAgendaSinal({ toast }) {
   };
 
   return (
-    <Card padding="lg">
-      <CardHeader>
-        <div>
-          <CardTitle>Agenda: sinal e encaixe</CardTitle>
-          <CardDescription>Sinal por Pix reduz falta. A fila de encaixe preenche horário que vagou.</CardDescription>
-        </div>
-      </CardHeader>
+    <Painel
+      titulo="Agenda e sinal"
+      subtitulo="Sinal por Pix reduz falta. A fila de encaixe preenche horário que vagou."
+      semPadding
+    >
       {erro ? (
-        <p role="alert" className="text-sm text-[var(--danger-text)]">{erro}</p>
+        <p role="alert" className="m-0 p-4 text-[13px] text-[var(--danger-text)]">{erro}</p>
       ) : !config ? (
-        <p className="text-sm text-[var(--text-muted)]">Carregando…</p>
+        <p className="m-0 p-4 text-[13px] text-[var(--text-muted)]">Carregando…</p>
       ) : (
-        <div className="space-y-5">
-          {!config.pagamentoConfigurado && (
-            <div className="flex items-start gap-3 p-3 rounded-xl bg-[var(--warning-soft)] text-[var(--warning-text)]">
-              <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
-              <div className="text-sm">
-                O recebimento por Pix ainda não está configurado, então nenhum sinal é cobrado (os horários são marcados normalmente).{' '}
-                <button type="button" className="font-semibold underline min-h-[44px]" onClick={() => navigate('/app/pagamentos')}>Configurar em Pagamentos</button>
+        <>
+          <div className="p-4 flex flex-col gap-4 border-b border-[var(--border-subtle)]">
+            {!config.pagamentoConfigurado && (
+              <div className="flex items-start gap-3 p-3 rounded-[10px] bg-[var(--warning-soft)] text-[var(--warning-text)]">
+                <AlertCircle size={16} className="flex-shrink-0 mt-0.5" aria-hidden="true" />
+                <div className="text-[13px]">
+                  O recebimento por Pix ainda não está configurado, então nenhum sinal é cobrado (os horários são marcados normalmente).{' '}
+                  <button type="button" className="font-semibold underline min-h-[44px]" onClick={() => navigate('/app/pagamentos')}>Configurar em Pagamentos</button>
+                </div>
               </div>
-            </div>
-          )}
-          <form
-            className="flex flex-wrap items-end gap-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const n = Number(pct);
-              if (!Number.isInteger(n) || n < 0 || n > 100) { toast.error('Use um número inteiro de 0 a 100.'); return; }
-              salvar({ sinalPadraoPct: n });
-            }}
-          >
-            <div className="w-48">
-              <Input label="Sinal padrão (% do preço)" type="number" min={0} max={100} step={1} value={pct} onChange={(e) => setPct(e.target.value)} hint="0 = não cobra" />
-            </div>
-            <Button type="submit" variant="primary" className="min-h-[44px]" loading={salvando}>Salvar sinal</Button>
-          </form>
-          <p className="text-xs text-[var(--text-muted)]">
-            Vale pra todos os serviços, menos os que têm sinal próprio (Catálogo › editar serviço). A cliente tem {config.prazoSinalHoras} h pra pagar (nunca depois do horário); sem pagamento, o horário volta pra agenda. O sinal desconta do total no atendimento.
-          </p>
-          <div className="flex items-start gap-3 pt-2 border-t border-[var(--border-main)]">
-            <div className="flex-1 pt-3">
-              <div className="text-sm font-semibold text-[var(--text-main)]">Oferecer horário vago pra fila sozinho</div>
-              <p className="text-xs text-[var(--text-muted)] mt-1">Quando alguém cancela ou remarca com mais de 2 h de antecedência, a oferta vai pras 3 primeiras da fila sem perguntar.</p>
-            </div>
-            <div className="pt-3">
-              <Switch checked={!!config.encaixeAutomatico} disabled={salvando} onChange={(v) => salvar({ encaixeAutomatico: v })} ariaLabel="Oferecer horário vago pra fila sozinho" />
-            </div>
+            )}
+            <form
+              className="flex flex-wrap items-end gap-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const n = Number(pct);
+                if (!Number.isInteger(n) || n < 0 || n > 100) { toast.error('Use um número inteiro de 0 a 100.'); return; }
+                salvar({ sinalPadraoPct: n });
+              }}
+            >
+              <div className="w-full max-w-[220px]">
+                <Input label="Sinal padrão (% do preço)" type="number" min={0} max={100} step={1} value={pct} onChange={(e) => setPct(e.target.value)} hint="0 = não cobra" />
+              </div>
+              <Button type="submit" variant="primary" className="min-h-[44px]" loading={salvando}>Salvar sinal</Button>
+            </form>
+            <p className="m-0 text-xs text-[var(--text-muted)] leading-relaxed">
+              Vale pra todos os serviços, menos os que têm sinal próprio (Catálogo › editar serviço). A cliente tem {config.prazoSinalHoras} h pra pagar (nunca depois do horário); sem pagamento, o horário volta pra agenda. O sinal desconta do total no atendimento.
+            </p>
           </div>
-        </div>
+          <LinhaOpcao
+            titulo="Oferecer horário vago pra fila sozinho"
+            descricao="Quando alguém cancela ou remarca com mais de 2 h de antecedência, a oferta vai pras 3 primeiras da fila sem perguntar."
+          >
+            <Switch checked={!!config.encaixeAutomatico} disabled={salvando} onChange={(v) => salvar({ encaixeAutomatico: v })} ariaLabel="Oferecer horário vago pra fila sozinho" />
+          </LinhaOpcao>
+        </>
       )}
-    </Card>
-  );
-}
-
-function ThemeOption({ value, current, onChange, icon: Icon, label, desc }) {
-  const ativo = current === value;
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(value)}
-      className={`p-4 rounded-xl border-2 transition-colors text-left ${
-        ativo ? 'border-[var(--accent)] bg-[var(--accent-soft)]/40' : 'border-[var(--border-main)] hover:border-[var(--text-muted)]'
-      }`}
-    >
-      <Icon size={18} className={ativo ? 'text-[var(--accent)]' : 'text-[var(--text-secondary)]'} strokeWidth={1.75} />
-      <div className="text-sm font-semibold text-[var(--text-main)] mt-2">{label}</div>
-      <div className="text-xs text-[var(--text-muted)] mt-0.5">{desc}</div>
-    </button>
-  );
-}
-
-function ConfigLink({ icon: Icon, titulo, descricao, onClick }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group w-full flex flex-col items-start gap-3 p-5 rounded-xl bg-[var(--bg-card)] border border-[var(--border-main)] hover:border-[var(--accent)] hover:bg-[var(--bg-subtle)]/50 transition-colors text-left h-full"
-    >
-      <div className="w-10 h-10 rounded-xl bg-[var(--bg-subtle)] flex items-center justify-center flex-shrink-0 group-hover:bg-[var(--accent-soft)] group-hover:text-[var(--accent)] transition-colors">
-        <Icon size={18} className="text-[var(--text-secondary)] group-hover:text-[var(--accent)] transition-colors" strokeWidth={1.75} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold text-[var(--text-main)] tracking-tight flex items-center gap-1">
-          {titulo}
-          <ChevronRight size={14} className="text-[var(--text-muted)] group-hover:text-[var(--accent)] group-hover:translate-x-0.5 transition-all" />
-        </div>
-        <div className="text-xs text-[var(--text-muted)] mt-1 leading-relaxed">{descricao}</div>
-      </div>
-    </button>
+    </Painel>
   );
 }
 
@@ -895,41 +964,30 @@ function BlocoNotificacoes({ toast }) {
   };
 
   return (
-    <Card padding="lg">
-      <CardHeader>
-        <div>
-          <CardTitle>O que você quer receber</CardTitle>
-          <CardDescription>Escolha quais notificações aparecem no sininho do topo. Você pode mudar quando quiser.</CardDescription>
-        </div>
-      </CardHeader>
-
+    <Painel
+      titulo="Notificações pra você"
+      subtitulo="Escolha quais avisos aparecem no sino do topo. Você pode mudar quando quiser."
+      semPadding
+    >
       {carregando ? (
-        <div className="text-sm text-[var(--text-muted)] py-6 text-center">Carregando…</div>
+        <div className="text-[13px] text-[var(--text-muted)] py-6 text-center">Carregando…</div>
+      ) : preferencias.length === 0 ? (
+        <div className="text-[13px] text-[var(--text-muted)] py-6 text-center">Nenhum tipo de aviso disponível.</div>
       ) : (
-        <div className="divide-y divide-[var(--border-main)]">
-          {preferencias.map((p) => {
-            const cfg = ROTULOS_NOTIFICACAO[p.tipo] || { titulo: p.tipo, descricao: '' };
-            return (
-              <div key={p.tipo} className="flex items-start justify-between gap-4 py-4">
-                <div className="flex items-start gap-3 flex-1 min-w-0">
-                  <div className="w-9 h-9 rounded-xl bg-[var(--bg-subtle)] flex items-center justify-center flex-shrink-0">
-                    <Bell size={16} strokeWidth={1.75} className="text-[var(--text-secondary)]" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-[var(--text-main)]">{cfg.titulo}</div>
-                    <div className="text-xs text-[var(--text-muted)] mt-0.5 leading-relaxed">{cfg.descricao}</div>
-                  </div>
-                </div>
-                <Switch
-                  checked={p.ativa}
-                  disabled={!!salvando[p.tipo]}
-                  onChange={(v) => handleToggle(p.tipo, v)}
-                />
-              </div>
-            );
-          })}
-        </div>
+        preferencias.map((p) => {
+          const cfg = ROTULOS_NOTIFICACAO[p.tipo] || { titulo: p.tipo, descricao: '' };
+          return (
+            <LinhaOpcao key={p.tipo} titulo={cfg.titulo} descricao={cfg.descricao}>
+              <Switch
+                checked={p.ativa}
+                disabled={!!salvando[p.tipo]}
+                onChange={(v) => handleToggle(p.tipo, v)}
+                ariaLabel={cfg.titulo}
+              />
+            </LinhaOpcao>
+          );
+        })
       )}
-    </Card>
+    </Painel>
   );
 }

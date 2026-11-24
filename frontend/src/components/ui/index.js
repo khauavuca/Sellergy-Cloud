@@ -29,3 +29,4 @@ export { PRESETS_PERIODO, calcularIntervalo as calcularIntervaloPeriodo } from '
 export { default as FiltroRapido } from './FiltroRapido';
 export { default as BarraFiltros } from './BarraFiltros';
 export { default as BotaoExportar } from './BotaoExportar';
+export { Pagina, FaixaNumeros, Numero, ColunasPagina, Painel, LinhaInfo, BarraFerramentas, AbasPilula } from './Pagina';

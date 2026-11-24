@@ -1,15 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Receipt, Plus, Trash2, FileText, Package, FileUp, AlertTriangle } from 'lucide-react';
 import {
-  Card, Button, EmptyState, Input, Select, Textarea, Drawer, useToast, LabelAjuda,
+  Button, EmptyState, Input, Select, Textarea, Drawer, useToast, LabelAjuda,
+  Pagina, FaixaNumeros, Numero, ColunasPagina, Painel, BarraFerramentas,
 } from '../components/ui';
 import notaCompraService from '../services/notaCompraService';
 import fornecedorService from '../services/fornecedorService';
 import catalogoService from '../services/catalogoService';
+import { useAcaoTopo } from '../hooks/useAcaoTopo';
+import { AbasEstoque } from '../components/estoque/NavEstoque';
+import LateralEstoque from '../components/estoque/LateralEstoque';
 
 const fmtBRL = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtData = (d) => (d ? new Date(d).toLocaleDateString('pt-BR') : '—');
+
+const TH = 'text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap';
+const TD = 'px-4 py-2.5 border-b border-[var(--border-subtle)]';
 
 const ITEM_VAZIO = { variacaoId: '', quantidade: '', custoUnitario: '' };
 
@@ -46,9 +53,14 @@ function casarVariacao(item, indice) {
 
 export default function EntradaNotaPage() {
   const toast = useToast();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [notas, setNotas] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [drawerAberto, setDrawerAberto] = useState(false);
+  // XML que chegou da lateral (solto aqui ou em outra tela do Estoque):
+  // a entrada abre já lendo o arquivo.
+  const [xmlInicial, setXmlInicial] = useState(null);
 
   const carregar = async () => {
     setCarregando(true);
@@ -65,90 +77,153 @@ export default function EntradaNotaPage() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount
     carregar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- carrega uma vez ao montar
   }, []);
 
+  const abrirComXml = (file) => {
+    setXmlInicial(file || null);
+    setDrawerAberto(true);
+  };
+
+  // XML solto na lateral de outra tela do Estoque chega pelo state da rota.
+  const xmlDaRota = location.state?.xml;
+  useEffect(() => {
+    if (!(xmlDaRota instanceof File)) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- abre a entrada com o XML recebido
+    abrirComXml(xmlDaRota);
+    navigate(location.pathname, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- só reage ao arquivo recebido
+  }, [xmlDaRota]);
+
+  const fecharDrawer = () => {
+    setDrawerAberto(false);
+    setXmlInicial(null);
+  };
+
+  const resumo = useMemo(() => {
+    const agora = new Date();
+    const inicioMes = new Date(agora.getFullYear(), agora.getMonth(), 1);
+    let total = 0;
+    let itens = 0;
+    let qtdMes = 0;
+    let totalMes = 0;
+    notas.forEach((n) => {
+      const v = Number(n.valorTotal) || 0;
+      total += v;
+      itens += n._count?.movimentacoes ?? 0;
+      const d = new Date(n.emitidaEm || n.criadoEm);
+      if (d >= inicioMes) { qtdMes += 1; totalMes += v; }
+    });
+    return { total, itens, qtdMes, totalMes };
+  }, [notas]);
+
+  useAcaoTopo(
+    <Button size="sm" icon={Plus} onClick={() => abrirComXml(null)}>Nova entrada</Button>,
+    []
+  );
+
   return (
-    <div className="space-y-5">
-      <div>
-        <Link
-          to="/app/estoque/visao-geral"
-          className="text-xs text-[var(--text-muted)] inline-flex items-center gap-1 hover:text-[var(--text-main)]"
-        >
-          Estoque
-        </Link>
-        <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-main)] mt-2">Entrada de nota</h1>
-        <p className="text-sm text-[var(--text-muted)] mt-1 max-w-2xl">
-          Lance as compras que entraram no estoque. Cada entrada soma ao estoque, atualiza o custo médio
-          do produto (o preço recalcula sozinho com o seu lucro) e lança a despesa de compra no financeiro.
-        </p>
-      </div>
+    <Pagina>
+      <FaixaNumeros min={190}>
+        <Numero
+          rotulo="Notas lançadas"
+          valor={notas.length}
+          carregando={carregando}
+        />
+        <Numero
+          rotulo="Total em compras"
+          valor={fmtBRL(resumo.total)}
+          detalhe="soma de todas as notas"
+          carregando={carregando}
+        />
+        <Numero
+          rotulo="Compras no mês"
+          valor={fmtBRL(resumo.totalMes)}
+          detalhe={`${resumo.qtdMes} ${resumo.qtdMes === 1 ? 'nota' : 'notas'}`}
+          carregando={carregando}
+        />
+        <Numero
+          rotulo="Itens lançados"
+          valor={resumo.itens}
+          detalhe="linhas de produto nas notas"
+          carregando={carregando}
+        />
+      </FaixaNumeros>
 
-      <Card padding="none">
-        <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-[var(--border-main)]">
-          <div className="text-sm font-semibold text-[var(--text-main)]">
-            {notas.length} {notas.length === 1 ? 'nota lançada' : 'notas lançadas'}
-          </div>
-          <Button variant="primary" size="sm" icon={Plus} onClick={() => setDrawerAberto(true)}>
-            Nova entrada
-          </Button>
-        </div>
-
-        {carregando ? (
-          <div className="text-sm text-[var(--text-muted)] py-12 text-center">Carregando...</div>
-        ) : notas.length === 0 ? (
-          <EmptyState
-            icon={Receipt}
-            title="Nenhuma nota lançada"
-            description="Registre a primeira entrada de mercadoria para atualizar estoque e custos."
-            action={
-              <Button variant="primary" size="sm" icon={Plus} onClick={() => setDrawerAberto(true)}>
-                Nova entrada
-              </Button>
-            }
+      <ColunasPagina
+        lateral={
+          <LateralEstoque
+            notas={carregando ? null : notas}
+            onXml={abrirComXml}
           />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[var(--border-main)] text-left">
-                  <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">Data</th>
-                  <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">Fornecedor</th>
-                  <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">Nota</th>
-                  <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">Itens</th>
-                  <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] text-right">Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border-main)]">
-                {notas.map((n) => (
-                  <tr key={n.id} className="hover:bg-[var(--bg-subtle)] transition-colors">
-                    <td className="px-5 py-3 tabular-nums text-[var(--text-secondary)]">
-                      {fmtData(n.emitidaEm || n.criadoEm)}
-                    </td>
-                    <td className="px-5 py-3 text-[var(--text-main)]">{n.fornecedor?.nome || 'Sem fornecedor'}</td>
-                    <td className="px-5 py-3 text-[var(--text-secondary)]">{n.numero || '—'}</td>
-                    <td className="px-5 py-3 text-[var(--text-secondary)] tabular-nums">{n._count?.movimentacoes ?? 0}</td>
-                    <td className="px-5 py-3 text-right font-semibold text-[var(--text-main)] tabular-nums">{fmtBRL(n.valorTotal)}</td>
+        }
+      >
+        <Painel semPadding>
+          <BarraFerramentas>
+            <AbasEstoque ativa="notas" />
+            <span className="ml-auto text-xs font-medium text-[var(--text-muted)]">
+              {notas.length} {notas.length === 1 ? 'nota lançada' : 'notas lançadas'}
+            </span>
+          </BarraFerramentas>
+
+          {carregando ? (
+            <div className="text-[13px] text-[var(--text-muted)] py-12 text-center">Carregando...</div>
+          ) : notas.length === 0 ? (
+            <EmptyState
+              icon={Receipt}
+              title="Nenhuma nota lançada"
+              description="Lance as compras que entraram: o estoque soma, o custo médio do produto é atualizado (o preço recalcula com o seu lucro) e a despesa de compra vai para o financeiro."
+              action={
+                <Button variant="primary" size="sm" icon={Plus} onClick={() => abrirComXml(null)}>
+                  Nova entrada
+                </Button>
+              }
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr>
+                    <th className={TH}>Data</th>
+                    <th className={TH}>Fornecedor</th>
+                    <th className={TH}>Nota</th>
+                    <th className={`${TH} text-right`}>Itens</th>
+                    <th className={`${TH} text-right`}>Total</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+                </thead>
+                <tbody>
+                  {notas.map((n) => (
+                    <tr key={n.id} className="hover:bg-[var(--bg-subtle)]">
+                      <td className={`${TD} tabular-nums text-[var(--text-secondary)] whitespace-nowrap`}>
+                        {fmtData(n.emitidaEm || n.criadoEm)}
+                      </td>
+                      <td className={`${TD} font-semibold text-[var(--text-main)]`}>{n.fornecedor?.nome || 'Sem fornecedor'}</td>
+                      <td className={`${TD} text-[var(--text-secondary)]`}>{n.numero || '—'}</td>
+                      <td className={`${TD} text-right text-[var(--text-secondary)] tabular-nums`}>{n._count?.movimentacoes ?? 0}</td>
+                      <td className={`${TD} text-right font-semibold text-[var(--text-main)] tabular-nums whitespace-nowrap`}>{fmtBRL(n.valorTotal)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Painel>
+      </ColunasPagina>
 
       <NovaNotaDrawer
         aberto={drawerAberto}
-        onClose={() => setDrawerAberto(false)}
-        aoSalvar={() => { carregar(); setDrawerAberto(false); }}
+        xmlInicial={xmlInicial}
+        onClose={fecharDrawer}
+        aoSalvar={() => { carregar(); fecharDrawer(); }}
       />
-    </div>
+    </Pagina>
   );
 }
 
 // ---------------------------------------------------------------------------
 // Drawer: nova entrada de nota
 // ---------------------------------------------------------------------------
-function NovaNotaDrawer({ aberto, onClose, aoSalvar }) {
+function NovaNotaDrawer({ aberto, xmlInicial, onClose, aoSalvar }) {
   const toast = useToast();
   const [fornecedores, setFornecedores] = useState([]);
   const [variacoes, setVariacoes] = useState([]); // físico, achatado: { value, label, sku, nomeProduto }
@@ -157,6 +232,49 @@ function NovaNotaDrawer({ aberto, onClose, aoSalvar }) {
   const [salvando, setSalvando] = useState(false);
   const [importandoXml, setImportandoXml] = useState(false);
   const [avisoFornecedor, setAvisoFornecedor] = useState(null);
+
+  const setItem = (i, k, val) => setItens((arr) => arr.map((it, idx) => (idx === i ? { ...it, [k]: val } : it)));
+  const addItem = () => setItens((arr) => [...arr, { ...ITEM_VAZIO }]);
+  const removeItem = (i) => setItens((arr) => (arr.length > 1 ? arr.filter((_, idx) => idx !== i) : arr));
+
+  // Lê o XML da NF-e e preenche o formulário (sem gravar). O usuário ainda liga
+  // cada item da nota a um produto seu e confirma.
+  const importarXml = async (file, indice = variacoes) => {
+    if (!file) return;
+    setImportandoXml(true);
+    try {
+      const r = await notaCompraService.importarXml(file);
+      setForm((f) => ({
+        ...f,
+        numero: r.numero || f.numero,
+        emitidaEm: r.emitidaEm ? String(r.emitidaEm).slice(0, 10) : f.emitidaEm,
+        fornecedorId: r.fornecedor?.id || '',
+      }));
+      const itensXml = (r.itens || []).map((it) => ({
+        variacaoId: casarVariacao(it, indice), // auto-casa pelo código/nome
+        quantidade: it.quantidade ? String(it.quantidade) : '',
+        custoUnitario: it.custoUnitario != null ? String(it.custoUnitario) : '',
+        descricaoXml: it.descricao || it.codigo || '',
+      }));
+      setItens(itensXml.length ? itensXml : [{ ...ITEM_VAZIO }]);
+      setAvisoFornecedor(
+        !r.fornecedor && r.fornecedorXml?.cnpj
+          ? `Fornecedor da nota não cadastrado: ${r.fornecedorXml.nome || 'sem nome'} (CNPJ ${r.fornecedorXml.cnpj}).`
+          : null,
+      );
+      const total = itensXml.length;
+      const casados = itensXml.filter((x) => x.variacaoId).length;
+      if (casados === total) {
+        toast.success(`XML lido: ${total} ${total === 1 ? 'item ligado' : 'itens ligados'} automaticamente. Confira e confirme.`);
+      } else {
+        toast.success(`XML lido: ${casados}/${total} itens ligados automaticamente. Escolha o produto dos demais.`);
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.erro || 'Falha ao ler o XML.');
+    } finally {
+      setImportandoXml(false);
+    }
+  };
 
   useEffect(() => {
     if (!aberto) return;
@@ -184,52 +302,12 @@ function NovaNotaDrawer({ aberto, onClose, aoSalvar }) {
       setForm({ fornecedorId: '', numero: '', emitidaEm: '', observacoes: '', pago: true });
       setItens([{ ...ITEM_VAZIO }]);
       setAvisoFornecedor(null);
+      // XML trazido da lateral: lê já com a lista de produtos carregada.
+      if (xmlInicial) importarXml(xmlInicial, flat);
     })();
     return () => { vivo = false; };
-  }, [aberto]);
-
-  const setItem = (i, k, val) => setItens((arr) => arr.map((it, idx) => (idx === i ? { ...it, [k]: val } : it)));
-  const addItem = () => setItens((arr) => [...arr, { ...ITEM_VAZIO }]);
-  const removeItem = (i) => setItens((arr) => (arr.length > 1 ? arr.filter((_, idx) => idx !== i) : arr));
-
-  // Lê o XML da NF-e e preenche o formulário (sem gravar). O usuário ainda liga
-  // cada item da nota a um produto seu e confirma.
-  const importarXml = async (file) => {
-    if (!file) return;
-    setImportandoXml(true);
-    try {
-      const r = await notaCompraService.importarXml(file);
-      setForm((f) => ({
-        ...f,
-        numero: r.numero || f.numero,
-        emitidaEm: r.emitidaEm ? String(r.emitidaEm).slice(0, 10) : f.emitidaEm,
-        fornecedorId: r.fornecedor?.id || '',
-      }));
-      const itensXml = (r.itens || []).map((it) => ({
-        variacaoId: casarVariacao(it, variacoes), // auto-casa pelo código/nome
-        quantidade: it.quantidade ? String(it.quantidade) : '',
-        custoUnitario: it.custoUnitario != null ? String(it.custoUnitario) : '',
-        descricaoXml: it.descricao || it.codigo || '',
-      }));
-      setItens(itensXml.length ? itensXml : [{ ...ITEM_VAZIO }]);
-      setAvisoFornecedor(
-        !r.fornecedor && r.fornecedorXml?.cnpj
-          ? `Fornecedor da nota não cadastrado: ${r.fornecedorXml.nome || 'sem nome'} (CNPJ ${r.fornecedorXml.cnpj}).`
-          : null,
-      );
-      const total = itensXml.length;
-      const casados = itensXml.filter((x) => x.variacaoId).length;
-      if (casados === total) {
-        toast.success(`XML lido: ${total} ${total === 1 ? 'item ligado' : 'itens ligados'} automaticamente. Confira e confirme.`);
-      } else {
-        toast.success(`XML lido: ${casados}/${total} itens ligados automaticamente. Escolha o produto dos demais.`);
-      }
-    } catch (e) {
-      toast.error(e.response?.data?.erro || 'Falha ao ler o XML.');
-    } finally {
-      setImportandoXml(false);
-    }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- recarrega só ao abrir (ou com um XML novo)
+  }, [aberto, xmlInicial]);
 
   const total = useMemo(
     () => itens.reduce((s, it) => s + (parseFloat(it.quantidade) || 0) * (parseFloat(it.custoUnitario) || 0), 0),
@@ -431,6 +509,7 @@ function NovaNotaDrawer({ aberto, onClose, aoSalvar }) {
                         onClick={() => removeItem(i)}
                         disabled={itens.length === 1}
                         title="Remover item"
+                        aria-label="Remover item"
                         className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--danger)] hover:bg-[var(--bg-subtle)] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <Trash2 size={15} />

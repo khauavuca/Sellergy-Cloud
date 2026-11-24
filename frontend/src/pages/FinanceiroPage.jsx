@@ -1,19 +1,25 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  DollarSign, TrendingUp, TrendingDown, AlertCircle, Plus, MoreHorizontal,
-  Edit2, Trash2, CheckCircle2, XCircle, Tag, Filter, ArrowDownToLine, ArrowUpFromLine,
-  Lock, ShoppingCart, MessageCircle, CalendarClock, ExternalLink, Wallet, Pencil,
-  History, ArrowRight
+  DollarSign, AlertCircle, Plus, MoreHorizontal,
+  Edit2, Trash2, CheckCircle2, XCircle, Tag, ArrowDownToLine, ArrowUpFromLine,
+  Lock, ShoppingCart, MessageCircle, CalendarClock, ExternalLink, Wallet, History,
 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import api from '../services/api';
 import contaPagarService from '../services/contaPagarService';
 import { usePermissao } from '../hooks/usePermissao';
 import {
-  Card, CardHeader, CardTitle, Button, IconButton, Input, Textarea, Select, Badge,
+  Button, IconButton, Input, Textarea, Select, Badge,
   EmptyState, SearchBar, Drawer, Dropdown, DropdownItem, DropdownDivider, useToast,
-  Tabs, TabsList, TabsTrigger, TabsContent, Combobox, KpiCard,
+  Combobox, Pagina, ColunasPagina, Painel, LinhaInfo, BarraFerramentas, AbasPilula,
 } from '../components/ui';
+import CaixaTela from '../components/financeiro/CaixaTela';
+import {
+  FaixaFinanceiro, GraficoEntrouSaiu, PainelProximos7, PainelResultadoMes, PainelAtalhos,
+} from '../components/financeiro/VisaoFinanceiro';
+import {
+  buscarTodosLancamentos, intervaloMesAtual, semanasDoMes, despesasPorCategoria, diasAte,
+} from '../components/financeiro/dadosFinanceiro';
 import Modal from '../components/Modal';
 
 const fmtBRL = (v) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -31,6 +37,26 @@ const SLUG_TAB = {
   categorias: 'categorias',
   caixa: 'caixa',
   'contas-pagar': 'contas-pagar',
+};
+
+// Atalhos de filtro dos lançamentos (combinações de tipo + situação).
+const PILULAS_LANC = [
+  { valor: 'todos', rotulo: 'Todos', tipo: '', status: '' },
+  { valor: 'pagar', rotulo: 'A pagar', tipo: 'DESPESA', status: 'PENDENTE' },
+  { valor: 'receber', rotulo: 'A receber', tipo: 'RECEITA', status: 'PENDENTE' },
+  { valor: 'atrasados', rotulo: 'Atrasados', tipo: '', status: 'ATRASADO' },
+  { valor: 'pagos', rotulo: 'Pagos', tipo: '', status: 'PAGO' },
+];
+
+// Classes padrão das tabelas do layout.
+const TH = 'text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap';
+const TD = 'px-4 py-2.5 border-b border-[var(--border-subtle)]';
+
+const USO_CURTO = {
+  SERVICO: 'Serviços',
+  PRODUTO: 'Produtos e estoque',
+  CAIXA: 'Caixa',
+  DESPESA: 'Despesas e contas a pagar',
 };
 
 export default function FinanceiroPage() {
@@ -86,6 +112,27 @@ export default function FinanceiroPage() {
   // Modal "Pagar conta": valor editavel + opcao de tirar do caixa.
   const [modalPagarConta, setModalPagarConta] = useState({ open: false, conta: null });
 
+  // Visão do mês (gráfico, faixa de números e lateral): lançamentos do mês
+  // atual e despesas em aberto (atrasadas + até o fim do mês).
+  const [lancMes, setLancMes] = useState([]);
+  const [despesasPendentes, setDespesasPendentes] = useState([]);
+
+  const buscarVisaoMes = useCallback(() => {
+    const { inicio, fim } = intervaloMesAtual();
+    return Promise.all([
+      buscarTodosLancamentos({ inicio, fim }).catch(() => []),
+      buscarTodosLancamentos({ tipo: 'DESPESA', status: 'ATRASADO' }).catch(() => []),
+      buscarTodosLancamentos({ tipo: 'DESPESA', status: 'PENDENTE', fim }).catch(() => []),
+    ]).then(([mes, atrasadas, pendentes]) => {
+      setLancMes(mes);
+      setDespesasPendentes([...atrasadas, ...pendentes]);
+    });
+  }, []);
+
+  useEffect(() => {
+    buscarVisaoMes();
+  }, [buscarVisaoMes]);
+
   // Busca sem setState sincrono (o estado ja nasce carregando); o "carregar"
   // das acoes liga o carregando antes de buscar de novo.
   const buscarDados = useCallback(() => {
@@ -114,6 +161,7 @@ export default function FinanceiroPage() {
 
   const carregar = () => {
     setCarregando(true);
+    buscarVisaoMes();
     return buscarDados();
   };
 
@@ -438,382 +486,375 @@ export default function FinanceiroPage() {
     }
   };
 
+  // Pagar despesa pelo caixa: abre o seletor se houver contas ativas.
+  const abrirPagarDespesa = () => {
+    const ativas = (contasPagar || []).filter((c) => c.ativa);
+    if (ativas.length === 0) {
+      toast.info('Cadastre uma conta a pagar primeiro.');
+      return;
+    }
+    // Abre modal sem conta pré-selecionada — ModalPagarConta tem combobox.
+    setModalPagarConta({ open: true, conta: null });
+  };
+
+  // Atalhos de filtro (pílulas) em cima dos filtros completos de tipo/status.
+  const pilulaAtual = PILULAS_LANC.find((p) => p.tipo === filtroTipo && p.status === filtroStatus)?.valor ?? null;
+  const escolherPilula = (valor) => {
+    const p = PILULAS_LANC.find((x) => x.valor === valor);
+    if (!p) return;
+    setFiltroTipo(p.tipo);
+    setFiltroStatus(p.status);
+  };
+
+  const semanas = semanasDoMes(lancMes, intervaloMesAtual().diasNoMes);
+  const categoriasDespesa = despesasPorCategoria(lancMes);
+
+  const lateralMes = (atual) => (
+    <>
+      <PainelProximos7 pendentes={despesasPendentes} />
+      <PainelResultadoMes resumo={resumo} categoriasDespesa={categoriasDespesa} />
+      <PainelAtalhos atual={atual} />
+    </>
+  );
+
   return (
-    <div className="space-y-5">
-      {/* KPIs — Caixa atual saiu daqui (vira aba dedicada). Sao 4 cards focados
-          em fluxo do mes; o saldo de caixa real fica em /financeiro/caixa. */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard
-          icon={ArrowDownToLine}
-          color="success"
-          label="Receitas (pago)"
-          valor={fmtBRL(resumo?.totalReceitas || 0)}
-        />
-        <KpiCard
-          icon={ArrowUpFromLine}
-          color="danger"
-          label="Despesas (pago)"
-          valor={fmtBRL(resumo?.totalDespesas || 0)}
-        />
-        <KpiCard
-          icon={DollarSign}
-          color="neutral"
-          label="Saldo do mês"
-          valor={fmtBRL((resumo?.totalReceitas || 0) - (resumo?.totalDespesas || 0))}
-        />
-        <KpiCard
-          icon={AlertCircle}
-          color="warning"
-          label="A receber pendente"
-          valor={fmtBRL(resumo?.aReceber || 0)}
-        />
-      </div>
+    <Pagina>
+      {tab !== 'caixa' && (
+        <FaixaFinanceiro resumo={resumo} despesasPendentes={despesasPendentes} carregando={resumo === null && carregando} />
+      )}
 
-      {/* Header so com botoes condicionais por aba — Tabs internos sao
-          invisiveis porque a navegacao vem do sidebar/URL. */}
-      <div className="flex flex-wrap items-center justify-end gap-3">
-        {tab === 'lancamentos' && (
-          <Button variant="primary" icon={Plus} onClick={() => setModalLanc({ open: true, data: null })}>
-            Novo lançamento
-          </Button>
-        )}
-        {tab === 'categorias' && (
-          <Button variant="primary" icon={Plus} onClick={() => setModalCat({ open: true, data: null })}>
-            Nova categoria
-          </Button>
-        )}
-        {/* Botoes do caixa mudam conforme o estado: aberto/fechado.
-            - Fechado: 'Abrir caixa' (acao primaria)
-            - Aberto: Retirada + Entrada + Pagar despesa + Fechar caixa */}
-        {tab === 'caixa' && !sessaoCaixa && podeCriarFinanceiro && (
-          <Button variant="primary" icon={Wallet} onClick={() => setModalAbrirCaixa(true)}>
-            Abrir caixa
-          </Button>
-        )}
-        {tab === 'caixa' && sessaoCaixa && podeEditarFinanceiro && (
-          <>
-            <Button
-              variant="secondary"
-              icon={ArrowUpFromLine}
-              title="Tirar dinheiro do caixa (ex.: depositar no banco)"
-              onClick={() => setModalMovCaixa({ open: true, tipo: 'SANGRIA' })}
-            >
-              Retirada
-            </Button>
-            <Button
-              variant="secondary"
-              icon={ArrowDownToLine}
-              title="Colocar dinheiro no caixa (ex.: troco extra)"
-              onClick={() => setModalMovCaixa({ open: true, tipo: 'SUPRIMENTO' })}
-            >
-              Entrada
-            </Button>
-            <Button
-              variant="secondary"
-              icon={DollarSign}
-              title="Pagar uma despesa cadastrada (cria lançamento + retirada do caixa)"
-              onClick={() => {
-                // Se houver contas ativas, abre seletor. Se não, alerta + leva pra cadastro.
-                const ativas = (contasPagar || []).filter((c) => c.ativa);
-                if (ativas.length === 0) {
-                  toast.info('Cadastre uma conta a pagar primeiro.');
-                  return;
-                }
-                // Abre modal sem conta pré-selecionada — ModalPagarConta tem combobox.
-                setModalPagarConta({ open: true, conta: null });
-              }}
-            >
-              Pagar despesa
-            </Button>
-            <Button variant="primary" icon={Lock} onClick={() => setModalFecharCaixa(true)}>
-              Fechar caixa
-            </Button>
-          </>
-        )}
-        {tab === 'contas-pagar' && podeCriarFinanceiro && (
-          <Button variant="primary" icon={Plus} onClick={() => setModalContaPagar({ open: true, data: null })}>
-            Nova conta a pagar
-          </Button>
-        )}
-      </div>
+      {tab === 'lancamentos' && (
+        <ColunasPagina lateral={lateralMes('/app/financeiro/lancamentos')}>
+          <GraficoEntrouSaiu semanas={semanas} />
 
-      <Tabs value={tab}>
+          <section aria-label="Lançamentos" className="rounded-[10px] border border-[var(--border-main)] bg-[var(--bg-card)] min-w-0">
+            <BarraFerramentas>
+              <AbasPilula
+                rotulo="Filtro rápido de lançamentos"
+                abas={PILULAS_LANC.map((p) => ({ valor: p.valor, rotulo: p.rotulo }))}
+                valor={pilulaAtual}
+                onChange={escolherPilula}
+              />
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <Link
+                  to="/app/financeiro/categorias"
+                  className="h-8 px-3 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-card)] text-xs font-semibold text-[var(--text-main)] inline-flex items-center gap-1.5 hover:bg-[var(--bg-subtle)]"
+                >
+                  <Tag size={14} aria-hidden="true" /> Categorias
+                </Link>
+                <Button variant="primary" size="sm" icon={Plus} onClick={() => setModalLanc({ open: true, data: null })}>
+                  Novo lançamento
+                </Button>
+              </div>
+            </BarraFerramentas>
 
-        <TabsContent value="lancamentos" className="mt-4">
-          {/* Filtros */}
-          <div className="flex flex-wrap items-center gap-3 mb-4">
-            <div className="flex-1 min-w-[240px] max-w-md">
-              <SearchBar value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por descricao..." />
-            </div>
-            <Select
-              value={filtroTipo}
-              onChange={(e) => setFiltroTipo(e.target.value)}
-              placeholder="Todos tipos"
-              options={[
-                { value: 'RECEITA', label: 'Receita' },
-                { value: 'DESPESA', label: 'Despesa' },
-              ]}
-              fullWidth={false}
-              className="w-40"
-            />
-            <Select
-              value={filtroStatus}
-              onChange={(e) => setFiltroStatus(e.target.value)}
-              placeholder="Todos status"
-              options={Object.entries(STATUS_LABELS).map(([k, v]) => ({ value: k, label: v.label }))}
-              fullWidth={false}
-              className="w-40"
-            />
-          </div>
+            {/* Filtros completos */}
+            <BarraFerramentas>
+              <div className="flex-1 min-w-[220px] max-w-md">
+                <SearchBar value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por descrição..." />
+              </div>
+              <Select
+                value={filtroTipo}
+                onChange={(e) => setFiltroTipo(e.target.value)}
+                placeholder="Todos tipos"
+                aria-label="Filtrar por tipo"
+                options={[
+                  { value: 'RECEITA', label: 'Receita' },
+                  { value: 'DESPESA', label: 'Despesa' },
+                ]}
+                fullWidth={false}
+                className="w-40"
+              />
+              <Select
+                value={filtroStatus}
+                onChange={(e) => setFiltroStatus(e.target.value)}
+                placeholder="Todos status"
+                aria-label="Filtrar por situação"
+                options={Object.entries(STATUS_LABELS).map(([k, v]) => ({ value: k, label: v.label }))}
+                fullWidth={false}
+                className="w-40"
+              />
+              <span className="ml-auto text-xs font-medium text-[var(--text-muted)] tabular-nums">
+                {!carregando && `${lancamentos.length} ${lancamentos.length === 1 ? 'lançamento' : 'lançamentos'}`}
+              </span>
+            </BarraFerramentas>
 
-          {/* Barra de acoes em lote — aparece quando >=1 selecionado.
-              Permite marcar varios como pagos numa tacada so. */}
-          {selecionados.size > 0 && (
-            <div className="flex items-center justify-between gap-3 px-4 py-3 mb-3 rounded-xl bg-[var(--bg-subtle)] text-[var(--text-main)] border border-[var(--border-main)]">
-              <div className="flex items-center gap-3">
-                <CheckCircle2 size={18} strokeWidth={2} className="text-[var(--accent)]" />
-                <span className="text-sm font-semibold tabular-nums">
+            {/* Barra de ações em lote — aparece quando >=1 selecionado. */}
+            {selecionados.size > 0 && (
+              <BarraFerramentas className="bg-[var(--bg-subtle)]">
+                <CheckCircle2 size={16} strokeWidth={2} className="text-[var(--accent)]" aria-hidden="true" />
+                <span className="text-[13px] font-semibold tabular-nums text-[var(--text-main)]">
                   {selecionados.size} {selecionados.size === 1 ? 'lançamento selecionado' : 'lançamentos selecionados'}
                 </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setSelecionados(new Set())}>
-                  Limpar
-                </Button>
-                <Button variant="primary" size="sm" icon={CheckCircle2} onClick={() => handleAcaoLote('PAGO')}>
-                  Marcar como pagos
-                </Button>
-              </div>
-            </div>
-          )}
+                <div className="ml-auto flex items-center gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => setSelecionados(new Set())}>
+                    Limpar
+                  </Button>
+                  <Button variant="primary" size="sm" icon={CheckCircle2} onClick={() => handleAcaoLote('PAGO')}>
+                    Marcar como pagos
+                  </Button>
+                </div>
+              </BarraFerramentas>
+            )}
 
-          {carregando ? (
-            <Card padding="lg"><div className="text-center py-12 text-[var(--text-muted)] text-sm">Carregando...</div></Card>
-          ) : lancamentos.length === 0 ? (
-            <Card padding="lg">
+            {carregando ? (
+              <p className="m-0 px-4 py-12 text-center text-[13px] text-[var(--text-muted)]">Carregando...</p>
+            ) : lancamentos.length === 0 ? (
               <EmptyState
                 icon={DollarSign}
-                title="Nenhum lancamento"
+                title="Nenhum lançamento"
                 description="Cadastre receitas e despesas pra acompanhar o financeiro."
-                action={<Button variant="primary" icon={Plus} onClick={() => setModalLanc({ open: true, data: null })}>Novo lancamento</Button>}
+                action={<Button variant="primary" icon={Plus} onClick={() => setModalLanc({ open: true, data: null })}>Novo lançamento</Button>}
               />
-            </Card>
-          ) : (
-            <Card padding="none">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-[var(--border-main)]">
-                    {/* Checkbox 'selecionar todos elegiveis' (nao-venda, nao-pago, nao-cancelado).
-                        Indeterminate quando alguns mas nao todos. */}
-                    <th className="w-12 px-5 py-3">
-                      <input
-                        type="checkbox"
-                        checked={todosSelecionados}
-                        ref={(el) => { if (el) el.indeterminate = algunsSelecionados; }}
-                        onChange={toggleSelecaoTodos}
-                        disabled={lancamentosElegiveis.length === 0}
-                        className="w-4 h-4 rounded border-[var(--border-main)] text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                        aria-label="Selecionar todos"
-                      />
-                    </th>
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Descrição</th>
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Categoria</th>
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Vencimento</th>
-                    <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Valor</th>
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Status</th>
-                    <th className="w-12"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lancamentos.map((l) => {
-                    // Usa statusEfetivo quando disponivel (ATRASADO derivado pelo backend).
-                    const statusReal = l.statusEfetivo || l.status;
-                    const status = STATUS_LABELS[statusReal] || { label: statusReal, variant: 'neutral' };
-                    // Elegivel pra acao em lote = nao venda, nao pago, nao cancelado, nao imutavel.
-                    const ehElegivel = !l.vendaId && l.status !== 'PAGO' && l.status !== 'CANCELADO' && !l.imutavel;
-                    const estaSelecionado = selecionados.has(l.id);
-                    return (
-                      <tr
-                        key={l.id}
-                        onClick={() => setDrawer({ open: true, lanc: l })}
-                        className={`border-b border-[var(--border-subtle)] cursor-pointer transition-colors ${
-                          estaSelecionado
-                            ? 'bg-[var(--bg-subtle)] hover:bg-[var(--bg-subtle)]'
-                            : 'hover:bg-[var(--bg-subtle)]/50'
-                        }`}
-                      >
-                        {/* Checkbox por linha — bloqueado pra lancamentos de venda
-                            ou ja resolvidos (pago/cancelado). stopPropagation pra
-                            nao abrir o drawer ao clicar. */}
-                        <td onClick={(e) => e.stopPropagation()} className="px-5 py-3">
-                          <input
-                            type="checkbox"
-                            checked={estaSelecionado}
-                            onChange={() => toggleSelecao(l.id)}
-                            disabled={!ehElegivel}
-                            className="w-4 h-4 rounded border-[var(--border-main)] text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                            aria-label={`Selecionar ${l.descricao}`}
-                            title={
-                              l.vendaId ? 'Lançamento de venda — gerenciado em Vendas' :
-                              l.imutavel ? 'Mês fechado — não pode mais ser alterado' :
-                              l.status === 'PAGO' ? 'Já está pago' :
-                              l.status === 'CANCELADO' ? 'Está cancelado' :
-                              'Selecionar'
-                            }
-                          />
-                        </td>
-                        {/* Cancelado: cinza + tachado em descricao e valor.
-                            Sinal +/- some pra nao parecer movimento ativo. */}
-                        <td className="py-3 px-5">
-                          <div className={`flex items-center gap-2 ${l.status === 'CANCELADO' ? 'opacity-60' : ''}`}>
-                            <div className={`w-1.5 h-8 rounded-full ${
-                              l.status === 'CANCELADO' ? 'bg-[var(--text-muted)]' :
-                              l.tipo === 'RECEITA' ? 'bg-[var(--success)]' : 'bg-[var(--danger)]'
-                            }`} />
-                            <div>
-                              <div className={`text-sm font-semibold tracking-tight ${
-                                l.status === 'CANCELADO' ? 'line-through text-[var(--text-muted)]' : 'text-[var(--text-main)]'
-                              }`}>
-                                {l.descricao}
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr>
+                      {/* Checkbox 'selecionar todos elegíveis' (não-venda, não-pago, não-cancelado). */}
+                      <th className={`${TH} w-10`}>
+                        <input
+                          type="checkbox"
+                          checked={todosSelecionados}
+                          ref={(el) => { if (el) el.indeterminate = algunsSelecionados; }}
+                          onChange={toggleSelecaoTodos}
+                          disabled={lancamentosElegiveis.length === 0}
+                          className="w-4 h-4 rounded border-[var(--border-main)] text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                          aria-label="Selecionar todos"
+                        />
+                      </th>
+                      <th className={TH}>Vencimento</th>
+                      <th className={TH}>Descrição</th>
+                      <th className={TH}>Categoria</th>
+                      <th className={`${TH} text-right`}>Valor</th>
+                      <th className={TH}>Situação</th>
+                      <th className={TH}><span className="sr-only">Ações</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lancamentos.map((l) => {
+                      // Usa statusEfetivo quando disponível (ATRASADO derivado pelo backend).
+                      const statusReal = l.statusEfetivo || l.status;
+                      const status = STATUS_LABELS[statusReal] || { label: statusReal, variant: 'neutral' };
+                      // Elegível pra ação em lote = não venda, não pago, não cancelado, não imutável.
+                      const ehElegivel = !l.vendaId && l.status !== 'PAGO' && l.status !== 'CANCELADO' && !l.imutavel;
+                      const estaSelecionado = selecionados.has(l.id);
+                      const cancelado = l.status === 'CANCELADO';
+                      return (
+                        <tr
+                          key={l.id}
+                          onClick={() => setDrawer({ open: true, lanc: l })}
+                          className={`cursor-pointer transition-colors ${estaSelecionado ? 'bg-[var(--bg-subtle)]' : 'hover:bg-[var(--bg-subtle)]'}`}
+                        >
+                          {/* stopPropagation pra não abrir o drawer ao clicar. */}
+                          <td onClick={(e) => e.stopPropagation()} className={TD}>
+                            <input
+                              type="checkbox"
+                              checked={estaSelecionado}
+                              onChange={() => toggleSelecao(l.id)}
+                              disabled={!ehElegivel}
+                              className="w-4 h-4 rounded border-[var(--border-main)] text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                              aria-label={`Selecionar ${l.descricao}`}
+                              title={
+                                l.vendaId ? 'Lançamento de venda — gerenciado em Vendas' :
+                                l.imutavel ? 'Mês fechado — não pode mais ser alterado' :
+                                l.status === 'PAGO' ? 'Já está pago' :
+                                l.status === 'CANCELADO' ? 'Está cancelado' :
+                                'Selecionar'
+                              }
+                            />
+                          </td>
+                          <td className={`${TD} whitespace-nowrap tabular-nums ${l.status === 'PENDENTE' && diasAte(l.dataVencimento) < 0 ? 'text-[var(--danger-text)] font-semibold' : 'text-[var(--text-secondary)]'}`}>
+                            {new Date(l.dataVencimento).toLocaleDateString('pt-BR')}
+                          </td>
+                          {/* Cancelado: cinza + tachado em descrição e valor. */}
+                          <td className={TD}>
+                            <div className={`flex items-center gap-2 ${cancelado ? 'opacity-60' : ''}`}>
+                              <span
+                                aria-hidden="true"
+                                className={`w-1 h-7 rounded-full flex-shrink-0 ${
+                                  cancelado ? 'bg-[var(--text-muted)]' :
+                                  l.tipo === 'RECEITA' ? 'bg-[var(--success)]' : 'bg-[var(--danger)]'
+                                }`}
+                              />
+                              <div className="min-w-0">
+                                <div className={`font-semibold ${cancelado ? 'line-through text-[var(--text-muted)]' : 'text-[var(--text-main)]'}`}>
+                                  {l.descricao}
+                                </div>
+                                <div className="text-xs text-[var(--text-muted)]">{l.tipo === 'RECEITA' ? 'Receita' : 'Despesa'}</div>
                               </div>
-                              <div className="text-[11px] text-[var(--text-muted)]">{l.tipo === 'RECEITA' ? 'Receita' : 'Despesa'}</div>
                             </div>
-                          </div>
-                        </td>
-                        <td className="py-3 px-5 text-xs text-[var(--text-secondary)]">
-                          {l.categoria?.nome || '—'}
-                        </td>
-                        <td className="py-3 px-5 text-xs text-[var(--text-muted)]">
-                          {new Date(l.dataVencimento).toLocaleDateString('pt-BR')}
-                        </td>
-                        <td className={`py-3 px-5 text-right text-sm font-semibold tabular-nums ${
-                          l.status === 'CANCELADO' ? 'text-[var(--text-muted)] line-through' :
-                          l.tipo === 'RECEITA' ? 'text-[var(--success)]' : 'text-[var(--danger)]'
-                        }`}>
-                          {l.status === 'CANCELADO'
-                            ? fmtBRL(l.valor)
-                            : `${l.tipo === 'RECEITA' ? '+' : '-'} ${fmtBRL(l.valor)}`}
-                        </td>
-                        <td className="py-3 px-5">
-                          <Badge variant={status.variant} size="sm">{status.label}</Badge>
-                        </td>
-                        <td onClick={(e) => e.stopPropagation()} className="py-3 px-3">
-                          <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel="Ações" />}>
-                            {/* Imutavel (mes fechado): so visualizar */}
-                            {l.imutavel && (
-                              <DropdownItem icon={Lock} disabled>Mês fechado</DropdownItem>
-                            )}
-                            {!l.imutavel && (
-                              <>
-                                <DropdownItem icon={Edit2} onClick={() => setModalLanc({ open: true, data: l })}>Editar</DropdownItem>
-                                {l.status !== 'PAGO' && (
-                                  <DropdownItem icon={CheckCircle2} onClick={() => handleStatus(l, 'PAGO')}>Marcar como pago</DropdownItem>
+                          </td>
+                          <td className={`${TD} text-[var(--text-secondary)]`}>{l.categoria?.nome || '—'}</td>
+                          <td className={`${TD} text-right font-semibold tabular-nums whitespace-nowrap ${
+                            cancelado ? 'text-[var(--text-muted)] line-through' :
+                            l.tipo === 'RECEITA' ? 'text-[var(--success-text)]' : 'text-[var(--danger-text)]'
+                          }`}>
+                            {cancelado ? fmtBRL(l.valor) : `${l.tipo === 'RECEITA' ? '+' : '−'} ${fmtBRL(l.valor)}`}
+                          </td>
+                          <td className={TD}>
+                            <Badge variant={status.variant} size="sm">{status.label}</Badge>
+                          </td>
+                          <td onClick={(e) => e.stopPropagation()} className={`${TD} text-right`}>
+                            <div className="flex items-center justify-end gap-1">
+                              {ehElegivel && (
+                                <Button variant="primary" size="sm" onClick={() => handleStatus(l, 'PAGO')}>
+                                  {l.tipo === 'RECEITA' ? 'Recebi' : 'Paguei'}
+                                </Button>
+                              )}
+                              <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel={`Ações de ${l.descricao}`} />}>
+                                {/* Imutável (mês fechado): só visualizar */}
+                                {l.imutavel && (
+                                  <DropdownItem icon={Lock} disabled>Mês fechado</DropdownItem>
                                 )}
-                                {/* Cobrar via WhatsApp — so quando faz sentido (receita em aberto com telefone) */}
-                                {l.tipo === 'RECEITA' && l.status !== 'PAGO' && l.lead?.telefone && (
-                                  <DropdownItem icon={MessageCircle} onClick={() => handleCobrar(l)}>
-                                    Cobrar via WhatsApp
-                                  </DropdownItem>
+                                {!l.imutavel && (
+                                  <>
+                                    <DropdownItem icon={Edit2} onClick={() => setModalLanc({ open: true, data: l })}>Editar</DropdownItem>
+                                    {l.status !== 'PAGO' && (
+                                      <DropdownItem icon={CheckCircle2} onClick={() => handleStatus(l, 'PAGO')}>Marcar como pago</DropdownItem>
+                                    )}
+                                    {/* Cobrar via WhatsApp — só quando faz sentido (receita em aberto com telefone) */}
+                                    {l.tipo === 'RECEITA' && l.status !== 'PAGO' && l.lead?.telefone && (
+                                      <DropdownItem icon={MessageCircle} onClick={() => handleCobrar(l)}>
+                                        Cobrar via WhatsApp
+                                      </DropdownItem>
+                                    )}
+                                    {/* Atalho de adiar 7 dias — outros prazos no drawer */}
+                                    {l.status !== 'PAGO' && l.status !== 'CANCELADO' && !l.vendaId && (
+                                      <DropdownItem icon={CalendarClock} onClick={() => handleAdiar(l, 7)}>
+                                        Adiar 7 dias
+                                      </DropdownItem>
+                                    )}
+                                    {/* Cancelar abre modal pedindo motivo — preserva auditoria */}
+                                    {l.status !== 'CANCELADO' && !l.vendaId && (
+                                      <DropdownItem icon={XCircle} onClick={() => setModalCancelar({ open: true, lanc: l })}>
+                                        Cancelar com motivo
+                                      </DropdownItem>
+                                    )}
+                                    {/* Excluir grupo de parcelas — só quando faz parte de um agrupamento */}
+                                    {l.idAgrupamento && (
+                                      <DropdownItem icon={Trash2} variant="danger" onClick={() => handleExcluirGrupo(l)}>
+                                        Excluir todas parcelas
+                                      </DropdownItem>
+                                    )}
+                                    <DropdownDivider />
+                                    <DropdownItem icon={Trash2} variant="danger" onClick={() => handleExcluir(l)}>Excluir</DropdownItem>
+                                  </>
                                 )}
-                                {/* Atalho de adiar 7 dias direto — pra adiar com outros prazos, abre o drawer */}
-                                {l.status !== 'PAGO' && l.status !== 'CANCELADO' && !l.vendaId && (
-                                  <DropdownItem icon={CalendarClock} onClick={() => handleAdiar(l, 7)}>
-                                    Adiar 7 dias
-                                  </DropdownItem>
-                                )}
-                                {/* Cancelar agora abre modal pedindo motivo — preserva auditoria */}
-                                {l.status !== 'CANCELADO' && !l.vendaId && (
-                                  <DropdownItem icon={XCircle} onClick={() => setModalCancelar({ open: true, lanc: l })}>
-                                    Cancelar com motivo
-                                  </DropdownItem>
-                                )}
-                                {/* Excluir grupo de parcelas — so quando o lancamento e parte de um agrupamento */}
-                                {l.idAgrupamento && (
-                                  <DropdownItem icon={Trash2} variant="danger" onClick={() => handleExcluirGrupo(l)}>
-                                    Excluir todas parcelas
-                                  </DropdownItem>
-                                )}
-                                <DropdownDivider />
-                                <DropdownItem icon={Trash2} variant="danger" onClick={() => handleExcluir(l)}>Excluir</DropdownItem>
-                              </>
-                            )}
-                          </Dropdown>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </Card>
-          )}
-        </TabsContent>
+                              </Dropdown>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </ColunasPagina>
+      )}
 
-        <TabsContent value="categorias" className="mt-4">
-          {categorias.length === 0 ? (
-            <Card padding="lg">
+      {tab === 'categorias' && (
+        <ColunasPagina
+          lateral={
+            <>
+              <ResumoCategorias categorias={categorias} />
+              <PainelAtalhos atual="/app/financeiro/categorias" />
+            </>
+          }
+        >
+          <Painel
+            titulo="Categorias"
+            subtitulo="Organizam receitas e despesas nos relatórios"
+            acoes={
+              <Button variant="primary" size="sm" icon={Plus} onClick={() => setModalCat({ open: true, data: null })}>
+                Nova categoria
+              </Button>
+            }
+            semPadding
+          >
+            {categorias.length === 0 ? (
               <EmptyState
                 icon={Tag}
                 title="Nenhuma categoria"
-                description="Categorias organizam receitas e despesas (ex: Alimentacao, Salarios, Vendas online)."
+                description="Categorias organizam receitas e despesas (ex.: Alimentação, Salários, Vendas online)."
                 action={<Button variant="primary" icon={Plus} onClick={() => setModalCat({ open: true, data: null })}>Nova categoria</Button>}
               />
-            </Card>
-          ) : (
-            <Card padding="none">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-[var(--border-main)]">
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Nome</th>
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Tipo</th>
-                    <th className="w-12"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {categorias.map((c) => (
-                    <tr key={c.id} className="border-b border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]/50 transition-colors">
-                      <td className="py-3 px-5 text-sm font-semibold text-[var(--text-main)] tracking-tight">{c.nome}</td>
-                      <td className="py-3 px-5">
-                        <div className="flex items-center gap-2">
-                          <Badge variant={c.tipo === 'RECEITA' ? 'success' : 'danger'} size="sm">
-                            {c.tipo === 'RECEITA' ? 'Receita' : 'Despesa'}
-                          </Badge>
-                          {c.tipo === 'DESPESA' && c.subTipo && (
-                            <Badge variant="neutral" size="sm">
-                              {c.subTipo === 'FIXA' ? 'Fixa' : 'Variável'}
-                            </Badge>
-                          )}
-                          {c.tipo === 'DESPESA' && !c.subTipo && (
-                            <span className="text-[10px] text-[var(--text-muted)] italic">Sem classificação</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-3 px-3">
-                        <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel="Acoes" />}>
-                          <DropdownItem icon={Edit2} onClick={() => setModalCat({ open: true, data: c })}>Editar</DropdownItem>
-                          <DropdownDivider />
-                          <DropdownItem icon={Trash2} variant="danger" onClick={() => handleExcluirCat(c)}>Excluir</DropdownItem>
-                        </Dropdown>
-                      </td>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr>
+                      <th className={TH}>Nome</th>
+                      <th className={TH}>Tipo</th>
+                      <th className={TH}>Onde aparece</th>
+                      <th className={TH}><span className="sr-only">Ações</span></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
-          )}
-        </TabsContent>
+                  </thead>
+                  <tbody>
+                    {categorias.map((c) => (
+                      <tr key={c.id} className="hover:bg-[var(--bg-subtle)] transition-colors">
+                        <td className={`${TD} font-semibold text-[var(--text-main)]`}>{c.nome}</td>
+                        <td className={TD}>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Badge variant={c.tipo === 'RECEITA' ? 'success' : 'danger'} size="sm">
+                              {c.tipo === 'RECEITA' ? 'Receita' : 'Despesa'}
+                            </Badge>
+                            {c.tipo === 'DESPESA' && c.subTipo && (
+                              <Badge variant="neutral" size="sm">
+                                {c.subTipo === 'FIXA' ? 'Fixa' : 'Variável'}
+                              </Badge>
+                            )}
+                            {c.tipo === 'DESPESA' && !c.subTipo && (
+                              <span className="text-xs text-[var(--text-muted)] italic">Sem classificação</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className={`${TD} text-[var(--text-secondary)]`}>{USO_CURTO[c.uso] || '—'}</td>
+                        <td className={`${TD} text-right`}>
+                          <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel={`Ações de ${c.nome}`} />}>
+                            <DropdownItem icon={Edit2} onClick={() => setModalCat({ open: true, data: c })}>Editar</DropdownItem>
+                            <DropdownDivider />
+                            <DropdownItem icon={Trash2} variant="danger" onClick={() => handleExcluirCat(c)}>Excluir</DropdownItem>
+                          </Dropdown>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Painel>
+        </ColunasPagina>
+      )}
 
-        {/* Aba Caixa: sessao aberta (se houver) com saldo + acoes; senao tela
-            de abertura. Historico de sessoes fechadas como cards separados. */}
-        <TabsContent value="caixa" className="mt-4">
-          <CaixaTela
-            sessao={sessaoCaixa}
-            sessoesFechadas={sessoesCaixa}
-            onAbrir={() => setModalAbrirCaixa(true)}
-          />
-        </TabsContent>
+      {/* Aba Caixa: sessão aberta (se houver) com saldo + ações; senão abertura. */}
+      {tab === 'caixa' && (
+        <CaixaTela
+          sessao={sessaoCaixa}
+          sessoesFechadas={sessoesCaixa}
+          podeCriar={podeCriarFinanceiro}
+          podeEditar={podeEditarFinanceiro}
+          onAbrir={() => setModalAbrirCaixa(true)}
+          onRetirada={() => setModalMovCaixa({ open: true, tipo: 'SANGRIA' })}
+          onEntrada={() => setModalMovCaixa({ open: true, tipo: 'SUPRIMENTO' })}
+          onPagarDespesa={abrirPagarDespesa}
+          onFechar={() => setModalFecharCaixa(true)}
+        />
+      )}
 
-        {/* Aba Contas a pagar: cadastro de despesas recorrentes/pontuais. */}
-        <TabsContent value="contas-pagar" className="mt-4">
+      {/* Aba Contas a pagar: cadastro de despesas recorrentes/pontuais. */}
+      {tab === 'contas-pagar' && (
+        <ColunasPagina
+          lateral={
+            <>
+              <PainelProximos7 pendentes={despesasPendentes} />
+              <ResumoContasPagar contas={contasPagar} />
+              <PainelAtalhos atual="/app/financeiro/contas-pagar" />
+            </>
+          }
+        >
           <ListaContasPagar
             contas={contasPagar}
             carregando={carregando}
@@ -826,8 +867,8 @@ export default function FinanceiroPage() {
             onAtivar={handleAtivarContaPagar}
             onPagar={(c) => setModalPagarConta({ open: true, conta: c })}
           />
-        </TabsContent>
-      </Tabs>
+        </ColunasPagina>
+      )}
 
       <ModalLancamento
         key={modalLanc.open ? `lanc-${modalLanc.data?.id ?? 'novo'}` : 'lanc-fechado'}
@@ -920,15 +961,9 @@ export default function FinanceiroPage() {
         dados={modalCobranca.dados}
         onEnviar={handleConfirmarCobranca}
       />
-    </div>
+    </Pagina>
   );
 }
-
-// KPI compacto — mesmo padrao do Estoque/Visao geral (layout horizontal:
-// icone + label + valor em linha, padding md em vez de lg).
-// Aceita `acao` opcional (botao ou link logo abaixo do valor) pra cards
-// interativos (ex: "Caixa atual" tem botao "Ajustar").
-// Kpi local removido — usa KpiCard compartilhado do ui/.
 
 const METODOS_PAGAMENTO = [
   { value: 'PIX', label: 'PIX' },
@@ -1593,129 +1628,6 @@ function InfoBox({ label, valor }) {
 }
 
 // =====================================================================
-// TELA DE CAIXA
-// =====================================================================
-// Mostra saldo atual em destaque + historico completo de ajustes manuais.
-// Cada ajuste registra o novo valor + motivo + data. O delta (variacao em
-// relacao ao ajuste anterior) e calculado aqui pra UX clara.
-// =====================================================================
-// TELA DO CAIXA
-// =====================================================================
-// 2 estados:
-//   1. Sem caixa aberto: empty state com botao "Abrir caixa"
-//   2. Com caixa aberto: hero com saldo esperado + info da sessao
-// Histórico de sessões fechadas sempre visivel embaixo.
-function CaixaTela({ sessao, sessoesFechadas, onAbrir }) {
-  return (
-    <div className="space-y-4">
-      {/* Estado: sem caixa aberto */}
-      {!sessao && (
-        <Card padding="lg">
-          <EmptyState
-            icon={Wallet}
-            title="Caixa fechado"
-            description="Abra o caixa pra começar a registrar vendas manuais. Informe o fundo de caixa (dinheiro inicial pra troco) e a abertura fica registrada com seu nome."
-            action={
-              <Button variant="primary" icon={Wallet} onClick={onAbrir}>
-                Abrir caixa
-              </Button>
-            }
-          />
-        </Card>
-      )}
-
-      {/* Estado: caixa aberto */}
-      {sessao && (
-        <>
-          {/* Hero compacto */}
-          <Card padding="md">
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-[var(--success-soft)] text-[var(--success)] flex items-center justify-center flex-shrink-0">
-                <Wallet size={18} strokeWidth={1.75} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-0.5">
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                    Saldo esperado no caixa
-                  </div>
-                  <Badge variant="success" size="sm">Aberto</Badge>
-                  {sessao.origem === 'AUTO_BOT' && (
-                    <Badge variant="neutral" size="sm">Auto-bot</Badge>
-                  )}
-                </div>
-                <div className="text-2xl font-semibold tracking-tight text-[var(--text-main)] tabular-nums">
-                  {fmtBRL(sessao.saldoEsperado ?? sessao.fundoCaixa ?? 0)}
-                </div>
-                <div className="text-[11px] text-[var(--text-muted)] mt-1">
-                  Aberto em <strong>{new Date(sessao.abertaEm).toLocaleString('pt-BR')}</strong>
-                  {sessao.usuarioAbriuNome && <> · por <strong>{sessao.usuarioAbriuNome}</strong></>}
-                  {' · fundo: '}{fmtBRL(sessao.fundoCaixa || 0)}
-                </div>
-              </div>
-            </div>
-          </Card>
-
-        </>
-      )}
-
-      {/* Historico de sessoes fechadas */}
-      <Card padding="none">
-        <div className="px-5 py-3 border-b border-[var(--border-subtle)]">
-          <div className="text-sm font-semibold text-[var(--text-main)]">Sessões anteriores</div>
-          <div className="text-[11px] text-[var(--text-muted)] mt-0.5">
-            {sessoesFechadas.length} {sessoesFechadas.length === 1 ? 'sessão fechada' : 'sessões fechadas'}
-          </div>
-        </div>
-        {sessoesFechadas.length === 0 ? (
-          <EmptyState
-            icon={History}
-            title="Nenhuma sessão fechada ainda"
-            description="O histórico aparece aqui quando você fechar a 1ª sessão."
-          />
-        ) : (
-          <div className="divide-y divide-[var(--border-subtle)]">
-            {sessoesFechadas.map((s) => {
-              const dif = s.diferenca ?? 0;
-              const corDif = dif === 0 ? 'text-[var(--text-muted)]' : dif > 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]';
-              return (
-                <div key={s.id} className="flex items-center gap-3 px-5 py-3 hover:bg-[var(--bg-subtle)]/50">
-                  <div className="w-8 h-8 rounded-lg bg-[var(--bg-subtle)] text-[var(--text-secondary)] flex items-center justify-center flex-shrink-0">
-                    <Lock size={12} strokeWidth={2} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-[var(--text-main)] tabular-nums">
-                        {fmtBRL(s.saldoFinalReal ?? 0)}
-                      </span>
-                      {s.origem === 'AUTO_BOT' && <Badge variant="neutral" size="sm">Auto</Badge>}
-                      <span className={`text-[11px] font-medium tabular-nums ${corDif}`}>
-                        {dif === 0 ? 'bateu' : `${dif > 0 ? '+' : ''}${fmtBRL(dif)}`}
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                      Fundo {fmtBRL(s.fundoCaixa || 0)} · Esperado {fmtBRL(s.saldoFinalEsperado ?? 0)}
-                      {s.usuarioFechouNome && <> · fechou {s.usuarioFechouNome}</>}
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-[var(--text-muted)] tabular-nums flex-shrink-0 text-right">
-                    <div>{new Date(s.abertaEm).toLocaleDateString('pt-BR')}</div>
-                    {s.fechadaEm && (
-                      <div className="opacity-70">
-                        → {new Date(s.fechadaEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>
-    </div>
-  );
-}
-
-// =====================================================================
 // MODAL DE ABRIR CAIXA
 // =====================================================================
 // Inicia uma sessao MANUAL. Fundo de caixa = dinheiro inicial pro troco.
@@ -1857,13 +1769,24 @@ function ModalFecharCaixa({ isOpen, onClose, sessao, onConfirmar }) {
 // =====================================================================
 // LISTA DE CONTAS A PAGAR
 // =====================================================================
+const PERIODICIDADES = { PONTUAL: 'Pontual', MENSAL: 'Mensal', ANUAL: 'Anual' };
+
 function ListaContasPagar({ contas, carregando, podeCriar = true, podeEditar = true, podeExcluir = true, onNova, onEditar, onExcluir, onAtivar, onPagar }) {
-  if (carregando) {
-    return <Card padding="lg"><div className="text-center text-sm text-[var(--text-muted)] py-12">Carregando...</div></Card>;
-  }
-  if (!contas || contas.length === 0) {
-    return (
-      <Card padding="lg">
+  const [filtro, setFiltro] = useState('todas');
+  const lista = contas || [];
+  const ativas = lista.filter((c) => c.ativa).length;
+  const visiveis = lista.filter((c) => filtro === 'todas' || (filtro === 'ativas' ? c.ativa : !c.ativa));
+
+  return (
+    <Painel
+      titulo="Contas a pagar"
+      subtitulo="Despesas recorrentes ou pontuais, pagas com 1 clique (inclusive pelo caixa)"
+      acoes={podeCriar ? <Button variant="primary" size="sm" icon={Plus} onClick={onNova}>Nova conta a pagar</Button> : null}
+      semPadding
+    >
+      {carregando ? (
+        <p className="m-0 px-4 py-12 text-center text-[13px] text-[var(--text-muted)]">Carregando...</p>
+      ) : lista.length === 0 ? (
         <EmptyState
           icon={DollarSign}
           title="Nenhuma conta cadastrada"
@@ -1872,74 +1795,130 @@ function ListaContasPagar({ contas, carregando, podeCriar = true, podeEditar = t
             : 'Ainda não há contas cadastradas. Peça ao dono da conta ou administrador para cadastrar.'}
           action={podeCriar ? <Button variant="primary" icon={Plus} onClick={onNova}>Nova conta a pagar</Button> : null}
         />
-      </Card>
-    );
-  }
+      ) : (
+        <>
+          <BarraFerramentas>
+            <AbasPilula
+              rotulo="Filtrar contas"
+              abas={[
+                { valor: 'todas', rotulo: 'Todas', qtd: lista.length },
+                { valor: 'ativas', rotulo: 'Ativas', qtd: ativas },
+                { valor: 'inativas', rotulo: 'Inativas', qtd: lista.length - ativas },
+              ]}
+              valor={filtro}
+              onChange={setFiltro}
+            />
+          </BarraFerramentas>
+          {visiveis.length === 0 ? (
+            <p className="m-0 px-4 py-8 text-center text-[13px] text-[var(--text-muted)]">Nenhuma conta neste filtro.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr>
+                    <th className={TH}>Vencimento</th>
+                    <th className={TH}>Conta</th>
+                    <th className={TH}>Categoria</th>
+                    <th className={TH}>Periodicidade</th>
+                    <th className={`${TH} text-right`}>Valor padrão</th>
+                    <th className={TH}>Situação</th>
+                    <th className={TH}><span className="sr-only">Ações</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visiveis.map((c) => (
+                    <tr key={c.id} className={`hover:bg-[var(--bg-subtle)] transition-colors ${!c.ativa ? 'opacity-60' : ''}`}>
+                      <td className={`${TD} whitespace-nowrap text-[var(--text-secondary)] tabular-nums`}>
+                        {c.diaVencimento ? `Dia ${c.diaVencimento}${c.mesVencimento ? `/${String(c.mesVencimento).padStart(2, '0')}` : ''}` : '—'}
+                      </td>
+                      <td className={TD}>
+                        <div className="font-semibold text-[var(--text-main)]">{c.nome}</div>
+                        {c.observacoes && <div className="text-xs text-[var(--text-muted)] mt-0.5 truncate max-w-xs">{c.observacoes}</div>}
+                      </td>
+                      <td className={`${TD} text-[var(--text-secondary)]`}>{c.categoria?.nome || '—'}</td>
+                      <td className={TD}>
+                        <Badge variant="neutral" size="sm">{PERIODICIDADES[c.periodicidade] || c.periodicidade}</Badge>
+                      </td>
+                      <td className={`${TD} text-right font-semibold tabular-nums whitespace-nowrap text-[var(--text-main)]`}>
+                        {fmtBRL(c.valorPadrao || 0)}
+                      </td>
+                      <td className={TD}>
+                        <Badge variant={c.ativa ? 'success' : 'neutral'} size="sm">{c.ativa ? 'Ativa' : 'Inativa'}</Badge>
+                      </td>
+                      <td className={`${TD} text-right`}>
+                        <div className="flex items-center justify-end gap-1">
+                          {c.ativa && podeEditar && (
+                            <Button variant="primary" size="sm" onClick={() => onPagar(c)}>Paguei</Button>
+                          )}
+                          {(podeEditar || podeExcluir) && (
+                            <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel={`Ações de ${c.nome}`} />}>
+                              {c.ativa && podeEditar && (
+                                <DropdownItem icon={DollarSign} onClick={() => onPagar(c)}>Pagar agora</DropdownItem>
+                              )}
+                              {podeEditar && (
+                                <DropdownItem icon={Edit2} onClick={() => onEditar(c)}>Editar</DropdownItem>
+                              )}
+                              {podeEditar && (
+                                <DropdownItem icon={c.ativa ? Lock : Plus} onClick={() => onAtivar(c)}>
+                                  {c.ativa ? 'Desativar' : 'Reativar'}
+                                </DropdownItem>
+                              )}
+                              {podeExcluir && (
+                                <>
+                                  <DropdownDivider />
+                                  <DropdownItem icon={Trash2} variant="danger" onClick={() => onExcluir(c)}>Excluir</DropdownItem>
+                                </>
+                              )}
+                            </Dropdown>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </Painel>
+  );
+}
 
-  const PERIODICIDADES = { PONTUAL: 'Pontual', MENSAL: 'Mensal', ANUAL: 'Anual' };
-
+// Lateral da aba Contas a pagar: totais das contas cadastradas.
+function ResumoContasPagar({ contas }) {
+  const ativas = (contas || []).filter((c) => c.ativa);
+  const somar = (per) => ativas.filter((c) => c.periodicidade === per).reduce((s, c) => s + (Number(c.valorPadrao) || 0), 0);
+  const contar = (per) => ativas.filter((c) => c.periodicidade === per).length;
   return (
-    <Card padding="none">
-      <table className="w-full">
-        <thead>
-          <tr className="border-b border-[var(--border-main)]">
-            <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Nome</th>
-            <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Categoria</th>
-            <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Periodicidade</th>
-            <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Vencimento</th>
-            <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Valor padrão</th>
-            <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Status</th>
-            <th className="w-12"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {contas.map((c) => (
-            <tr key={c.id} className={`border-b border-[var(--border-subtle)] last:border-b-0 hover:bg-[var(--bg-subtle)]/30 transition-colors ${!c.ativa ? 'opacity-50' : ''}`}>
-              <td className="py-3 px-5">
-                <div className="text-sm font-semibold text-[var(--text-main)] tracking-tight">{c.nome}</div>
-                {c.observacoes && <div className="text-[11px] text-[var(--text-muted)] mt-0.5 truncate max-w-xs">{c.observacoes}</div>}
-              </td>
-              <td className="py-3 px-5 text-xs text-[var(--text-secondary)]">{c.categoria?.nome || '—'}</td>
-              <td className="py-3 px-5 text-xs">
-                <Badge variant="neutral" size="sm">{PERIODICIDADES[c.periodicidade] || c.periodicidade}</Badge>
-              </td>
-              <td className="py-3 px-5 text-xs text-[var(--text-secondary)]">
-                {c.diaVencimento ? `Dia ${c.diaVencimento}${c.mesVencimento ? `/${String(c.mesVencimento).padStart(2, '0')}` : ''}` : '—'}
-              </td>
-              <td className="py-3 px-5 text-right text-sm font-semibold tabular-nums text-[var(--text-main)]">
-                {Number(c.valorPadrao || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-              </td>
-              <td className="py-3 px-5 text-xs">
-                <Badge variant={c.ativa ? 'success' : 'neutral'} size="sm">{c.ativa ? 'Ativa' : 'Inativa'}</Badge>
-              </td>
-              <td className="py-3 px-2">
-                {(podeEditar || podeExcluir) && (
-                  <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel="Ações" />}>
-                    {c.ativa && podeEditar && (
-                      <DropdownItem icon={DollarSign} onClick={() => onPagar(c)}>Pagar agora</DropdownItem>
-                    )}
-                    {podeEditar && (
-                      <DropdownItem icon={Edit2} onClick={() => onEditar(c)}>Editar</DropdownItem>
-                    )}
-                    {podeEditar && (
-                      <DropdownItem icon={c.ativa ? Lock : Plus} onClick={() => onAtivar(c)}>
-                        {c.ativa ? 'Desativar' : 'Reativar'}
-                      </DropdownItem>
-                    )}
-                    {podeExcluir && (
-                      <>
-                        <DropdownDivider />
-                        <DropdownItem icon={Trash2} variant="danger" onClick={() => onExcluir(c)}>Excluir</DropdownItem>
-                      </>
-                    )}
-                  </Dropdown>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </Card>
+    <Painel titulo="Resumo das contas" semPadding>
+      <LinhaInfo rotulo="Contas ativas" valor={ativas.length} />
+      <LinhaInfo rotulo={`Mensais (${contar('MENSAL')})`} valor={`${fmtBRL(somar('MENSAL'))}/mês`} />
+      <LinhaInfo rotulo={`Anuais (${contar('ANUAL')})`} valor={`${fmtBRL(somar('ANUAL'))}/ano`} />
+      <LinhaInfo rotulo={`Pontuais (${contar('PONTUAL')})`} valor={fmtBRL(somar('PONTUAL'))} />
+    </Painel>
+  );
+}
+
+// Lateral da aba Categorias: quantas de cada tipo/uso.
+function ResumoCategorias({ categorias }) {
+  const receitas = categorias.filter((c) => c.tipo === 'RECEITA').length;
+  const despesas = categorias.filter((c) => c.tipo === 'DESPESA');
+  const semClassificacao = despesas.filter((c) => !c.subTipo).length;
+  return (
+    <Painel titulo="Resumo" semPadding>
+      <LinhaInfo rotulo="Categorias de receita" valor={receitas} />
+      <LinhaInfo rotulo="Categorias de despesa" valor={despesas.length} />
+      <LinhaInfo rotulo="Despesas fixas" valor={despesas.filter((c) => c.subTipo === 'FIXA').length} />
+      <LinhaInfo rotulo="Despesas variáveis" valor={despesas.filter((c) => c.subTipo === 'VARIAVEL').length} />
+      <LinhaInfo
+        rotulo="Despesas sem classificação"
+        valor={<span className={semClassificacao > 0 ? 'text-[var(--warning-text)]' : ''}>{semClassificacao}</span>}
+      />
+      {Object.entries(USO_CURTO).map(([uso, nome]) => (
+        <LinhaInfo key={uso} rotulo={`Aparece em: ${nome.toLowerCase()}`} valor={categorias.filter((c) => c.uso === uso).length} />
+      ))}
+    </Painel>
   );
 }
 

@@ -1,26 +1,78 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  ShoppingBag, Plus, Calendar, User, Package, Ban, Trash2, Wallet,
-  MoreVertical, UserPlus, ExternalLink, ChevronLeft, ChevronRight, X, MessageCircle
+  ShoppingBag, Plus, Package, Ban, Trash2, Wallet, Minus, Search, Undo2,
+  MoreVertical, UserPlus, ExternalLink, ChevronLeft, ChevronRight, X, MessageCircle,
+  QrCode, Banknote, CreditCard, Receipt, ArrowLeftRight,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import vendaService from '../services/vendaService';
 import {
-  Card, CardHeader, CardTitle, Button, IconButton, Input, Textarea, Select, Badge,
-  EmptyState, SearchBar, Drawer, useToast, Combobox, Dropdown, DropdownItem, DropdownDivider,
-  KpiCard,
+  Button, IconButton, Input, Textarea, Select, Badge,
+  EmptyState, Drawer, useToast, Combobox, Dropdown, DropdownItem, DropdownDivider,
+  BotaoExportar, Pagina, FaixaNumeros, Numero, ColunasPagina, Painel, LinhaInfo, BarraFerramentas,
 } from '../components/ui';
 import Modal from '../components/Modal';
+import { useAcaoTopo } from '../hooks/useAcaoTopo';
 
 const STATUS_BADGE = {
-  COMPLETED: { variant: 'success', label: 'Concluida' },
+  COMPLETED: { variant: 'success', label: 'Concluída' },
   PENDING: { variant: 'warning', label: 'Pendente' },
   CANCELLED: { variant: 'danger', label: 'Cancelada' },
   REFUNDED: { variant: 'neutral', label: 'Reembolsada' },
 };
 
+// Nome amigavel dos metodos de pagamento gravados na venda. Metodo
+// desconhecido (ex.: vindo do bot) aparece como veio.
+const METODO_LABEL = {
+  PIX: 'Pix',
+  DINHEIRO: 'Dinheiro',
+  DEBITO: 'Cartão de débito',
+  CREDITO: 'Cartão de crédito',
+  BOLETO: 'Boleto',
+  TRANSFERENCIA: 'Transferência',
+};
+const nomeMetodo = (m) => (m ? METODO_LABEL[m] || m : '—');
+
+// Cor da barra por forma de pagamento (so variaveis do tema).
+const COR_METODO = {
+  PIX: 'var(--primary)',
+  DINHEIRO: 'var(--warning)',
+  DEBITO: 'var(--info)',
+  CREDITO: 'var(--info-text)',
+  BOLETO: 'var(--text-muted)',
+  TRANSFERENCIA: 'var(--success)',
+};
+
 const fmtBRL = (v) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+// Venda que conta como dinheiro vendido (cancelada e reembolsada ficam fora).
+const vendaValida = (v) => v.status !== 'CANCELLED' && v.status !== 'REFUNDED';
+const ehPix = (v) => String(v.metodoPagamento || '').toUpperCase().includes('PIX');
+const pixAguardando = (v) => v.status === 'PENDING' && ehPix(v);
+
+const mesmoDia = (a, b) => a.getDate() === b.getDate() && a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
+
+// "14:32" hoje, "ontem 14:32", ou "12/11 14:32".
+function quando(dataIso) {
+  const d = new Date(dataIso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const hora = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const hoje = new Date();
+  if (mesmoDia(d, hoje)) return hora;
+  const ontem = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - 1);
+  if (mesmoDia(d, ontem)) return `ontem ${hora}`;
+  return `${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${hora}`;
+}
+
+// Itens vendidos em texto curto (nome dos produtos), ou a descricao.
+function textoItens(v) {
+  const nomes = (v.movimentacoesEstoque || [])
+    .map((m) => m.variacao?.produto?.nome || m.variacao?.nome)
+    .filter(Boolean);
+  if (nomes.length) return [...new Set(nomes)].join(', ');
+  return v.descricao || '—';
+}
 
 // Mascaras leves — truncam pro tamanho real do documento/telefone enquanto o
 // usuario digita, em vez de deixar colar/digitar qualquer quantidade de
@@ -40,6 +92,24 @@ function formatarTelefone(valor) {
   if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
+
+// Select compacto com rotulo ao lado (faixa de filtros do mockup).
+function FiltroSelect({ rotulo, value, onChange, opcoes }) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-muted)]">
+      {rotulo}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-9 pl-2.5 pr-7 rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-main)] focus:outline-none focus:border-[var(--primary)]"
+      >
+        {opcoes.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </label>
+  );
+}
+
+const SEM_VENDEDOR = '__sem__';
 
 export default function VendasPage() {
   const toast = useToast();
@@ -65,10 +135,12 @@ export default function VendasPage() {
   // Filtros + paginacao client-side (50 por pagina cobre uso real).
   const [filtroStatus, setFiltroStatus] = useState('');
   const [filtroMetodo, setFiltroMetodo] = useState('');
-  // Periodo: '' (todos), 'mes' (mes corrente), 'mes-passado', '30d' (ultimos 30d).
+  // Vendedor: '' (todos), id da profissional, ou SEM_VENDEDOR.
+  const [filtroVendedor, setFiltroVendedor] = useState('');
+  // Periodo: '' (todos), 'hoje', '7d', 'mes' (mes corrente), 'mes-passado', '30d'.
   const [filtroPeriodo, setFiltroPeriodo] = useState('');
   // A pagina volta pra 1 quando algum filtro muda (derivado, sem efeito).
-  const chaveFiltros = `${busca}|${filtroStatus}|${filtroMetodo}|${filtroPeriodo}`;
+  const chaveFiltros = `${busca}|${filtroStatus}|${filtroMetodo}|${filtroVendedor}|${filtroPeriodo}`;
   const [paginacao, setPaginacao] = useState({ chave: chaveFiltros, pagina: 1 });
   const pagina = paginacao.chave === chaveFiltros ? paginacao.pagina : 1;
   const setPagina = (valor) => setPaginacao({ chave: chaveFiltros, pagina: typeof valor === 'function' ? valor(pagina) : valor });
@@ -106,9 +178,21 @@ export default function VendasPage() {
     return out;
   }, [produtos]);
 
+  // id da profissional -> nome (coluna Vendedor e bloco "Por vendedor").
+  const nomeProfissional = useMemo(
+    () => new Map(profissionais.map((p) => [p.id, p.nome])),
+    [profissionais]
+  );
+  const nomeVendedor = (v) => {
+    if (!v.especialistaId) return null;
+    return nomeProfissional.get(v.especialistaId) || 'Profissional inativa';
+  };
+
   const filtradas = useMemo(() => {
     const q = busca.trim().toLowerCase();
     const agora = new Date();
+    const inicioHoje = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate());
+    const inicio7d = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() - 6);
     const inicioMes = new Date(agora.getFullYear(), agora.getMonth(), 1);
     const inicioMesPassado = new Date(agora.getFullYear(), agora.getMonth() - 1, 1);
     const fimMesPassado = new Date(agora.getFullYear(), agora.getMonth(), 0, 23, 59, 59);
@@ -124,15 +208,19 @@ export default function VendasPage() {
       }
       if (filtroStatus && v.status !== filtroStatus) return false;
       if (filtroMetodo && v.metodoPagamento !== filtroMetodo) return false;
+      if (filtroVendedor === SEM_VENDEDOR && v.especialistaId) return false;
+      if (filtroVendedor && filtroVendedor !== SEM_VENDEDOR && v.especialistaId !== filtroVendedor) return false;
       if (filtroPeriodo) {
         const d = new Date(v.criadoEm);
+        if (filtroPeriodo === 'hoje' && d < inicioHoje) return false;
+        if (filtroPeriodo === '7d' && d < inicio7d) return false;
         if (filtroPeriodo === 'mes' && d < inicioMes) return false;
         if (filtroPeriodo === 'mes-passado' && (d < inicioMesPassado || d > fimMesPassado)) return false;
         if (filtroPeriodo === '30d' && d < inicio30d) return false;
       }
       return true;
     });
-  }, [vendas, busca, filtroStatus, filtroMetodo, filtroPeriodo]);
+  }, [vendas, busca, filtroStatus, filtroMetodo, filtroVendedor, filtroPeriodo]);
 
   // Paginacao client-side. Suficiente pra ate ~5k vendas — alem disso vale
   // mover pra server-side com query params.
@@ -150,11 +238,12 @@ export default function VendasPage() {
     return [...set];
   }, [vendas]);
 
-  const temFiltroAtivo = !!(busca || filtroStatus || filtroMetodo || filtroPeriodo);
+  const temFiltroAtivo = !!(busca || filtroStatus || filtroMetodo || filtroVendedor || filtroPeriodo);
   const limparFiltros = () => {
     setBusca('');
     setFiltroStatus('');
     setFiltroMetodo('');
+    setFiltroVendedor('');
     setFiltroPeriodo('');
   };
 
@@ -217,245 +306,417 @@ export default function VendasPage() {
     }
   };
 
-  const totalMes = useMemo(() => {
+  // Numeros do topo e da coluna lateral — tudo derivado de /vendas.
+  const resumo = useMemo(() => {
     const agora = new Date();
-    return vendas
-      .filter((v) => {
-        const d = new Date(v.criadoEm);
-        return d.getMonth() === agora.getMonth() && d.getFullYear() === agora.getFullYear();
-      })
-      .reduce((acc, v) => acc + Number(v.valor || 0), 0);
+    const doMes = (v) => {
+      const d = new Date(v.criadoEm);
+      return d.getMonth() === agora.getMonth() && d.getFullYear() === agora.getFullYear();
+    };
+    const validas = vendas.filter(vendaValida);
+    const hoje = validas.filter((v) => mesmoDia(new Date(v.criadoEm), agora));
+    const mes = validas.filter(doMes);
+    const soma = (lista) => lista.reduce((acc, v) => acc + Number(v.valor || 0), 0);
+
+    // Por forma de pagamento (hoje), maior primeiro.
+    const porMetodoMap = new Map();
+    hoje.forEach((v) => {
+      const m = v.metodoPagamento || '';
+      porMetodoMap.set(m, (porMetodoMap.get(m) || 0) + Number(v.valor || 0));
+    });
+    const totalHoje = soma(hoje);
+    const porMetodo = [...porMetodoMap.entries()]
+      .map(([metodo, valor]) => ({ metodo, valor, pct: totalHoje > 0 ? (valor / totalHoje) * 100 : 0 }))
+      .sort((a, b) => b.valor - a.valor);
+
+    // Por vendedor (mes), maior primeiro.
+    const porVendedorMap = new Map();
+    mes.forEach((v) => {
+      const chave = v.especialistaId || SEM_VENDEDOR;
+      const atual = porVendedorMap.get(chave) || { qtd: 0, valor: 0 };
+      porVendedorMap.set(chave, { qtd: atual.qtd + 1, valor: atual.valor + Number(v.valor || 0) });
+    });
+    const porVendedor = [...porVendedorMap.entries()]
+      .map(([id, d]) => ({ id, ...d }))
+      .sort((a, b) => b.valor - a.valor);
+
+    const totalMes = soma(mes);
+    return {
+      totalHoje,
+      qtdHoje: hoje.length,
+      totalMes,
+      ticketMedio: mes.length ? totalMes / mes.length : 0,
+      qtdMes: mes.length,
+      porMetodo,
+      porVendedor,
+      pix: vendas.filter(pixAguardando),
+    };
   }, [vendas]);
 
-  return (
-    <div className="space-y-5">
-      {/* KPIs — padrao KpiCard compartilhado (ui/KpiCard) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard icon={ShoppingBag} color="neutral" label="Vendas (total)" valor={vendas.length} />
-        <KpiCard icon={ShoppingBag} color="neutral" label="Faturado total" valor={fmtBRL(vendas.reduce((acc, v) => acc + Number(v.valor || 0), 0))} />
-        <KpiCard icon={Calendar} color="neutral" label="Vendas no mes" valor={fmtBRL(totalMes)} />
-        <KpiCard icon={User} color="neutral" label="Vendas via lead" valor={vendas.filter((v) => v.leadId).length} />
-      </div>
+  const montarExportacao = () => ({
+    nome: `vendas-${new Date().toISOString().slice(0, 10)}`,
+    titulo: 'Vendas',
+    filtrosAtivos: [
+      busca && `Busca: ${busca}`,
+      filtroStatus && `Situação: ${STATUS_BADGE[filtroStatus]?.label || filtroStatus}`,
+      filtroMetodo && `Pagamento: ${nomeMetodo(filtroMetodo)}`,
+      filtroVendedor && `Vendedor: ${filtroVendedor === SEM_VENDEDOR ? 'Sem vendedor' : nomeProfissional.get(filtroVendedor) || ''}`,
+    ].filter(Boolean),
+    secoes: [{
+      titulo: 'Vendas',
+      colunas: [
+        { chave: 'numero', label: 'Nº' },
+        { chave: 'data', label: 'Data' },
+        { chave: 'cliente', label: 'Cliente' },
+        { chave: 'itens', label: 'Itens' },
+        { chave: 'vendedor', label: 'Vendedor' },
+        { chave: 'pagamento', label: 'Pagamento' },
+        { chave: 'valor', label: 'Total' },
+        { chave: 'situacao', label: 'Situação' },
+      ],
+      linhas: filtradas.map((v) => ({
+        numero: v.numero ?? '',
+        data: new Date(v.criadoEm).toLocaleString('pt-BR'),
+        cliente: v.lead?.nome || '',
+        itens: textoItens(v),
+        vendedor: nomeVendedor(v) || '',
+        pagamento: nomeMetodo(v.metodoPagamento),
+        valor: Number(v.valor || 0),
+        situacao: STATUS_BADGE[v.status]?.label || v.status || '',
+      })),
+    }],
+  });
 
-      {/* Toolbar com busca + filtros + acao primaria */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex-1 min-w-[200px] max-w-sm">
-          <SearchBar value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar descricao, cliente ou numero..." />
-        </div>
-        <Select
-          size="sm"
-          value={filtroStatus}
-          onChange={(e) => setFiltroStatus(e.target.value)}
-          fullWidth={false}
-          className="min-w-[140px]"
-          placeholder=""
-          options={[
-            { value: '', label: 'Todos status' },
-            { value: 'COMPLETED', label: 'Concluidas' },
-            { value: 'CANCELLED', label: 'Canceladas' },
-            { value: 'PENDING', label: 'Pendentes' },
-          ]}
-        />
-        {metodosDisponiveis.length > 0 && (
-          <Select
-            size="sm"
-            value={filtroMetodo}
-            onChange={(e) => setFiltroMetodo(e.target.value)}
-            fullWidth={false}
-            className="min-w-[140px]"
-            placeholder=""
-            options={[
-              { value: '', label: 'Todos metodos' },
-              ...metodosDisponiveis.map((m) => ({ value: m, label: m })),
-            ]}
-          />
-        )}
-        <Select
-          size="sm"
-          value={filtroPeriodo}
-          onChange={(e) => setFiltroPeriodo(e.target.value)}
-          fullWidth={false}
-          className="min-w-[160px]"
-          placeholder=""
-          options={[
-            { value: '', label: 'Qualquer periodo' },
-            { value: 'mes', label: 'Mes corrente' },
-            { value: 'mes-passado', label: 'Mes passado' },
-            { value: '30d', label: 'Ultimos 30 dias' },
-          ]}
-        />
-        {temFiltroAtivo && (
-          <Button variant="ghost" size="sm" icon={X} onClick={limparFiltros}>
-            Limpar
-          </Button>
-        )}
-        <div className="ml-auto flex flex-wrap gap-2">
-          {/* Atalho da fase 2: monta o pedido e manda o link de pagamento (tela de Pedidos). */}
-          <Button variant="secondary" icon={MessageCircle} onClick={() => navigate('/app/pedidos?novo=whatsapp')}>
-            Vender pelo WhatsApp
-          </Button>
-          <Button variant="primary" icon={Plus} onClick={() => setModal({ open: true })}>
-            Registrar venda
-          </Button>
-        </div>
-      </div>
+  const abrirNovaVenda = () => setModal({ open: true });
+  useAcaoTopo(<Button size="sm" icon={Plus} onClick={abrirNovaVenda}>Registrar venda</Button>, []);
 
-      {/* Lista */}
-      {carregando ? (
-        <Card padding="lg"><div className="text-center py-12 text-[var(--text-muted)] text-sm">Carregando...</div></Card>
-      ) : filtradas.length === 0 ? (
-        <Card padding="lg">
-          <EmptyState
-            icon={ShoppingBag}
-            title="Nenhuma venda"
-            description="Registre sua primeira venda. O sistema vai dar baixa no estoque e gerar o lancamento financeiro automaticamente."
-            action={
-              <Button variant="primary" icon={Plus} onClick={() => setModal({ open: true })}>
-                Registrar venda
-              </Button>
-            }
-          />
-        </Card>
-      ) : (
-        <Card padding="none">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-[var(--border-main)]">
-                <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Venda</th>
-                <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Cliente</th>
-                <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Pagamento</th>
-                <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Status</th>
-                <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Valor</th>
-                <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Data</th>
-                <th className="w-12"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginadas.map((v) => {
-                const cancelada = v.status === 'CANCELLED';
-                const cfgStatus = STATUS_BADGE[v.status] || { variant: 'neutral', label: v.status || '—' };
-                return (
-                  <tr
-                    key={v.id}
-                    onClick={() => setDrawer({ open: true, venda: v })}
-                    className={`border-b border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]/50 cursor-pointer transition-colors ${cancelada ? 'opacity-60' : ''}`}
-                  >
-                    <td className="py-3 px-5">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${cancelada ? 'bg-[var(--danger-soft)] text-[var(--danger-text)]' : 'bg-[var(--bg-subtle)] text-[var(--text-secondary)]'}`}>
-                          <ShoppingBag size={16} strokeWidth={1.75} />
-                        </div>
-                        <div>
-                          <div className={`text-sm font-semibold tracking-tight ${cancelada ? 'line-through text-[var(--text-muted)]' : 'text-[var(--text-main)]'}`}>
-                            {v.descricao || `Venda #${v.numero ?? v.id.slice(0, 8)}`}
-                          </div>
-                          <div className="text-[11px] text-[var(--text-muted)]">
-                            #{v.numero ?? v.id.slice(0, 6)} · {v.movimentacoesEstoque?.length || 0} itens
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="py-3 px-5 text-xs text-[var(--text-secondary)]">
-                      {v.lead?.nome ? (
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); navigate(`/app/crm?lead=${v.leadId}`); }}
-                          className="inline-flex items-center gap-1 text-[var(--text-main)] hover:underline font-medium"
-                        >
-                          {v.lead.nome}
-                          <ExternalLink size={11} className="text-[var(--text-muted)]" />
-                        </button>
-                      ) : '—'}
-                    </td>
-                    <td className="py-3 px-5 text-xs">
-                      {v.metodoPagamento ? <Badge variant="neutral" size="sm">{v.metodoPagamento}</Badge> : '—'}
-                    </td>
-                    <td className="py-3 px-5 text-xs">
-                      <Badge variant={cfgStatus.variant} size="sm">{cfgStatus.label}</Badge>
-                    </td>
-                    <td className={`py-3 px-5 text-right text-sm font-semibold tabular-nums ${cancelada ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-main)]'}`}>
-                      {fmtBRL(v.valor)}
-                    </td>
-                    <td className="py-3 px-5 text-xs text-[var(--text-muted)]">
-                      {new Date(v.criadoEm).toLocaleDateString('pt-BR')}
-                    </td>
-                    <td className="py-3 px-2" onClick={(e) => e.stopPropagation()}>
-                      <Dropdown
-                        trigger={
-                          <button
-                            type="button"
-                            className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-main)] transition-colors"
-                            aria-label="Acoes"
-                          >
-                            <MoreVertical size={16} strokeWidth={1.75} />
-                          </button>
-                        }
-                      >
-                        <DropdownItem
-                          icon={UserPlus}
-                          onClick={() => setModalVincularLead({ open: true, venda: v })}
-                        >
-                          {v.lead ? 'Trocar cliente' : 'Vincular cliente'}
-                        </DropdownItem>
-                        {v.lead && (
-                          <DropdownItem
-                            icon={ExternalLink}
-                            onClick={() => navigate(`/app/crm?lead=${v.leadId}`)}
-                          >
-                            Ver no CRM
-                          </DropdownItem>
-                        )}
-                        {!cancelada && (
-                          <>
-                            <DropdownDivider />
-                            <DropdownItem
-                              icon={Ban}
-                              variant="danger"
-                              onClick={() => handleAbrirCancelar(v)}
-                            >
-                              Cancelar venda
-                            </DropdownItem>
-                          </>
-                        )}
-                      </Dropdown>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-
-          {/* Paginacao — so aparece quando ha mais de 1 pagina. */}
-          {totalPaginas > 1 && (
-            <div className="flex items-center justify-between px-5 py-3 border-t border-[var(--border-main)]">
-              <div className="text-xs text-[var(--text-muted)]">
-                Mostrando {(pagina - 1) * POR_PAGINA + 1}–{Math.min(pagina * POR_PAGINA, filtradas.length)} de {filtradas.length}
-              </div>
-              <div className="flex items-center gap-1">
-                <IconButton
-                  icon={ChevronLeft}
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setPagina((p) => Math.max(1, p - 1))}
-                  disabled={pagina === 1}
-                  ariaLabel="Pagina anterior"
-                />
-                <div className="text-xs font-semibold tabular-nums px-3">
-                  {pagina} / {totalPaginas}
+  const lateral = (
+    <>
+      <Painel titulo="Por forma de pagamento" acoes={<span className="text-xs font-medium text-[var(--text-muted)]">hoje</span>}>
+        {carregando ? (
+          <div className="h-16 rounded-lg bg-[var(--bg-subtle)] animate-pulse" />
+        ) : resumo.porMetodo.length === 0 ? (
+          <p className="m-0 text-[13px] text-[var(--text-muted)]">Nenhuma venda hoje ainda.</p>
+        ) : (
+          <ul className="m-0 p-0 list-none flex flex-col gap-3 text-[13px]">
+            {resumo.porMetodo.map((m) => (
+              <li key={m.metodo || 'sem'}>
+                <div className="flex justify-between gap-2 text-[var(--text-secondary)]">
+                  <span>{m.metodo ? nomeMetodo(m.metodo) : 'Não informado'}</span>
+                  <strong className="text-[var(--text-main)] tabular-nums">{fmtBRL(m.valor)}</strong>
                 </div>
-                <IconButton
-                  icon={ChevronRight}
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setPagina((p) => Math.min(totalPaginas, p + 1))}
-                  disabled={pagina === totalPaginas}
-                  ariaLabel="Proxima pagina"
-                />
-              </div>
+                <div className="h-2 rounded bg-[var(--bg-subtle)] mt-1.5" aria-hidden="true">
+                  <div
+                    className="h-2 rounded"
+                    style={{ width: `${Math.max(2, m.pct)}%`, background: COR_METODO[m.metodo] || 'var(--text-muted)' }}
+                  />
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Painel>
+
+      <Painel titulo="Por vendedor" acoes={<span className="text-xs font-medium text-[var(--text-muted)]">mês</span>} semPadding>
+        {carregando ? (
+          <div className="m-4 h-12 rounded-lg bg-[var(--bg-subtle)] animate-pulse" />
+        ) : resumo.porVendedor.length === 0 ? (
+          <p className="m-0 px-4 py-3.5 text-[13px] text-[var(--text-muted)]">Nenhuma venda no mês ainda.</p>
+        ) : (
+          resumo.porVendedor.map((p) => (
+            <LinhaInfo
+              key={p.id}
+              rotulo={p.id === SEM_VENDEDOR ? 'Sem vendedor informado' : nomeProfissional.get(p.id) || 'Profissional inativa'}
+            >
+              <span className="text-xs text-[var(--text-muted)] tabular-nums">{p.qtd} {p.qtd === 1 ? 'venda' : 'vendas'}</span>
+              <span className="font-semibold text-[var(--text-main)] tabular-nums">{fmtBRL(p.valor)}</span>
+            </LinhaInfo>
+          ))
+        )}
+      </Painel>
+
+      <Painel
+        titulo="Pix aguardando"
+        acoes={resumo.pix.length > 0 ? <Badge variant="warning" size="sm">{resumo.pix.length}</Badge> : null}
+        semPadding
+      >
+        {carregando ? (
+          <div className="m-4 h-12 rounded-lg bg-[var(--bg-subtle)] animate-pulse" />
+        ) : resumo.pix.length === 0 ? (
+          <p className="m-0 px-4 py-3.5 text-[13px] text-[var(--text-muted)]">Nenhum Pix aguardando pagamento.</p>
+        ) : (
+          resumo.pix.slice(0, 6).map((v) => (
+            <LinhaInfo key={v.id} rotulo={`${v.lead?.nome || 'Sem cliente'} · #${v.numero ?? v.id.slice(0, 6)}`}>
+              <span className="font-semibold text-[var(--text-main)] tabular-nums">{fmtBRL(v.valor)}</span>
+              <Button variant="secondary" size="sm" onClick={() => setDrawer({ open: true, venda: v })}>
+                Ver
+              </Button>
+            </LinhaInfo>
+          ))
+        )}
+      </Painel>
+    </>
+  );
+
+  return (
+    <Pagina>
+      <FaixaNumeros min={170}>
+        <Numero rotulo="Vendido hoje" valor={fmtBRL(resumo.totalHoje)} carregando={carregando} />
+        <Numero rotulo="Vendas hoje" valor={resumo.qtdHoje} carregando={carregando} />
+        <Numero rotulo="No mês" valor={fmtBRL(resumo.totalMes)} detalhe={`${resumo.qtdMes} ${resumo.qtdMes === 1 ? 'venda' : 'vendas'}`} carregando={carregando} />
+        <Numero rotulo="Ticket médio" valor={fmtBRL(resumo.ticketMedio)} detalhe="no mês" carregando={carregando} />
+        <Numero
+          rotulo="Pix aguardando"
+          valor={resumo.pix.length}
+          tom={resumo.pix.length > 0 ? 'alerta' : 'neutro'}
+          carregando={carregando}
+          onClick={resumo.pix.length > 0 ? () => setFiltroStatus('PENDING') : undefined}
+        />
+      </FaixaNumeros>
+
+      <ColunasPagina lateral={lateral}>
+        <Painel semPadding>
+          <BarraFerramentas>
+            <label className="relative flex-1 min-w-[180px] max-w-[280px]">
+              <span className="sr-only">Buscar venda por descrição, cliente ou número</span>
+              <Search size={14} aria-hidden="true" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] pointer-events-none" />
+              <input
+                type="search"
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                placeholder="Buscar descrição, cliente ou nº"
+                className="w-full h-9 pl-8 pr-2.5 rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)] text-[13px] text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--primary)]"
+              />
+            </label>
+            <FiltroSelect
+              rotulo="Período"
+              value={filtroPeriodo}
+              onChange={setFiltroPeriodo}
+              opcoes={[
+                { value: '', label: 'Qualquer' },
+                { value: 'hoje', label: 'Hoje' },
+                { value: '7d', label: '7 dias' },
+                { value: 'mes', label: 'Este mês' },
+                { value: 'mes-passado', label: 'Mês passado' },
+                { value: '30d', label: 'Últimos 30 dias' },
+              ]}
+            />
+            {metodosDisponiveis.length > 0 && (
+              <FiltroSelect
+                rotulo="Pagamento"
+                value={filtroMetodo}
+                onChange={setFiltroMetodo}
+                opcoes={[
+                  { value: '', label: 'Todos' },
+                  ...metodosDisponiveis.map((m) => ({ value: m, label: nomeMetodo(m) })),
+                ]}
+              />
+            )}
+            {profissionais.length > 0 && (
+              <FiltroSelect
+                rotulo="Vendedor"
+                value={filtroVendedor}
+                onChange={setFiltroVendedor}
+                opcoes={[
+                  { value: '', label: 'Todos' },
+                  ...profissionais.map((p) => ({ value: p.id, label: p.nome })),
+                  { value: SEM_VENDEDOR, label: 'Sem vendedor' },
+                ]}
+              />
+            )}
+            <FiltroSelect
+              rotulo="Situação"
+              value={filtroStatus}
+              onChange={setFiltroStatus}
+              opcoes={[
+                { value: '', label: 'Todas' },
+                { value: 'COMPLETED', label: 'Concluídas' },
+                { value: 'PENDING', label: 'Pendentes' },
+                { value: 'CANCELLED', label: 'Canceladas' },
+                { value: 'REFUNDED', label: 'Reembolsadas' },
+              ]}
+            />
+            {temFiltroAtivo && (
+              <Button variant="ghost" size="sm" icon={X} onClick={limparFiltros}>
+                Limpar
+              </Button>
+            )}
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <Button variant="secondary" size="sm" icon={Undo2} onClick={() => navigate('/app/devolucoes')}>
+                Devolução
+              </Button>
+              <BotaoExportar montarDados={montarExportacao} desabilitado={filtradas.length === 0} />
+              {/* Atalho da fase 2: monta o pedido e manda o link de pagamento (tela de Pedidos). */}
+              <Button variant="secondary" size="sm" icon={MessageCircle} onClick={() => navigate('/app/pedidos?novo=whatsapp')}>
+                Vender pelo WhatsApp
+              </Button>
             </div>
+          </BarraFerramentas>
+
+          {carregando ? (
+            <div className="text-center py-12 text-[var(--text-muted)] text-[13px]">Carregando vendas…</div>
+          ) : filtradas.length === 0 ? (
+            temFiltroAtivo ? (
+              <EmptyState
+                icon={Search}
+                title="Nenhuma venda com esses filtros"
+                description="Troque o período, a forma de pagamento ou o vendedor."
+                action={<Button variant="secondary" icon={X} onClick={limparFiltros}>Limpar filtros</Button>}
+              />
+            ) : (
+              <EmptyState
+                icon={ShoppingBag}
+                title="Nenhuma venda"
+                description="Registre sua primeira venda. O sistema vai dar baixa no estoque e gerar o lançamento financeiro automaticamente."
+                action={<Button variant="primary" icon={Plus} onClick={abrirNovaVenda}>Registrar venda</Button>}
+              />
+            )
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr>
+                      {['Nº', 'Quando', 'Cliente', 'Itens', 'Vendedor', 'Pagamento'].map((t) => (
+                        <th key={t} className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">{t}</th>
+                      ))}
+                      <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Total</th>
+                      <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Situação</th>
+                      <th className="w-10 bg-[var(--bg-subtle)] border-b border-[var(--border-main)]"><span className="sr-only">Ações</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginadas.map((v) => {
+                      const cancelada = v.status === 'CANCELLED';
+                      const cfgStatus = pixAguardando(v)
+                        ? { variant: 'warning', label: 'Aguardando Pix' }
+                        : STATUS_BADGE[v.status] || { variant: 'neutral', label: v.status || '—' };
+                      const vendedor = nomeVendedor(v);
+                      const td = 'px-4 py-2.5 border-b border-[var(--border-subtle)]';
+                      return (
+                        <tr
+                          key={v.id}
+                          onClick={() => setDrawer({ open: true, venda: v })}
+                          className={`hover:bg-[var(--bg-subtle)] cursor-pointer transition-colors ${cancelada ? 'opacity-60' : ''}`}
+                        >
+                          <td className={`${td} whitespace-nowrap`}>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setDrawer({ open: true, venda: v }); }}
+                              className="font-semibold text-[var(--text-main)] hover:underline tabular-nums"
+                              aria-label={`Abrir venda ${v.numero ?? v.id.slice(0, 6)}`}
+                            >
+                              #{v.numero ?? v.id.slice(0, 6)}
+                            </button>
+                          </td>
+                          <td className={`${td} whitespace-nowrap text-[var(--text-secondary)] tabular-nums`}>{quando(v.criadoEm)}</td>
+                          <td className={`${td} whitespace-nowrap`}>
+                            {v.lead?.nome ? (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); navigate(`/app/crm?lead=${v.leadId}`); }}
+                                className="inline-flex items-center gap-1 text-[var(--text-main)] hover:underline font-medium"
+                              >
+                                {v.lead.nome}
+                                <ExternalLink size={11} aria-hidden="true" className="text-[var(--text-muted)]" />
+                              </button>
+                            ) : <span className="text-[var(--text-muted)]">Balcão</span>}
+                          </td>
+                          <td className={`${td} max-w-[260px]`}>
+                            <div className={`truncate ${cancelada ? 'line-through text-[var(--text-muted)]' : 'text-[var(--text-secondary)]'}`} title={textoItens(v)}>
+                              {textoItens(v)}
+                            </div>
+                          </td>
+                          <td className={`${td} whitespace-nowrap text-[var(--text-secondary)]`}>{vendedor || '—'}</td>
+                          <td className={`${td} whitespace-nowrap text-[var(--text-secondary)]`}>{nomeMetodo(v.metodoPagamento)}</td>
+                          <td className={`${td} whitespace-nowrap text-right font-semibold tabular-nums ${cancelada ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-main)]'}`}>
+                            {fmtBRL(v.valor)}
+                          </td>
+                          <td className={`${td} whitespace-nowrap`}>
+                            <Badge variant={cfgStatus.variant} size="sm">{cfgStatus.label}</Badge>
+                          </td>
+                          <td className={`${td} px-2`} onClick={(e) => e.stopPropagation()}>
+                            <Dropdown
+                              trigger={
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-main)] transition-colors"
+                                  aria-label={`Ações da venda ${v.numero ?? v.id.slice(0, 6)}`}
+                                >
+                                  <MoreVertical size={16} strokeWidth={1.75} />
+                                </button>
+                              }
+                            >
+                              <DropdownItem
+                                icon={UserPlus}
+                                onClick={() => setModalVincularLead({ open: true, venda: v })}
+                              >
+                                {v.lead ? 'Trocar cliente' : 'Vincular cliente'}
+                              </DropdownItem>
+                              {v.lead && (
+                                <DropdownItem
+                                  icon={ExternalLink}
+                                  onClick={() => navigate(`/app/crm?lead=${v.leadId}`)}
+                                >
+                                  Ver no CRM
+                                </DropdownItem>
+                              )}
+                              {!cancelada && (
+                                <>
+                                  <DropdownDivider />
+                                  <DropdownItem
+                                    icon={Ban}
+                                    variant="danger"
+                                    onClick={() => handleAbrirCancelar(v)}
+                                  >
+                                    Cancelar venda
+                                  </DropdownItem>
+                                </>
+                              )}
+                            </Dropdown>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Rodape: contagem + paginacao (setas so com mais de 1 pagina). */}
+              <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+                <div className="text-xs text-[var(--text-muted)]">
+                  {totalPaginas > 1
+                    ? `Mostrando ${(pagina - 1) * POR_PAGINA + 1}–${Math.min(pagina * POR_PAGINA, filtradas.length)} de ${filtradas.length}`
+                    : `${filtradas.length} ${filtradas.length === 1 ? 'venda' : 'vendas'}`}
+                </div>
+                {totalPaginas > 1 && (
+                  <div className="flex items-center gap-1">
+                    <IconButton
+                      icon={ChevronLeft}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setPagina((p) => Math.max(1, p - 1))}
+                      disabled={pagina === 1}
+                      ariaLabel="Página anterior"
+                    />
+                    <div className="text-xs font-semibold tabular-nums px-3">
+                      {pagina} / {totalPaginas}
+                    </div>
+                    <IconButton
+                      icon={ChevronRight}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setPagina((p) => Math.min(totalPaginas, p + 1))}
+                      disabled={pagina === totalPaginas}
+                      ariaLabel="Próxima página"
+                    />
+                  </div>
+                )}
+              </div>
+            </>
           )}
-        </Card>
-      )}
+        </Painel>
+      </ColunasPagina>
 
       {/* Modal de registrar venda */}
       <ModalVenda
@@ -474,6 +735,7 @@ export default function VendasPage() {
         isOpen={drawer.open}
         onClose={() => setDrawer({ open: false, venda: null })}
         venda={drawer.venda}
+        vendedor={drawer.venda ? nomeVendedor(drawer.venda) : null}
         onCancelar={handleAbrirCancelar}
         onVincularLead={(v) => setModalVincularLead({ open: true, venda: v })}
         onIrParaCRM={(leadId) => navigate(`/app/crm?lead=${leadId}`)}
@@ -508,7 +770,7 @@ export default function VendasPage() {
         leads={leads}
         onConfirmar={handleVincularLead}
       />
-    </div>
+    </Pagina>
   );
 }
 
@@ -649,279 +911,335 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, profissiona
   // Parcelas so aparece quando metodo e cartao de credito.
   const mostraParcelas = form.metodoPagamento === 'CREDITO';
 
+
+  const qtdUnidades = itens.reduce((acc, i) => acc + i.quantidade, 0);
+
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
       title="Registrar venda"
-      description="Da baixa no estoque e gera lançamento financeiro automaticamente."
+      description="Dá baixa no estoque e gera o lançamento financeiro automaticamente."
       size="2xl"
     >
-      <form onSubmit={handleSubmit} className="space-y-5">
-        {/* Selecao de produtos — combobox alimenta a lista abaixo */}
-        <Combobox
-          size="lg"
-          label="Produtos da venda"
-          value=""
-          onChange={(id) => { if (id) adicionarItem(id); }}
-          placeholder="Buscar produto pra adicionar..."
-          options={variacoes
-            .filter((v) => !itens.some((i) => i.variacaoId === v.id))
-            .map((v) => ({
-              value: v.id,
-              label: `${v.produto?.nome} - ${v.nome}`,
-              sublabel: `${fmtBRL(precoEfetivoVariacao(v))}${v.produto?.tipo === 'FISICO' ? ` · ${v.estoqueAtual} em estoque` : ''}`,
-            }))}
-          clearable
-          hint={itens.length === 0 ? 'Comece adicionando o 1º produto.' : 'Pode adicionar quantos produtos quiser.'}
-        />
+      <form onSubmit={handleSubmit} className="flex flex-wrap gap-4 items-start">
+        {/* Coluna esquerda: produtos, cliente e detalhes */}
+        <div className="min-w-0 flex flex-col gap-4" style={{ flex: '999 1 420px' }}>
+          {/* Selecao de produtos — combobox alimenta a lista abaixo */}
+          <Combobox
+            label="Produtos da venda"
+            value=""
+            onChange={(id) => { if (id) adicionarItem(id); }}
+            placeholder="Buscar produto pra adicionar..."
+            options={variacoes
+              .filter((v) => !itens.some((i) => i.variacaoId === v.id))
+              .map((v) => ({
+                value: v.id,
+                label: `${v.produto?.nome} - ${v.nome}`,
+                sublabel: `${fmtBRL(precoEfetivoVariacao(v))}${v.produto?.tipo === 'FISICO' ? ` · ${v.estoqueAtual} em estoque` : ''}`,
+              }))}
+            clearable
+            hint={itens.length === 0 ? 'Comece adicionando o 1º produto.' : 'Pode adicionar quantos produtos quiser.'}
+          />
 
-        {/* Lista de itens adicionados */}
-        {itens.length > 0 && (
-          <div className="space-y-2">
-            {itens.map((item) => {
-              const v = item._v;
-              const precoUnit = precoEfetivoVariacao(v);
-              // Categoria do produto — exibida inline (badge) pra deixar
-              // claro pro usuario que cada item leva a categoria propria
-              // (1 lancamento financeiro por categoria).
-              const catNome = mapaCategorias.get(v?.produto?.categoriaId);
-              const alugavel = !!v?.produto?.temDevolucao;
-              return (
-                <div key={item.variacaoId} className="rounded-xl border border-[var(--border-main)] bg-[var(--bg-card)] overflow-hidden">
-                  <div className="flex items-center gap-3 p-3">
-                    <Package size={16} strokeWidth={1.75} className="text-[var(--text-muted)] flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <div className="text-sm font-semibold text-[var(--text-main)] truncate">
-                          {v?.produto?.nome} <span className="text-[var(--text-muted)] font-normal">{v?.nome}</span>
+          {/* Carrinho */}
+          <div className="rounded-[10px] border border-[var(--border-main)] bg-[var(--bg-card)]">
+            <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-[var(--border-subtle)]">
+              <span className="text-sm font-bold text-[var(--text-main)]">Itens</span>
+              <span className="text-xs text-[var(--text-muted)] tabular-nums">
+                {qtdUnidades} {qtdUnidades === 1 ? 'item' : 'itens'}
+              </span>
+            </div>
+            {itens.length === 0 ? (
+              <p className="m-0 px-4 py-8 text-center text-[13px] text-[var(--text-muted)]">
+                Carrinho vazio. Busque um produto acima pra começar.
+              </p>
+            ) : (
+              itens.map((item) => {
+                const v = item._v;
+                const precoUnit = precoEfetivoVariacao(v);
+                // Categoria do produto — exibida inline (badge) pra deixar
+                // claro pro usuario que cada item leva a categoria propria
+                // (1 lancamento financeiro por categoria).
+                const catNome = mapaCategorias.get(v?.produto?.categoriaId);
+                const alugavel = !!v?.produto?.temDevolucao;
+                const nomeItem = `${v?.produto?.nome || ''} ${v?.nome || ''}`.trim();
+                return (
+                  <div key={item.variacaoId} className="border-b border-[var(--border-subtle)] last:border-b-0">
+                    <div className="flex flex-wrap items-center gap-2 px-4 py-2.5">
+                      <Package size={16} strokeWidth={1.75} aria-hidden="true" className="text-[var(--text-muted)] flex-shrink-0" />
+                      <div className="flex-1 min-w-[140px]">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[13px] font-semibold text-[var(--text-main)]">
+                            {v?.produto?.nome} <span className="text-[var(--text-muted)] font-normal">{v?.nome}</span>
+                          </span>
+                          {catNome
+                            ? <Badge variant="neutral" size="sm">{catNome}</Badge>
+                            : <Badge variant="warning" size="sm">Sem categoria</Badge>}
+                          {alugavel && <Badge variant="accent" size="sm">Aluguel</Badge>}
                         </div>
-                        {catNome
-                          ? <Badge variant="neutral" size="sm">{catNome}</Badge>
-                          : <Badge variant="warning" size="sm">Sem categoria</Badge>}
-                        {alugavel && <Badge variant="accent" size="sm">Aluguel</Badge>}
+                        <div className="text-xs text-[var(--text-muted)] tabular-nums">
+                          {fmtBRL(precoUnit)} cada
+                          {v?.produto?.tipo === 'FISICO' && ` · ${v.estoqueAtual} em estoque`}
+                        </div>
                       </div>
-                      <div className="text-xs text-[var(--text-muted)] mt-0.5">
-                        {fmtBRL(precoUnit)} cada
-                        {v?.produto?.tipo === 'FISICO' && ` · ${v.estoqueAtual} em estoque`}
+
+                      {/* Stepper de quantidade */}
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => mudarQuantidade(item.variacaoId, item.quantidade - 1)}
+                          className="w-7 h-7 grid place-items-center rounded-md border border-[var(--border-main)] bg-[var(--bg-card)] text-[var(--text-main)] hover:bg-[var(--bg-subtle)] disabled:opacity-40 transition-colors"
+                          disabled={item.quantidade <= 1}
+                          aria-label={`Diminuir ${nomeItem}`}
+                        >
+                          <Minus size={14} aria-hidden="true" />
+                        </button>
+                        <input
+                          type="number"
+                          min={1}
+                          value={item.quantidade}
+                          onChange={(e) => mudarQuantidade(item.variacaoId, e.target.value)}
+                          className="w-11 h-7 text-center text-[13px] font-bold tabular-nums rounded-md border border-[var(--border-main)] bg-[var(--bg-card)] text-[var(--text-main)] focus:outline-none focus:border-[var(--primary)]"
+                          aria-label={`Quantidade de ${nomeItem}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => mudarQuantidade(item.variacaoId, item.quantidade + 1)}
+                          className="w-7 h-7 grid place-items-center rounded-md border border-[var(--border-main)] bg-[var(--bg-card)] text-[var(--text-main)] hover:bg-[var(--bg-subtle)] transition-colors"
+                          aria-label={`Aumentar ${nomeItem}`}
+                        >
+                          <Plus size={14} aria-hidden="true" />
+                        </button>
                       </div>
-                    </div>
 
-                    {/* Stepper de quantidade */}
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => mudarQuantidade(item.variacaoId, item.quantidade - 1)}
-                        className="w-7 h-9 rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] text-sm font-semibold transition-colors"
-                        disabled={item.quantidade <= 1}
-                        aria-label="Diminuir"
-                      >−</button>
-                      <input
-                        type="number"
-                        min={1}
-                        value={item.quantidade}
-                        onChange={(e) => mudarQuantidade(item.variacaoId, e.target.value)}
-                        className="w-12 h-9 text-center text-sm font-semibold tabular-nums rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)] text-[var(--text-main)] focus:outline-none focus:ring-2 focus:ring-[var(--border-main)]"
-                        aria-label="Quantidade"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => mudarQuantidade(item.variacaoId, item.quantidade + 1)}
-                        className="w-7 h-9 rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] text-sm font-semibold transition-colors"
-                        aria-label="Aumentar"
-                      >+</button>
-                    </div>
+                      <div className="text-[13px] font-bold text-[var(--text-main)] tabular-nums w-24 text-right flex-shrink-0">
+                        {fmtBRL(precoUnit * item.quantidade)}
+                      </div>
 
-                    <div className="text-sm font-semibold text-[var(--text-main)] tabular-nums w-24 text-right flex-shrink-0">
-                      {fmtBRL(precoUnit * item.quantidade)}
-                    </div>
-
-                    <IconButton
-                      icon={Trash2}
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => removerItem(item.variacaoId)}
-                      ariaLabel="Remover item"
-                    />
-                  </div>
-
-                  {/* Item alugavel: exige data de devolucao. Prazo padrao do
-                      produto ja vem sugerido (ver adicionarItem); funcionario
-                      pode ajustar. */}
-                  {alugavel && (
-                    <div className="flex items-center gap-2 px-3 pb-3 pt-2 border-t border-[var(--border-subtle)] bg-[var(--warning-soft)]/20">
-                      <Input
+                      <IconButton
+                        icon={Trash2}
+                        variant="ghost"
                         size="sm"
-                        type="date"
-                        label="Devolução em"
-                        value={datasDevolucao[item.variacaoId] || ''}
-                        onChange={(e) => setDatasDevolucao((prev) => ({ ...prev, [item.variacaoId]: e.target.value }))}
-                        required
+                        onClick={() => removerItem(item.variacaoId)}
+                        ariaLabel={`Remover ${nomeItem}`}
                       />
                     </div>
-                  )}
-                </div>
-              );
-            })}
 
-            {/* Total agregado */}
-            <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-[var(--bg-subtle)] border border-[var(--border-main)] text-[var(--text-main)] font-semibold">
-              <span className="text-sm text-[var(--text-secondary)]">Total da venda</span>
-              <span className="text-lg tabular-nums">{fmtBRL(valorTotal)}</span>
-            </div>
+                    {/* Item alugavel: exige data de devolucao. Prazo padrao do
+                        produto ja vem sugerido (ver adicionarItem); funcionario
+                        pode ajustar. */}
+                    {alugavel && (
+                      <div className="flex items-center gap-2 px-4 pb-3 pt-2 border-t border-[var(--border-subtle)] bg-[var(--warning-soft)]">
+                        <Input
+                          size="sm"
+                          type="date"
+                          label="Devolução em"
+                          value={datasDevolucao[item.variacaoId] || ''}
+                          onChange={(e) => setDatasDevolucao((prev) => ({ ...prev, [item.variacaoId]: e.target.value }))}
+                          required
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
-        )}
 
-        {/* Pagamento + parcelas (so credito) — categoria saiu daqui, ela vem
-            de cada item (mostrada inline na lista acima). Backend agrupa por
-            categoria e cria 1 lancamento financeiro por categoria. */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Select
-            size="lg"
-            label="Como foi pago?"
-            value={form.metodoPagamento}
-            onChange={(e) => setForm({ ...form, metodoPagamento: e.target.value, parcelas: 1 })}
-            options={[
-              { value: 'PIX', label: 'PIX' },
-              { value: 'DINHEIRO', label: 'Dinheiro' },
-              { value: 'DEBITO', label: 'Cartão de débito' },
-              { value: 'CREDITO', label: 'Cartão de crédito' },
-              { value: 'BOLETO', label: 'Boleto' },
-              { value: 'TRANSFERENCIA', label: 'Transferência' },
-            ]}
-            placeholder=""
+          {/* Lead vinculado */}
+          <Combobox
+            label={itensComDevolucao.length > 0 ? 'Cliente' : 'Cliente (opcional)'}
+            value={form.leadId}
+            onChange={(id) => setForm({ ...form, leadId: id })}
+            placeholder="Sem cliente vinculado"
+            options={leads.map((l) => ({ value: l.id, label: l.nome, sublabel: l.telefone || l.email }))}
+            clearable
+            hint={
+              itensComDevolucao.length > 0
+                ? 'Item com devolução precisa de um cliente identificado. Selecione um já cadastrado, ou preencha os dados abaixo.'
+                : 'Vincule a venda a um cliente pra ficar no histórico do CRM.'
+            }
           />
-          {/* Parcelas — so visivel quando metodo e cartao de credito.
-              Metadata: backend nao gera lancamentos separados (operadora paga
-              o lojista o valor cheio). Aparece como nota no relatorio. */}
-          {mostraParcelas && (
-            <Select
-              size="lg"
-              label="Em quantas vezes?"
-              value={String(form.parcelas)}
-              onChange={(e) => setForm({ ...form, parcelas: parseInt(e.target.value, 10) || 1 })}
-              options={Array.from({ length: 12 }, (_, i) => {
-                const n = i + 1;
-                const valorParcela = valorTotal / n;
-                return {
-                  value: String(n),
-                  label: n === 1 ? '1x à vista' : `${n}x de ${fmtBRL(valorParcela)}`,
-                };
-              })}
-              placeholder=""
-              hint="A operadora paga o valor cheio em ~30 dias."
-            />
+
+          {/* Dados do cliente final digitados na hora — so aparece quando ha
+              item com devolucao e nenhum cliente do CRM foi selecionado acima.
+              O backend cria (ou reaproveita, por cpf/telefone) um Lead de
+              verdade a partir desses dados. */}
+          {precisaClienteFinal && (
+            <div className="p-3 rounded-[10px] border border-[var(--warning-soft)] bg-[var(--warning-soft)] space-y-3">
+              <div className="text-xs font-semibold text-[var(--warning-text)]">
+                Quem está alugando? Precisamos pra avisar sobre a devolução.
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <Input
+                  size="sm"
+                  label="Nome"
+                  value={clienteFinal.nome}
+                  onChange={(e) => setClienteFinal({ ...clienteFinal, nome: e.target.value })}
+                  maxLength={120}
+                  required
+                />
+                <Input
+                  size="sm"
+                  label="Telefone"
+                  value={clienteFinal.telefone}
+                  onChange={(e) => setClienteFinal({ ...clienteFinal, telefone: formatarTelefone(e.target.value) })}
+                  placeholder="(11) 99999-9999"
+                  maxLength={15}
+                  required
+                />
+                <Input
+                  size="sm"
+                  label="CPF"
+                  value={clienteFinal.cpf}
+                  onChange={(e) => setClienteFinal({ ...clienteFinal, cpf: formatarCpf(e.target.value) })}
+                  placeholder="000.000.000-00"
+                  maxLength={14}
+                  required
+                />
+              </div>
+            </div>
           )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Input
+              label="Cupom de desconto (opcional)"
+              value={form.cupomCodigo}
+              onChange={(e) => setForm({ ...form, cupomCodigo: e.target.value.toUpperCase() })}
+              placeholder="Ex: VOLTA10"
+              hint="O desconto é aplicado e validado ao registrar a venda."
+            />
+
+            {profissionais.length > 0 && (
+              <Select
+                label="Quem vendeu (opcional)"
+                value={form.especialistaId}
+                onChange={(e) => setForm({ ...form, especialistaId: e.target.value })}
+                placeholder=""
+                hint="Conta na comissão de produto da profissional. Em branco: quem está logado, se for profissional."
+                options={[{ value: '', label: 'Não informar' }, ...profissionais.map((p) => ({ value: p.id, label: p.nome }))]}
+              />
+            )}
+          </div>
+
+          <Textarea
+            label="Observações"
+            value={form.observacoes}
+            onChange={(e) => setForm({ ...form, observacoes: e.target.value })}
+            rows={2}
+            placeholder="Anotações sobre a venda (opcional)"
+          />
         </div>
 
-        {/* Lead vinculado */}
-        <Combobox
-          size="lg"
-          label={itensComDevolucao.length > 0 ? 'Cliente' : 'Cliente (opcional)'}
-          value={form.leadId}
-          onChange={(id) => setForm({ ...form, leadId: id })}
-          placeholder="Sem cliente vinculado"
-          options={leads.map((l) => ({ value: l.id, label: l.nome, sublabel: l.telefone || l.email }))}
-          clearable
-          hint={
-            itensComDevolucao.length > 0
-              ? 'Item com devolução precisa de um cliente identificado. Selecione um já cadastrado, ou preencha os dados abaixo.'
-              : 'Vincule a venda a um lead pra trilha no CRM.'
-          }
-        />
-
-        {/* Dados do cliente final digitados na hora — so aparece quando ha
-            item com devolucao e nenhum cliente do CRM foi selecionado acima.
-            O backend cria (ou reaproveita, por cpf/telefone) um Lead de
-            verdade a partir desses dados. */}
-        {precisaClienteFinal && (
-          <div className="p-4 rounded-xl border border-[var(--warning-soft)] bg-[var(--warning-soft)]/20 space-y-3">
-            <div className="text-xs font-semibold text-[var(--warning-text)]">
-              Quem está alugando? Precisamos pra avisar sobre a devolução.
+        {/* Coluna direita: total, forma de pagamento e finalizar (estilo PDV) */}
+        <aside
+          className="min-w-0 rounded-[10px] border border-[var(--border-main)] bg-[var(--bg-card)] flex flex-col"
+          style={{ flex: '1 1 300px' }}
+          aria-label="Resumo e pagamento"
+        >
+          <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex flex-col gap-2">
+            <div className="flex justify-between text-[13px] text-[var(--text-secondary)]">
+              <span>Subtotal</span>
+              <span className="tabular-nums">{fmtBRL(valorTotal)}</span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <Input
-                size="sm"
-                label="Nome"
-                value={clienteFinal.nome}
-                onChange={(e) => setClienteFinal({ ...clienteFinal, nome: e.target.value })}
-                maxLength={120}
-                required
-              />
-              <Input
-                size="sm"
-                label="Telefone"
-                value={clienteFinal.telefone}
-                onChange={(e) => setClienteFinal({ ...clienteFinal, telefone: formatarTelefone(e.target.value) })}
-                placeholder="(11) 99999-9999"
-                maxLength={15}
-                required
-              />
-              <Input
-                size="sm"
-                label="CPF"
-                value={clienteFinal.cpf}
-                onChange={(e) => setClienteFinal({ ...clienteFinal, cpf: formatarCpf(e.target.value) })}
-                placeholder="000.000.000-00"
-                maxLength={14}
-                required
-              />
+            {form.cupomCodigo.trim() && (
+              <div className="flex justify-between text-[13px] text-[var(--text-secondary)]">
+                <span>Cupom {form.cupomCodigo.trim()}</span>
+                <span>desconto ao registrar</span>
+              </div>
+            )}
+            <div className="flex justify-between items-baseline">
+              <span className="text-[15px] font-bold text-[var(--text-main)]">Total</span>
+              <span className="text-[28px] font-bold text-[var(--text-main)] tabular-nums">{fmtBRL(valorTotal)}</span>
             </div>
           </div>
-        )}
 
-        <Input
-          size="lg"
-          label="Cupom de desconto (opcional)"
-          value={form.cupomCodigo}
-          onChange={(e) => setForm({ ...form, cupomCodigo: e.target.value.toUpperCase() })}
-          placeholder="Ex: VOLTA10"
-          hint="O desconto é aplicado e validado ao registrar a venda."
-        />
+          {/* Pagamento + parcelas (so credito) — categoria saiu daqui, ela vem
+              de cada item (mostrada inline na lista ao lado). Backend agrupa por
+              categoria e cria 1 lancamento financeiro por categoria. */}
+          <div className="px-4 py-3 flex flex-col gap-2.5">
+            <div className="text-xs font-medium text-[var(--text-muted)]" id="rotulo-forma-pagamento">Como foi pago?</div>
+            <div className="grid grid-cols-3 gap-1.5" role="group" aria-labelledby="rotulo-forma-pagamento">
+              {FORMAS_PAGAMENTO.map((f) => {
+                const ativa = form.metodoPagamento === f.value;
+                const Icone = f.icone;
+                return (
+                  <button
+                    key={f.value}
+                    type="button"
+                    aria-pressed={ativa}
+                    onClick={() => setForm({ ...form, metodoPagamento: f.value, parcelas: 1 })}
+                    className={`flex flex-col items-center justify-center gap-1 h-14 px-1 rounded-lg text-xs font-semibold text-center leading-tight transition-colors ${
+                      ativa
+                        ? 'border-2 border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--text-main)]'
+                        : 'border border-[var(--border-main)] bg-[var(--bg-card)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
+                    }`}
+                  >
+                    <Icone size={16} aria-hidden="true" />
+                    {f.label}
+                  </button>
+                );
+              })}
+            </div>
 
-        {profissionais.length > 0 && (
-          <Select
-            size="lg"
-            label="Quem vendeu (opcional)"
-            value={form.especialistaId}
-            onChange={(e) => setForm({ ...form, especialistaId: e.target.value })}
-            placeholder=""
-            hint="Conta na comissão de produto da profissional. Em branco: quem está logado, se for profissional."
-            options={[{ value: '', label: 'Não informar' }, ...profissionais.map((p) => ({ value: p.id, label: p.nome }))]}
-          />
-        )}
+            {/* Parcelas — so visivel quando metodo e cartao de credito.
+                Metadata: backend nao gera lancamentos separados (operadora paga
+                o lojista o valor cheio). Aparece como nota no relatorio. */}
+            {mostraParcelas && (
+              <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-subtle)] p-2.5">
+                <Select
+                  size="sm"
+                  label="Em quantas vezes?"
+                  value={String(form.parcelas)}
+                  onChange={(e) => setForm({ ...form, parcelas: parseInt(e.target.value, 10) || 1 })}
+                  options={Array.from({ length: 12 }, (_, i) => {
+                    const n = i + 1;
+                    const valorParcela = valorTotal / n;
+                    return {
+                      value: String(n),
+                      label: n === 1 ? '1x à vista' : `${n}x de ${fmtBRL(valorParcela)}`,
+                    };
+                  })}
+                  placeholder=""
+                  hint="A operadora paga o valor cheio em ~30 dias."
+                />
+              </div>
+            )}
 
-        <Textarea
-          size="lg"
-          label="Observações"
-          value={form.observacoes}
-          onChange={(e) => setForm({ ...form, observacoes: e.target.value })}
-          rows={2}
-          placeholder="Anotações sobre a venda (opcional)"
-        />
-
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="secondary" onClick={onClose} type="button">Cancelar</Button>
-          <Button variant="primary" type="submit" disabled={itens.length === 0}>
-            Registrar venda ({fmtBRL(valorTotal)})
-          </Button>
-        </div>
+            <Button variant="primary" type="submit" size="lg" fullWidth disabled={itens.length === 0}>
+              {itens.length === 0 ? 'Adicione um item' : `Registrar venda · ${fmtBRL(valorTotal)}`}
+            </Button>
+            <Button variant="secondary" onClick={onClose} type="button" fullWidth>Cancelar</Button>
+          </div>
+        </aside>
       </form>
     </Modal>
   );
 }
 
-function DrawerVenda({ isOpen, onClose, venda, onCancelar, onVincularLead, onIrParaCRM }) {
+const FORMAS_PAGAMENTO = [
+  { value: 'PIX', label: 'Pix', icone: QrCode },
+  { value: 'DINHEIRO', label: 'Dinheiro', icone: Banknote },
+  { value: 'DEBITO', label: 'Débito', icone: CreditCard },
+  { value: 'CREDITO', label: 'Crédito', icone: CreditCard },
+  { value: 'BOLETO', label: 'Boleto', icone: Receipt },
+  { value: 'TRANSFERENCIA', label: 'Transferência', icone: ArrowLeftRight },
+];
+
+function DrawerVenda({ isOpen, onClose, venda, vendedor, onCancelar, onVincularLead, onIrParaCRM }) {
   if (!venda) return null;
 
   const cancelada = venda.status === 'CANCELLED';
-  const cfgStatus = STATUS_BADGE[venda.status] || { variant: 'neutral', label: venda.status || '—' };
+  const cfgStatus = pixAguardando(venda)
+    ? { variant: 'warning', label: 'Aguardando Pix' }
+    : STATUS_BADGE[venda.status] || { variant: 'neutral', label: venda.status || '—' };
 
   return (
     <Drawer
       isOpen={isOpen}
       onClose={onClose}
-      title={`Venda · ${fmtBRL(venda.valor)}`}
+      title={`Venda #${venda.numero ?? venda.id.slice(0, 6)} · ${fmtBRL(venda.valor)}`}
       description={venda.descricao}
       size="md"
       footer={
@@ -947,74 +1265,68 @@ function DrawerVenda({ isOpen, onClose, venda, onCancelar, onVincularLead, onIrP
         </div>
       }
     >
-      <div className="space-y-5">
-        <div className="text-center py-4">
-          <div className={`text-4xl font-semibold tracking-tight tabular-nums ${cancelada ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-main)]'}`}>
-            {fmtBRL(venda.valor)}
+      <div className="flex flex-col gap-4">
+        <div className="flex items-end justify-between gap-3 flex-wrap">
+          <div>
+            <div className={`text-[28px] font-bold tracking-tight tabular-nums ${cancelada ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-main)]'}`}>
+              {fmtBRL(venda.valor)}
+            </div>
+            <div className="text-xs text-[var(--text-muted)]">
+              {new Date(venda.criadoEm).toLocaleString('pt-BR')}
+            </div>
           </div>
-          <div className="text-xs text-[var(--text-muted)] mt-2">
-            {new Date(venda.criadoEm).toLocaleString('pt-BR')}
-          </div>
-          <div className="mt-2">
-            <Badge variant={cfgStatus.variant} size="sm">{cfgStatus.label}</Badge>
-          </div>
+          <Badge variant={cfgStatus.variant} size="sm">{cfgStatus.label}</Badge>
         </div>
 
         {cancelada && (
-          <div className="rounded-xl border border-[var(--danger-soft)] bg-[var(--danger-soft)] p-3">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--danger-text)] mb-1">
-              Cancelada
-            </div>
+          <div className="rounded-[10px] bg-[var(--danger-soft)] p-3 text-[var(--danger-text)]">
+            <div className="text-xs font-bold mb-1">Cancelada</div>
             {venda.dataCancelamento && (
-              <div className="text-xs text-[var(--danger-text)]">
+              <div className="text-xs">
                 em {new Date(venda.dataCancelamento).toLocaleString('pt-BR')}
               </div>
             )}
             {venda.motivoCancelamento && (
-              <div className="text-xs text-[var(--danger-text)] mt-1 italic">
+              <div className="text-xs mt-1 italic">
                 "{venda.motivoCancelamento}"
               </div>
             )}
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3">
-          <InfoBox label="Pagamento" valor={venda.metodoPagamento || '—'} />
-          <InfoBox label="Status" valor={cfgStatus.label} />
-          <div className="bg-[var(--bg-subtle)] rounded-xl p-3">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Cliente</div>
+        <div className="rounded-[10px] border border-[var(--border-main)]">
+          <LinhaInfo rotulo="Pagamento" valor={nomeMetodo(venda.metodoPagamento)} />
+          <LinhaInfo rotulo="Situação" valor={cfgStatus.label} />
+          <LinhaInfo rotulo="Cliente">
             {venda.lead ? (
               <button
                 type="button"
                 onClick={() => onIrParaCRM?.(venda.leadId)}
-                className="text-sm font-semibold text-[var(--text-main)] hover:underline mt-0.5 inline-flex items-center gap-1 text-left"
+                className="font-semibold text-[var(--text-main)] hover:underline inline-flex items-center gap-1"
               >
                 {venda.lead.nome}
-                <ExternalLink size={11} className="text-[var(--text-muted)]" />
+                <ExternalLink size={11} aria-hidden="true" className="text-[var(--text-muted)]" />
               </button>
             ) : (
-              <div className="text-sm font-semibold text-[var(--text-muted)] mt-0.5">—</div>
+              <span className="font-semibold text-[var(--text-muted)]">Balcão</span>
             )}
-          </div>
-          <InfoBox label="Itens" valor={`${venda.movimentacoesEstoque?.length || 0}`} />
+          </LinhaInfo>
+          <LinhaInfo rotulo="Vendedor" valor={vendedor || '—'} />
+          {venda.valorAntesDesconto != null && venda.valorAntesDesconto !== venda.valor && (
+            <LinhaInfo rotulo="Antes do desconto" valor={fmtBRL(venda.valorAntesDesconto)} />
+          )}
         </div>
 
         {venda.movimentacoesEstoque?.length > 0 && (
           <div>
-            <div className="text-xs font-semibold tracking-wide text-[var(--text-secondary)] mb-2">Itens vendidos</div>
-            <div className="space-y-2">
+            <div className="text-xs font-semibold text-[var(--text-muted)] mb-1.5">Itens vendidos</div>
+            <div className="rounded-[10px] border border-[var(--border-main)]">
               {venda.movimentacoesEstoque.map((m) => (
-                <div key={m.id} className="flex items-center gap-3 p-3 rounded-xl border border-[var(--border-main)]">
-                  <Package size={16} className="text-[var(--text-muted)]" strokeWidth={1.75} />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-[var(--text-main)] tracking-tight">
-                      {m.variacao?.produto?.nome} · {m.variacao?.nome}
-                    </div>
-                  </div>
-                  <span className="text-sm font-semibold tabular-nums text-[var(--text-main)]">
-                    {Math.abs(m.quantidade)} un.
-                  </span>
-                </div>
+                <LinhaInfo
+                  key={m.id}
+                  rotulo={`${m.variacao?.produto?.nome || ''} · ${m.variacao?.nome || ''}`}
+                  valor={`${Math.abs(m.quantidade)} un.`}
+                />
               ))}
             </div>
           </div>
@@ -1022,26 +1334,18 @@ function DrawerVenda({ isOpen, onClose, venda, onCancelar, onVincularLead, onIrP
 
         {venda.lancamentosFinanceiros?.length > 0 && (
           <div>
-            <div className="text-xs font-semibold tracking-wide text-[var(--text-secondary)] mb-2">Lancamento financeiro</div>
-            {venda.lancamentosFinanceiros.map((l) => (
-              <div key={l.id} className="flex items-center justify-between p-3 rounded-xl border border-[var(--border-main)]">
-                <div className="text-sm text-[var(--text-secondary)]">{l.descricao}</div>
-                <Badge variant="success" size="sm">{l.status}</Badge>
-              </div>
-            ))}
+            <div className="text-xs font-semibold text-[var(--text-muted)] mb-1.5">Lançamento financeiro</div>
+            <div className="rounded-[10px] border border-[var(--border-main)]">
+              {venda.lancamentosFinanceiros.map((l) => (
+                <LinhaInfo key={l.id} rotulo={l.descricao}>
+                  <Badge variant="success" size="sm">{l.status}</Badge>
+                </LinhaInfo>
+              ))}
+            </div>
           </div>
         )}
       </div>
     </Drawer>
-  );
-}
-
-function InfoBox({ label, valor }) {
-  return (
-    <div className="bg-[var(--bg-subtle)] rounded-xl p-3">
-      <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">{label}</div>
-      <div className="text-sm font-semibold text-[var(--text-main)] mt-0.5">{valor}</div>
-    </div>
   );
 }
 
@@ -1055,7 +1359,7 @@ function ModalCaixaFechado({ isOpen, onClose, onIrParaCaixa }) {
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Abra o caixa antes" description="Pra registrar uma venda manual, o caixa precisa estar aberto." size="md">
       <div className="space-y-4">
-        <div className="flex items-start gap-3 p-3 rounded-xl bg-[var(--warning-soft)] text-[var(--warning-text)]">
+        <div className="flex items-start gap-3 p-3 rounded-[10px] bg-[var(--warning-soft)] text-[var(--warning-text)]">
           <Wallet size={16} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
           <div className="text-xs leading-relaxed">
             <strong>Por que isso?</strong> O caixa registra o saldo do dia (fundo + vendas + retiradas + entradas). Sem ele, não dá para controlar o que entra e sai do caixa físico.
@@ -1112,7 +1416,7 @@ function ModalCancelarVenda({ isOpen, onClose, venda, onConfirmar }) {
       size="md"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="flex items-start gap-3 p-3 rounded-xl bg-[var(--warning-soft)] text-[var(--warning-text)]">
+        <div className="flex items-start gap-3 p-3 rounded-[10px] bg-[var(--warning-soft)] text-[var(--warning-text)]">
           <Ban size={16} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
           <div className="text-xs leading-relaxed">
             <strong>Atenção:</strong> ao cancelar, o sistema vai:
@@ -1182,12 +1486,12 @@ function ModalVincularLead({ isOpen, onClose, venda, leads, onConfirmar }) {
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={jaTemLead ? 'Trocar cliente da venda' : 'Vincular cliente a venda'}
+      title={jaTemLead ? 'Trocar cliente da venda' : 'Vincular cliente à venda'}
       description={`Venda #${venda.numero ?? venda.id?.slice(0, 8)} · ${fmtBRL(venda.valor)}`}
       size="md"
     >
       <div className="space-y-4">
-        <div className="flex items-start gap-3 p-3 rounded-xl bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
+        <div className="flex items-start gap-3 p-3 rounded-[10px] bg-[var(--bg-subtle)] text-[var(--text-secondary)]">
           <UserPlus size={16} strokeWidth={2} className="flex-shrink-0 mt-0.5 text-[var(--text-muted)]" />
           <div className="text-xs leading-relaxed">
             Vincular um cliente preserva auditoria no CRM e propaga pro

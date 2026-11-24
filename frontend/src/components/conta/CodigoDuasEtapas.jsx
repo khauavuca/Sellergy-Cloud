@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { AlertCircle, Copy, KeyRound, LogOut, ShieldCheck, ShieldOff } from 'lucide-react';
 import api from '../../services/api';
 import { useAuthStore } from '../../store/auth.store';
-import { Badge, Button, Card, CardDescription, CardHeader, CardTitle, Input, useToast } from '../ui';
+import { Badge, Button, Input, Painel, useToast } from '../ui';
 
 const somenteDigitos = (v) => v.replace(/\D/g, '').slice(0, 6);
 
@@ -26,6 +26,19 @@ function CampoCodigo({ id, value, onChange, error }) {
   );
 }
 
+// Linha "opção" do cartão: título + descrição à esquerda, ação à direita.
+function Opcao({ titulo, descricao, acao }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3.5 border-b border-[var(--border-subtle)] last:border-b-0">
+      <div className="min-w-0 flex-1">
+        <strong className="block text-sm font-semibold text-[var(--text-main)]">{titulo}</strong>
+        <span className="block mt-0.5 text-[13px] text-[var(--text-muted)]">{descricao}</span>
+      </div>
+      {acao && <div className="flex-shrink-0">{acao}</div>}
+    </div>
+  );
+}
+
 /**
  * Cartao "Código em 2 etapas" do Meu perfil (admin e cliente).
  *   desligado -> configurar (QR + segredo) -> ativar com o codigo
@@ -39,6 +52,7 @@ export default function CodigoDuasEtapas() {
   const [senha, setSenha] = useState('');
   const [erro, setErro] = useState('');
   const [carregando, setCarregando] = useState(false);
+  const [desligando, setDesligando] = useState(false);
 
   const ativo = user?.totpAtivo === true;
   const obrigatorio = user?.perfil === 'ADMIN' && user?.admin2faObrigatorio === true;
@@ -87,6 +101,7 @@ export default function CodigoDuasEtapas() {
       await api.post('/autenticacao/2fa/desativar', { senha, codigo });
       setSenha('');
       setCodigo('');
+      setDesligando(false);
       await refreshUser();
       toast.success('Código em 2 etapas desativado.');
     } catch (e2) {
@@ -111,76 +126,78 @@ export default function CodigoDuasEtapas() {
     window.location.assign(destino);
   };
 
-  return (
-    <Card padding="lg">
-      <CardHeader>
-        <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <CardTitle>Código em 2 etapas</CardTitle>
-            {ativo
-              ? <Badge variant="success" size="sm" icon={ShieldCheck}>Ativo</Badge>
-              : <Badge variant="neutral" size="sm">Desligado</Badge>}
-          </div>
-          <CardDescription>
-            Além da senha, o login pede um código de 6 dígitos de um app autenticador no celular
-            (Google Authenticator, Microsoft Authenticator, Authy ou outro).
-          </CardDescription>
-        </div>
-      </CardHeader>
+  const rotuloBadge = ativo
+    ? <Badge variant="success" size="sm" icon={ShieldCheck}>Ativo</Badge>
+    : <Badge variant="neutral" size="sm">Desligado</Badge>;
 
+  return (
+    <Painel
+      id="codigo-2-etapas"
+      titulo="Código em 2 etapas"
+      subtitulo="Pede um código de 6 dígitos do app autenticador a cada login."
+      acoes={rotuloBadge}
+      semPadding
+    >
       {erro && (
-        <div role="alert" className="mb-4 flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-[var(--danger-soft)]">
+        <div role="alert" className="mx-4 mt-3.5 flex items-start gap-2.5 px-3.5 py-3 rounded-lg bg-[var(--danger-soft)]">
           <AlertCircle size={16} className="text-[var(--danger)] flex-shrink-0 mt-0.5" aria-hidden="true" />
-          <p className="text-sm text-[var(--danger-text)] font-medium">{erro}</p>
+          <p className="m-0 text-[13px] text-[var(--danger-text)] font-medium">{erro}</p>
         </div>
       )}
 
       {precisaEntrarDeNovo && (
-        <div className="space-y-3">
-          <p className="text-sm text-[var(--text-secondary)]">
-            O código já está ativo, mas esta sessão começou sem ele. Saia e entre de novo usando o código do app para liberar o painel.
-          </p>
-          <Button variant="primary" icon={LogOut} className="min-h-11" onClick={sair}>Sair e entrar de novo</Button>
-        </div>
+        <Opcao
+          titulo="Entre de novo com o código"
+          descricao="O código já está ativo, mas esta sessão começou sem ele. Saia e entre de novo usando o código do app para liberar o painel."
+          acao={<Button variant="primary" size="sm" icon={LogOut} onClick={sair}>Sair e entrar de novo</Button>}
+        />
       )}
 
       {!ativo && !config && (
-        <Button variant="primary" icon={KeyRound} className="min-h-11" loading={carregando} onClick={comecar}>
-          Ativar código em 2 etapas
-        </Button>
+        <Opcao
+          titulo="App autenticador"
+          descricao="Google Authenticator, Microsoft Authenticator, Authy ou outro no seu celular."
+          acao={(
+            <Button variant="primary" size="sm" icon={KeyRound} loading={carregando} onClick={comecar}>
+              Ativar código em 2 etapas
+            </Button>
+          )}
+        />
       )}
 
       {!ativo && config && (
-        <form onSubmit={ativar} className="space-y-4">
-          <ol className="list-decimal pl-5 space-y-1.5 text-sm text-[var(--text-secondary)]">
+        <form onSubmit={ativar} className="p-4 space-y-4">
+          <ol className="m-0 list-decimal pl-5 space-y-1 text-[13px] text-[var(--text-secondary)]">
             <li>No app autenticador, adicione uma conta e leia o QR Code abaixo.</li>
             <li>Se não der para ler, digite a chave manualmente.</li>
             <li>Digite o código de 6 dígitos que o app mostrar.</li>
           </ol>
-          <div className="flex flex-col sm:flex-row gap-5 items-start">
+          <div className="flex flex-col sm:flex-row gap-4 items-start">
             <img
               src={config.qrCode}
               alt="QR Code para cadastrar o Sellergy Cloud no app autenticador"
-              width={176}
-              height={176}
-              className="w-44 h-44 rounded-xl border border-[var(--border-main)] bg-white p-2"
+              width={160}
+              height={160}
+              className="w-40 h-40 rounded-[10px] border border-[var(--border-main)] bg-white p-2"
             />
-            <div className="flex-1 min-w-0 space-y-2">
-              <p className="text-xs font-semibold tracking-wide text-[var(--text-secondary)]">Chave para digitar no app</p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 min-w-0 break-all px-3 py-2.5 rounded-lg bg-[var(--bg-subtle)] text-sm font-mono text-[var(--text-main)] select-all">
-                  {config.segredo}
-                </code>
-                <Button variant="secondary" icon={Copy} className="min-h-11" onClick={copiar} aria-label="Copiar chave">
-                  Copiar
-                </Button>
+            <div className="flex-1 min-w-0 space-y-3">
+              <div className="space-y-1.5">
+                <p className="m-0 text-xs font-semibold text-[var(--text-secondary)]">Chave para digitar no app</p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 min-w-0 break-all px-3 py-2 rounded-lg bg-[var(--bg-subtle)] text-[13px] font-mono text-[var(--text-main)] select-all">
+                    {config.segredo}
+                  </code>
+                  <Button variant="secondary" size="sm" icon={Copy} onClick={copiar} aria-label="Copiar chave">
+                    Copiar
+                  </Button>
+                </div>
               </div>
+              <CampoCodigo id="codigo-ativar-2fa" value={codigo} onChange={setCodigo} />
             </div>
           </div>
-          <CampoCodigo id="codigo-ativar-2fa" value={codigo} onChange={setCodigo} />
           <div className="flex flex-wrap justify-end gap-2">
-            <Button variant="ghost" className="min-h-11" onClick={() => { setConfig(null); setErro(''); }}>Cancelar</Button>
-            <Button type="submit" variant="primary" className="min-h-11" loading={carregando} disabled={codigo.length !== 6}>
+            <Button variant="ghost" onClick={() => { setConfig(null); setErro(''); }}>Cancelar</Button>
+            <Button type="submit" variant="primary" loading={carregando} disabled={codigo.length !== 6}>
               Confirmar e ativar
             </Button>
           </div>
@@ -188,18 +205,36 @@ export default function CodigoDuasEtapas() {
       )}
 
       {ativo && !precisaEntrarDeNovo && (
-        obrigatorio ? (
-          <p className="text-sm text-[var(--text-secondary)]">
-            Para o administrador do sistema o código em 2 etapas é obrigatório e não pode ser desligado.
+        <Opcao titulo="App autenticador" descricao="O login pede o código do app além da senha." />
+      )}
+
+      {ativo && !precisaEntrarDeNovo && obrigatorio && (
+        <Opcao
+          titulo="Desativar o código"
+          descricao="Para o administrador do sistema o código em 2 etapas é obrigatório e não pode ser desligado."
+        />
+      )}
+
+      {ativo && !precisaEntrarDeNovo && !obrigatorio && !desligando && (
+        <Opcao
+          titulo="Desativar o código"
+          descricao="Sua conta fica protegida só pela senha."
+          acao={(
+            <Button variant="secondary" size="sm" icon={ShieldOff} onClick={() => { setDesligando(true); setErro(''); }}>
+              Desativar
+            </Button>
+          )}
+        />
+      )}
+
+      {ativo && !precisaEntrarDeNovo && !obrigatorio && desligando && (
+        <form onSubmit={desativar} className="p-4 space-y-4">
+          <p className="m-0 text-[13px] text-[var(--text-secondary)]">
+            Para desligar, confirme sua senha e um código do app. Sem o código, sua conta fica protegida só pela senha.
           </p>
-        ) : (
-          <form onSubmit={desativar} className="space-y-4">
-            <p className="text-sm text-[var(--text-secondary)]">
-              Para desligar, confirme sua senha e um código do app. Sem o código, sua conta fica protegida só pela senha.
-            </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
               label="Senha atual"
-              aria-label="Senha atual"
               type="password"
               autoComplete="current-password"
               value={senha}
@@ -207,14 +242,15 @@ export default function CodigoDuasEtapas() {
               required
             />
             <CampoCodigo id="codigo-desativar-2fa" value={codigo} onChange={setCodigo} />
-            <div className="flex justify-end">
-              <Button type="submit" variant="danger-soft" icon={ShieldOff} className="min-h-11" loading={carregando} disabled={codigo.length !== 6 || !senha}>
-                Desativar código em 2 etapas
-              </Button>
-            </div>
-          </form>
-        )
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="ghost" onClick={() => { setDesligando(false); setSenha(''); setCodigo(''); setErro(''); }}>Cancelar</Button>
+            <Button type="submit" variant="danger-soft" icon={ShieldOff} loading={carregando} disabled={codigo.length !== 6 || !senha}>
+              Desativar código em 2 etapas
+            </Button>
+          </div>
+        </form>
       )}
-    </Card>
+    </Painel>
   );
 }

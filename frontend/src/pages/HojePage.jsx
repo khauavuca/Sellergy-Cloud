@@ -1,42 +1,39 @@
-// /app/hoje — o celular da dona: 3 numeros do dia, horarios, avisos e
-// "Cobrar rapido" (Pix na hora). Frente C da fase 2.
-// Prototipo: sellergy-prototipo/project/AppDono.dc.html. Backend: /hoje.
+// /app/hoje — o dia da dona. No computador: números do dia + 3 colunas
+// (atendimento agora / a seguir / Cobrar rápido · agenda do dia · avisos).
+// No celular: os mesmos blocos em abas Hoje / Agenda / Cobrar (Pix na hora).
+// Mockup: layout/project/Hoje.dc.html. Backend: /hoje e /agenda/:id/concluir.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import clsx from 'clsx';
-import { Loader2, RefreshCw, Copy, CheckCircle2, Delete, QrCode, Bell, CalendarDays } from 'lucide-react';
+import { Loader2, RefreshCw, Copy, CheckCircle2, Delete, QrCode, Bell } from 'lucide-react';
 import api from '../services/api';
-import { Button, useToast } from '../components/ui';
+import { iniciais } from '../components/agenda/agendaUtils';
+import { Pagina, FaixaNumeros, Numero, Painel, AbasPilula, Badge, Button, useToast } from '../components/ui';
 
 const fmtBRL = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtHora = (d) => new Date(d).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 const fmtDia = (d) => {
-  const t = new Date(d).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' });
+  const t = new Date(d).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
   return t.charAt(0).toUpperCase() + t.slice(1);
+};
+const fmtFalta = (min) => {
+  if (min <= 0) return 'agora';
+  if (min < 60) return `em ${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m ? `em ${h} h ${m} min` : `em ${h} h`;
 };
 const erroDe = (e, padrao) => e?.response?.data?.erro || padrao;
 
-const COR_STATUS = {
-  CONFIRMED: 'bg-[var(--success-soft)] text-[var(--success-text)]',
-  COMPLETED: 'bg-[var(--bg-subtle)] text-[var(--text-secondary)]',
-  PENDING: 'bg-[var(--warning-soft)] text-[var(--warning-text)]',
-};
+const VARIANTE_STATUS = { CONFIRMED: 'success', PENDING: 'warning', COMPLETED: 'neutral' };
 
 const TECLAS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', 'apagar'];
 const INTERVALO_RESUMO = 60 * 1000;
 const INTERVALO_PIX = 4000;
 const PIX_DESISTE_MS = 20 * 60 * 1000;
-
-function Numero({ rotulo, valor, detalhe, grande }) {
-  return (
-    <div className={clsx('rounded-2xl border border-[var(--border-main)] bg-[var(--bg-card)] p-4', grande && 'col-span-2 lg:col-span-1')}>
-      <p className="text-xs text-[var(--text-muted)]">{rotulo}</p>
-      <p className={clsx('mt-1 font-bold tabular-nums text-[var(--text-main)]', grande ? 'text-3xl' : 'text-xl')}>{valor}</p>
-      {detalhe && <p className="text-xs text-[var(--text-muted)] mt-1">{detalhe}</p>}
-    </div>
-  );
-}
+// Valores em dinheiro encolhem um pouco no celular pra não cortar.
+const VALOR_COMPACTO = 'max-sm:[&>div:nth-child(2)]:text-lg';
 
 function CobrarRapido({ pagamentoConfigurado, aoMudar }) { // aoMudar = recarrega o resumo do dia
   const toast = useToast();
@@ -102,93 +99,133 @@ function CobrarRapido({ pagamentoConfigurado, aoMudar }) { // aoMudar = recarreg
 
   if (!pagamentoConfigurado) {
     return (
-      <div className="rounded-2xl border border-[var(--border-main)] bg-[var(--bg-card)] p-5">
-        <h2 className="text-base font-semibold text-[var(--text-main)]">Cobrar rápido</h2>
-        <p className="text-sm text-[var(--text-secondary)] mt-2">Pra gerar Pix na hora, ative o recebimento por Pix uma vez.</p>
-        <Link to="/app/pagamentos" className="mt-4 inline-flex items-center justify-center min-h-11 px-4 rounded-lg bg-[var(--primary)] text-[var(--text-on-primary)] text-sm font-semibold">
+      <Painel titulo="Cobrar rápido" subtitulo="Pix na hora, com QR Code">
+        <p className="m-0 text-[13px] text-[var(--text-secondary)]">Pra gerar Pix na hora, ative o recebimento por Pix uma vez.</p>
+        <Link to="/app/pagamentos" className="mt-3 inline-flex items-center justify-center h-10 px-4 rounded-lg bg-[var(--primary)] text-[var(--text-on-primary)] text-sm font-semibold">
           Ativar Pix
         </Link>
-      </div>
+      </Painel>
     );
   }
 
   return (
-    <div className="rounded-2xl border border-[var(--border-main)] bg-[var(--bg-card)] p-4 sm:p-5">
-      <h2 className="text-base font-semibold text-[var(--text-main)]">Cobrar rápido</h2>
-      <p className="text-center text-4xl font-bold tabular-nums text-[var(--text-main)] mt-4" aria-live="polite">{fmtBRL(valor)}</p>
+    <Painel titulo="Cobrar rápido" subtitulo="Pix na hora, com QR Code">
+      <p className="m-0 text-center text-3xl font-bold tabular-nums text-[var(--text-main)]" aria-live="polite">{fmtBRL(valor)}</p>
 
       {!pix && (
         <>
-          <div className="grid grid-cols-3 gap-2 mt-4" role="group" aria-label="Teclado do valor">
+          <div className="grid grid-cols-3 gap-2 mt-3" role="group" aria-label="Teclado do valor">
             {TECLAS.map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => teclar(t)}
                 aria-label={t === 'apagar' ? 'Apagar último número' : t}
-                className="min-h-14 rounded-xl bg-[var(--bg-subtle)] text-xl font-semibold text-[var(--text-main)] hover:bg-[var(--border-main)] active:scale-[0.98] grid place-items-center"
+                className="min-h-14 lg:min-h-11 rounded-lg bg-[var(--bg-subtle)] text-lg font-semibold text-[var(--text-main)] hover:bg-[var(--border-main)] active:scale-[0.98] grid place-items-center"
               >
-                {t === 'apagar' ? <Delete size={22} aria-hidden /> : t}
+                {t === 'apagar' ? <Delete size={20} aria-hidden /> : t}
               </button>
             ))}
           </div>
-          {erro && <p role="alert" className="text-sm text-[var(--danger-text)] mt-3">{erro}</p>}
-          <Button size="lg" fullWidth className="mt-4" icon={QrCode} loading={gerando} disabled={valor < 1} onClick={gerar}>
+          {erro && <p role="alert" className="m-0 text-[13px] text-[var(--danger-text)] mt-3">{erro}</p>}
+          <Button fullWidth className="mt-3 max-lg:h-12" icon={QrCode} loading={gerando} disabled={valor < 1} onClick={gerar}>
             Gerar Pix
           </Button>
         </>
       )}
 
       {pix && pix.status === 'PAGO' && (
-        <div className="mt-5 text-center" role="status">
-          <CheckCircle2 size={48} className="mx-auto text-[var(--success-text)]" aria-hidden />
-          <p className="mt-2 text-lg font-semibold text-[var(--text-main)]">Pago às {fmtHora(pix.pagoEm || new Date())}</p>
-          <p className="text-sm text-[var(--text-muted)]">Entrada lançada no caixa de hoje.</p>
-          <Button size="lg" fullWidth className="mt-4" onClick={nova}>Nova cobrança</Button>
+        <div className="mt-4 text-center" role="status">
+          <CheckCircle2 size={40} className="mx-auto text-[var(--success-text)]" aria-hidden />
+          <p className="m-0 mt-2 text-base font-semibold text-[var(--text-main)]">Pago às {fmtHora(pix.pagoEm || new Date())}</p>
+          <p className="m-0 text-[13px] text-[var(--text-muted)]">Entrada lançada no caixa de hoje.</p>
+          <Button fullWidth className="mt-3" onClick={nova}>Nova cobrança</Button>
         </div>
       )}
 
       {pix && pix.status !== 'PAGO' && (
-        <div className="mt-4 space-y-3">
+        <div className="mt-3 space-y-3">
           {pix.qrCodeBase64 && (
             <img
               src={pix.qrCodeBase64.startsWith('data:') ? pix.qrCodeBase64 : `data:image/png;base64,${pix.qrCodeBase64}`}
               alt={`QR Code do Pix de ${fmtBRL(pix.valor)}`}
-              className="mx-auto w-56 h-56 rounded-lg bg-white p-2"
+              className="mx-auto w-52 h-52 rounded-lg bg-white p-2"
               onError={(e) => { e.currentTarget.hidden = true; }}
             />
           )}
           {pix.qrCode && (
             <div>
               <label htmlFor="pix-copia" className="text-xs font-semibold text-[var(--text-secondary)]">Pix copia e cola</label>
-              <textarea id="pix-copia" readOnly value={pix.qrCode} rows={3} className="mt-1 w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-subtle)] p-2 text-xs break-all" />
-              <Button variant="secondary" size="lg" fullWidth icon={Copy} onClick={copiar}>Copiar código</Button>
+              <textarea id="pix-copia" readOnly value={pix.qrCode} rows={3} className="mt-1 w-full rounded-lg border border-[var(--border-strong)] bg-[var(--bg-subtle)] text-[var(--text-main)] p-2 text-xs break-all" />
+              <Button variant="secondary" fullWidth icon={Copy} onClick={copiar}>Copiar código</Button>
             </div>
           )}
           {pix.status === 'PENDENTE' ? (
-            <p className="flex items-center justify-center gap-2 text-sm text-[var(--text-muted)]" role="status">
+            <p className="m-0 flex items-center justify-center gap-2 text-[13px] text-[var(--text-muted)]" role="status">
               <Loader2 size={14} className="animate-spin" aria-hidden /> Esperando o pagamento…
             </p>
           ) : (
-            <p className="text-sm text-center text-[var(--warning-text)]" role="status">Este Pix {pix.status === 'EXPIRADO' ? 'expirou' : 'foi cancelado'}.</p>
+            <p className="m-0 text-[13px] text-center text-[var(--warning-text)]" role="status">Este Pix {pix.status === 'EXPIRADO' ? 'expirou' : 'foi cancelado'}.</p>
           )}
-          <Button size="lg" variant="ghost" fullWidth onClick={nova}>{pix.status === 'PENDENTE' ? 'Digitar outro valor' : 'Nova cobrança'}</Button>
+          <Button variant="ghost" fullWidth onClick={nova}>{pix.status === 'PENDENTE' ? 'Digitar outro valor' : 'Nova cobrança'}</Button>
         </div>
       )}
-    </div>
+    </Painel>
+  );
+}
+
+/** Cartão do horário que já começou e ainda não foi concluído. */
+function EmAtendimento({ horario, concluindo, aoConcluir }) {
+  return (
+    <Painel
+      titulo="Em atendimento"
+      acoes={<Badge variant="success">começou {fmtHora(horario.inicio)}</Badge>}
+      className="border-[var(--primary)]! shadow-[0_0_0_3px_var(--primary-soft)]"
+    >
+      <div className="flex items-center gap-3 min-w-0">
+        <span aria-hidden="true" className="w-11 h-11 rounded-full grid place-items-center flex-shrink-0 bg-[var(--primary-soft)] text-[var(--primary)] font-bold text-sm">
+          {iniciais(horario.cliente)}
+        </span>
+        <div className="min-w-0">
+          <div className="text-[15px] font-bold text-[var(--text-main)] [overflow-wrap:anywhere]">{horario.cliente}</div>
+          <div className="text-xs font-medium text-[var(--text-muted)]">{horario.rotuloStatus}</div>
+        </div>
+      </div>
+      <div className="mt-3 rounded-lg bg-[var(--bg-subtle)] px-3 py-2.5 text-[13px] text-[var(--text-secondary)] space-y-1.5">
+        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
+          <span>Serviço</span>
+          <span className="font-semibold text-[var(--text-main)] [overflow-wrap:anywhere]">{horario.servico || 'Não informado'}</span>
+        </div>
+        {horario.profissional && (
+          <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
+            <span>Com</span>
+            <span className="font-semibold text-[var(--text-main)]">{horario.profissional}</span>
+          </div>
+        )}
+      </div>
+      <Button fullWidth className="mt-3 max-lg:h-12" icon={CheckCircle2} loading={concluindo} onClick={() => aoConcluir(horario)}>
+        Concluir e cobrar
+      </Button>
+      <p className="m-0 mt-2 text-xs text-[var(--text-muted)]">Marca como feito e lança a venda do serviço no caixa.</p>
+    </Painel>
   );
 }
 
 export default function HojePage() {
+  const toast = useToast();
   const [dados, setDados] = useState(null);
   const [erro, setErro] = useState(null);
   const [atualizando, setAtualizando] = useState(false);
   const [aba, setAba] = useState('hoje');
+  const [agora, setAgora] = useState(() => Date.now());
+  const [filtroProf, setFiltroProf] = useState('todos');
+  const [concluindo, setConcluindo] = useState(null);
 
   const carregar = useCallback(async () => {
     try {
       const r = await api.get('/hoje');
       setDados(r.data);
+      setAgora(Date.now());
       setErro(null);
     } catch (e) {
       setErro(erroDe(e, 'Não foi possível carregar o resumo de hoje.'));
@@ -204,6 +241,53 @@ export default function HojePage() {
     return () => clearInterval(id);
   }, [carregar]);
 
+  // Concluir = fecha o ciclo serviço→venda (mesmo endpoint da Agenda).
+  const concluir = async (h) => {
+    setConcluindo(h.id);
+    try {
+      const r = await api.patch(`/agenda/${h.id}/concluir`, {});
+      const v = r.data?.venda;
+      const extras = [];
+      if (r.data?.pacote) extras.push(`sessão ${r.data.pacote.sessoesUsadas} de ${r.data.pacote.sessoesTotal} do pacote`);
+      if (r.data?.sinalAbatido > 0) extras.push(`sinal de ${fmtBRL(r.data.sinalAbatido)} já descontado`);
+      toast.success(
+        (v
+          ? `Atendimento concluído · Venda #${v.numero}${v.valor > 0 ? ` (${fmtBRL(v.valor)})` : ''}`
+          : 'Atendimento concluído') + (extras.length ? ` · ${extras.join(' · ')}` : '')
+      );
+      carregar();
+    } catch (e) {
+      toast.error(erroDe(e, 'Não foi possível concluir o atendimento.'));
+    } finally {
+      setConcluindo(null);
+    }
+  };
+
+  const agenda = dados?.agenda || null;
+  const horarios = useMemo(() => agenda?.horarios || [], [agenda]);
+
+  // Por profissional, o último horário que já começou; se ainda não foi
+  // concluído, está em atendimento.
+  const emAtendimento = useMemo(() => {
+    const ultimoPorProf = new Map();
+    horarios.forEach((h) => { if (h.passou) ultimoPorProf.set(h.profissional || '', h); });
+    return [...ultimoPorProf.values()]
+      .filter((h) => h.status !== 'COMPLETED')
+      .sort((a, b) => new Date(a.inicio) - new Date(b.inicio));
+  }, [horarios]);
+  const idsAgora = useMemo(() => new Set(emAtendimento.map((h) => h.id)), [emAtendimento]);
+
+  const futuros = horarios.filter((h) => !h.passou && h.status !== 'COMPLETED');
+  const proximo = futuros[0] || null;
+  const atendidos = horarios.filter((h) => h.status === 'COMPLETED').length;
+
+  const profissionais = useMemo(
+    () => [...new Set(horarios.map((h) => h.profissional).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [horarios]
+  );
+  const filtroValido = filtroProf === 'todos' || profissionais.includes(filtroProf) ? filtroProf : 'todos';
+  const horariosVisiveis = filtroValido === 'todos' ? horarios : horarios.filter((h) => h.profissional === filtroValido);
+
   if (!dados) {
     return (
       <div className="p-6 text-center">
@@ -217,28 +301,33 @@ export default function HojePage() {
     );
   }
 
-  const agenda = dados.agenda;
   const ABAS = [['hoje', 'Hoje'], ...(agenda ? [['agenda', 'Agenda']] : []), ['cobrar', 'Cobrar']];
+  const naAba = (id) => aba !== id && 'hidden lg:flex';
+
+  const minutosProximo = proximo ? Math.max(0, Math.round((new Date(proximo.inicio).getTime() - agora) / 60000)) : 0;
 
   const blocoAvisos = (
-    <section className="rounded-2xl border border-[var(--border-main)] bg-[var(--bg-card)]">
-      <h2 className="px-4 py-3 text-base font-semibold text-[var(--text-main)] flex items-center gap-2"><Bell size={16} aria-hidden /> Avisos</h2>
+    <Painel
+      titulo={<span className="inline-flex items-center gap-2"><Bell size={14} aria-hidden /> Avisos</span>}
+      acoes={dados.avisos.some((a) => !a.lida) ? <Badge variant="info">{dados.avisos.filter((a) => !a.lida).length} novos</Badge> : null}
+      semPadding
+    >
       {dados.avisos.length === 0 ? (
-        <p className="px-4 pb-4 text-sm text-[var(--text-muted)]">Nenhum aviso por enquanto.</p>
+        <p className="m-0 px-4 py-3 text-[13px] text-[var(--text-muted)]">Nenhum aviso por enquanto.</p>
       ) : (
-        <ul className="divide-y divide-[var(--border-main)] border-t border-[var(--border-main)]">
+        <ul className="m-0 p-0 list-none">
           {dados.avisos.map((a) => {
             const conteudo = (
               <>
                 <span className="flex-1 min-w-0">
-                  <span className={clsx('block text-sm', a.lida ? 'text-[var(--text-secondary)]' : 'font-semibold text-[var(--text-main)]')}>{a.titulo}</span>
+                  <span className={clsx('block text-[13px] [overflow-wrap:anywhere]', a.lida ? 'text-[var(--text-secondary)]' : 'font-semibold text-[var(--text-main)]')}>{a.titulo}</span>
                   <span className="block text-xs text-[var(--text-muted)] truncate">{a.mensagem}</span>
                 </span>
-                <span className="text-xs text-[var(--text-muted)] tabular-nums">{fmtHora(a.criadoEm)}</span>
+                <span className="text-xs text-[var(--text-muted)] tabular-nums flex-shrink-0">{fmtHora(a.criadoEm)}</span>
               </>
             );
             return (
-              <li key={a.id}>
+              <li key={a.id} className="border-b border-[var(--border-subtle)] last:border-b-0">
                 {a.link
                   ? <Link to={a.link} className="flex items-center gap-3 px-4 py-3 min-h-11 hover:bg-[var(--bg-subtle)]">{conteudo}</Link>
                   : <div className="flex items-center gap-3 px-4 py-3">{conteudo}</div>}
@@ -247,51 +336,106 @@ export default function HojePage() {
           })}
         </ul>
       )}
-    </section>
+    </Painel>
   );
 
   const blocoAgenda = agenda && (
-    <section className="rounded-2xl border border-[var(--border-main)] bg-[var(--bg-card)]">
-      <h2 className="px-4 py-3 text-base font-semibold text-[var(--text-main)] flex items-center gap-2">
-        <CalendarDays size={16} aria-hidden /> {fmtDia(dados.data)} · {agenda.total} {agenda.total === 1 ? 'horário' : 'horários'}
-      </h2>
-      {agenda.horarios.length === 0 ? (
-        <p className="px-4 pb-4 text-sm text-[var(--text-muted)]">Nenhum horário marcado hoje. <Link to="/app/agenda" className="font-semibold underline">Abrir agenda</Link></p>
+    <Painel
+      titulo="Agenda do dia"
+      subtitulo={`${fmtDia(dados.data)} · ${agenda.total} ${agenda.total === 1 ? 'horário' : 'horários'}`}
+      acoes={profissionais.length > 1 ? (
+        <AbasPilula
+          rotulo="Filtrar por profissional"
+          valor={filtroValido}
+          onChange={setFiltroProf}
+          abas={[{ valor: 'todos', rotulo: 'Todos' }, ...profissionais.map((p) => ({ valor: p, rotulo: p }))]}
+        />
+      ) : null}
+      semPadding
+    >
+      {horariosVisiveis.length === 0 ? (
+        <p className="m-0 px-4 py-3 text-[13px] text-[var(--text-muted)]">
+          Nenhum horário marcado hoje. <Link to="/app/agenda" className="font-semibold underline">Abrir agenda</Link>
+        </p>
       ) : (
-        <ul className="divide-y divide-[var(--border-main)] border-t border-[var(--border-main)]">
-          {agenda.horarios.map((h) => (
-            <li key={h.id} className={clsx('flex items-center gap-3 px-4 py-3', h.passou && h.status !== 'PENDING' && 'opacity-60')}>
-              <span className="w-12 text-sm font-semibold tabular-nums text-[var(--text-main)]">{fmtHora(h.inicio)}</span>
-              <span className="flex-1 min-w-0">
-                <span className="block text-sm font-medium text-[var(--text-main)] truncate">{h.cliente}</span>
-                <span className="block text-xs text-[var(--text-muted)] truncate">{[h.servico, h.profissional].filter(Boolean).join(' · ') || 'Sem serviço informado'}</span>
-              </span>
-              <span className={clsx('text-xs font-semibold rounded-full px-2.5 py-1 whitespace-nowrap', COR_STATUS[h.status] || COR_STATUS.COMPLETED)}>{h.rotuloStatus}</span>
-            </li>
-          ))}
+        <ul className="m-0 p-0 list-none">
+          {horariosVisiveis.map((h) => {
+            const ehAgora = idsAgora.has(h.id);
+            const feito = h.status === 'COMPLETED';
+            return (
+              <li
+                key={h.id}
+                className={clsx(
+                  'grid grid-cols-[56px_1fr_auto] gap-3 items-center px-4 py-3 border-b border-[var(--border-subtle)] last:border-b-0 text-[13px]',
+                  ehAgora && 'bg-[var(--primary-soft)]'
+                )}
+              >
+                <span className={clsx('font-bold tabular-nums', feito ? 'text-[var(--text-muted)]' : 'text-[var(--text-main)]')}>{fmtHora(h.inicio)}</span>
+                <span className="min-w-0">
+                  <span className={clsx('block font-semibold [overflow-wrap:anywhere]', feito ? 'text-[var(--text-secondary)]' : 'text-[var(--text-main)]')}>{h.cliente}</span>
+                  <span className="block text-xs text-[var(--text-muted)] truncate">{[h.servico, h.profissional].filter(Boolean).join(' · ') || 'Sem serviço informado'}</span>
+                </span>
+                {ehAgora
+                  ? <Badge variant="success">Agora</Badge>
+                  : <Badge variant={VARIANTE_STATUS[h.status] || 'neutral'}>{h.rotuloStatus}</Badge>}
+              </li>
+            );
+          })}
         </ul>
       )}
-    </section>
+      <div className="px-4 py-2.5 border-t border-[var(--border-subtle)]">
+        <Link to="/app/agenda" className="text-[13px] font-semibold text-[var(--primary)] hover:underline">Abrir agenda completa</Link>
+      </div>
+    </Painel>
   );
 
   return (
-    <div className="max-w-5xl space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-main)]">Hoje</h1>
-          <p className="text-sm text-[var(--text-muted)]">{fmtDia(dados.data)}</p>
-        </div>
-        <Button variant="ghost" size="lg" icon={RefreshCw} loading={atualizando} onClick={() => { setAtualizando(true); carregar(); }} aria-label="Atualizar">
+    <Pagina>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="m-0 text-[13px] text-[var(--text-muted)]">{fmtDia(dados.data)}</p>
+        <Button variant="ghost" size="sm" icon={RefreshCw} loading={atualizando} onClick={() => { setAtualizando(true); carregar(); }} aria-label="Atualizar">
           <span className="hidden sm:inline">Atualizar</span>
         </Button>
       </div>
-      {erro && <p role="alert" className="text-sm text-[var(--danger-text)]">{erro} Mostrando os últimos dados.</p>}
+      {erro && <p role="alert" className="m-0 text-[13px] text-[var(--danger-text)]">{erro} Mostrando os últimos dados.</p>}
 
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-        <Numero grande rotulo="Vendeu hoje" valor={fmtBRL(dados.vendeu.valor)} detalhe={`${dados.vendeu.quantidade} ${dados.vendeu.quantidade === 1 ? 'venda' : 'vendas'}`} />
-        <Numero rotulo="A receber" valor={fmtBRL(dados.aReceber.valor)} detalhe={dados.aReceber.quantidade ? `${dados.aReceber.quantidade} Pix/links em aberto` : 'Nada em aberto'} />
-        <Numero rotulo="Saldo do caixa" valor={dados.caixa.aberto ? fmtBRL(dados.caixa.saldo) : 'Fechado'} detalhe={dados.caixa.aberto ? `Aberto às ${fmtHora(dados.caixa.abertoEm)}` : 'Abre sozinho na 1ª venda'} />
-      </div>
+      <FaixaNumeros min={150}>
+        <Numero
+          destaque
+          className="max-sm:col-span-2"
+          rotulo="Vendeu hoje"
+          valor={fmtBRL(dados.vendeu.valor)}
+          detalhe={`${dados.vendeu.quantidade} ${dados.vendeu.quantidade === 1 ? 'venda' : 'vendas'}`}
+        />
+        <Numero
+          className={VALOR_COMPACTO}
+          rotulo="A receber"
+          valor={fmtBRL(dados.aReceber.valor)}
+          tom={dados.aReceber.quantidade ? 'alerta' : 'neutro'}
+          detalhe={dados.aReceber.quantidade ? `${dados.aReceber.quantidade} Pix/links em aberto` : 'Nada em aberto'}
+        />
+        <Numero
+          className={VALOR_COMPACTO}
+          rotulo="Saldo do caixa"
+          valor={dados.caixa.aberto ? fmtBRL(dados.caixa.saldo) : 'Fechado'}
+          detalhe={dados.caixa.aberto ? `Aberto às ${fmtHora(dados.caixa.abertoEm)}` : 'Abre sozinho na 1ª venda'}
+        />
+        {agenda && (
+          <Numero
+            rotulo="Atendidos"
+            valor={atendidos}
+            tom="sucesso"
+            detalhe={`de ${agenda.total} ${agenda.total === 1 ? 'horário' : 'horários'}`}
+          />
+        )}
+        {agenda && (
+          <Numero
+            rotulo="Faltam"
+            valor={futuros.length}
+            detalhe={proximo ? `Próximo às ${fmtHora(proximo.inicio)}` : 'Nenhum outro hoje'}
+          />
+        )}
+      </FaixaNumeros>
 
       <div role="tablist" aria-label="Seções" className="lg:hidden grid gap-1 p-1 rounded-xl bg-[var(--bg-subtle)]" style={{ gridTemplateColumns: `repeat(${ABAS.length}, 1fr)` }}>
         {ABAS.map(([id, t]) => (
@@ -308,15 +452,48 @@ export default function HojePage() {
         ))}
       </div>
 
-      <div className="grid lg:grid-cols-[1fr_22rem] gap-4 items-start">
-        <div className="space-y-4">
-          <div className={clsx(aba !== 'hoje' && 'hidden lg:block')}>{blocoAvisos}</div>
-          {agenda && <div className={clsx(aba !== 'agenda' && 'hidden lg:block')}>{blocoAgenda}</div>}
-        </div>
-        <div className={clsx(aba !== 'cobrar' && 'hidden lg:block', 'lg:sticky lg:top-4')}>
-          <CobrarRapido pagamentoConfigurado={dados.pagamentoConfigurado} aoMudar={carregar} />
+      <div className="flex flex-wrap gap-4 items-start">
+        {/* Coluna 1: atendimento agora, a seguir e Cobrar rápido */}
+        <section aria-label="Atendimento agora" className={clsx('min-w-0 flex flex-col gap-4', aba === 'agenda' && 'hidden lg:flex')} style={{ flex: '1 1 340px' }}>
+          {agenda && (
+            <div className={clsx('flex flex-col gap-4', naAba('hoje'))}>
+              {emAtendimento.map((h) => (
+                <EmAtendimento key={h.id} horario={h} concluindo={concluindo === h.id} aoConcluir={concluir} />
+              ))}
+              <Painel titulo="A seguir" acoes={proximo ? <span className="text-xs font-medium text-[var(--text-muted)]">{fmtFalta(minutosProximo)}</span> : null}>
+                {proximo ? (
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-[var(--text-main)] [overflow-wrap:anywhere]">{fmtHora(proximo.inicio)} · {proximo.cliente}</div>
+                      <div className="text-xs font-medium text-[var(--text-muted)]">
+                        {[proximo.servico, proximo.profissional && `com ${proximo.profissional}`].filter(Boolean).join(' ') || 'Sem serviço informado'}
+                      </div>
+                    </div>
+                    <Badge variant={VARIANTE_STATUS[proximo.status] || 'neutral'}>{proximo.rotuloStatus}</Badge>
+                  </div>
+                ) : (
+                  <p className="m-0 text-[13px] text-[var(--text-muted)]">Nenhum outro horário hoje.</p>
+                )}
+              </Painel>
+            </div>
+          )}
+          <div className={clsx('flex flex-col', naAba('cobrar'))}>
+            <CobrarRapido pagamentoConfigurado={dados.pagamentoConfigurado} aoMudar={carregar} />
+          </div>
+        </section>
+
+        {/* Coluna 2: agenda do dia em lista */}
+        {agenda && (
+          <div className={clsx('min-w-0 flex flex-col', naAba('agenda'))} style={{ flex: '2 1 420px' }}>
+            {blocoAgenda}
+          </div>
+        )}
+
+        {/* Coluna 3: avisos */}
+        <div className={clsx('min-w-0 flex flex-col gap-4', naAba('hoje'))} style={{ flex: '1 1 300px' }}>
+          {blocoAvisos}
         </div>
       </div>
-    </div>
+    </Pagina>
   );
 }

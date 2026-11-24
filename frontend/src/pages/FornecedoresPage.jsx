@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import {
-  Truck, Plus, Upload, Search, Pencil, Trash2, Download,
+  Truck, Plus, Upload, Pencil, Trash2, Download,
   FileText, CheckCircle2, AlertTriangle,
 } from 'lucide-react';
 import {
-  Card, Button, Badge, EmptyState, Input, Textarea, Drawer, useToast, LabelAjuda,
+  Button, Badge, EmptyState, Input, Textarea, Drawer, useToast, LabelAjuda,
+  Pagina, FaixaNumeros, Numero, ColunasPagina, Painel, BarraFerramentas,
 } from '../components/ui';
 import fornecedorService from '../services/fornecedorService';
+import { useAcaoTopo } from '../hooks/useAcaoTopo';
+import { AbasEstoque, BuscaEstoque } from '../components/estoque/NavEstoque';
+import LateralEstoque from '../components/estoque/LateralEstoque';
+
+const TH = 'text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap';
+const TD = 'px-4 py-2.5 border-b border-[var(--border-subtle)]';
 
 const soDigitos = (s) => String(s || '').replace(/\D+/g, '');
 
@@ -47,6 +53,7 @@ export default function FornecedoresPage() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount
     carregar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- carrega uma vez ao montar
   }, []);
 
   const filtrados = useMemo(() => {
@@ -61,11 +68,11 @@ export default function FornecedoresPage() {
   }, [fornecedores, busca]);
 
   const excluir = async (f) => {
-    if (!window.confirm(`Excluir o fornecedor "${f.nome}"? Esta acao nao pode ser desfeita.`)) return;
+    if (!window.confirm(`Excluir o fornecedor "${f.nome}"? Esta ação não pode ser desfeita.`)) return;
     try {
       await fornecedorService.excluir(f.id);
       setFornecedores((l) => l.filter((x) => x.id !== f.id));
-      toast.success('Fornecedor excluido.');
+      toast.success('Fornecedor excluído.');
     } catch (e) {
       toast.error(e.response?.data?.erro || 'Falha ao excluir fornecedor.');
     }
@@ -76,113 +83,124 @@ export default function FornecedoresPage() {
     setDrawerForm(null);
   };
 
-  return (
-    <div className="space-y-5">
-      <div>
-        <Link
-          to="/app/estoque/visao-geral"
-          className="text-xs text-[var(--text-muted)] inline-flex items-center gap-1 hover:text-[var(--text-main)]"
-        >
-          Estoque
-        </Link>
-        <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-main)] mt-2">Fornecedores</h1>
-        <p className="text-sm text-[var(--text-muted)] mt-1 max-w-2xl">
-          Cadastro de quem fornece seus produtos. Serve de base para a entrada de notas de compra.
-          Cadastre um a um ou importe varios de uma vez por planilha CSV.
-        </p>
-      </div>
+  const resumo = useMemo(() => {
+    const ativos = fornecedores.filter((f) => f.ativo).length;
+    return {
+      total: fornecedores.length,
+      ativos,
+      inativos: fornecedores.length - ativos,
+      semContato: fornecedores.filter((f) => !f.email && !f.telefone).length,
+    };
+  }, [fornecedores]);
 
-      {/* Barra de acoes */}
-      <Card padding="sm">
-        <div className="flex flex-wrap items-center gap-3 justify-between">
-          <div className="flex-1 min-w-[220px] max-w-sm">
-            <Input
-              icon={Search}
-              size="sm"
-              placeholder="Buscar por nome, CNPJ ou e-mail"
+  useAcaoTopo(
+    <Button size="sm" icon={Plus} onClick={() => setDrawerForm({})}>Novo fornecedor</Button>,
+    []
+  );
+
+  return (
+    <Pagina>
+      <FaixaNumeros min={190}>
+        <Numero rotulo="Fornecedores cadastrados" valor={resumo.total} carregando={carregando} />
+        <Numero rotulo="Ativos" valor={resumo.ativos} tom={resumo.ativos > 0 ? 'sucesso' : 'neutro'} carregando={carregando} />
+        <Numero rotulo="Inativos" valor={resumo.inativos} carregando={carregando} />
+        <Numero
+          rotulo="Sem contato"
+          valor={resumo.semContato}
+          detalhe="sem e-mail e sem telefone"
+          tom={resumo.semContato > 0 ? 'alerta' : 'neutro'}
+          carregando={carregando}
+        />
+      </FaixaNumeros>
+
+      <ColunasPagina lateral={<LateralEstoque />}>
+        <Painel semPadding>
+          <BarraFerramentas>
+            <AbasEstoque ativa="fornecedores" />
+            <BuscaEstoque
               value={busca}
-              onChange={(e) => setBusca(e.target.value)}
+              onChange={setBusca}
+              placeholder="Buscar por nome, CNPJ ou e-mail"
             />
-          </div>
-          <div className="flex items-center gap-2">
             <Button variant="secondary" size="sm" icon={Upload} onClick={() => setImportAberto(true)}>
               Importar CSV
             </Button>
-            <Button variant="primary" size="sm" icon={Plus} onClick={() => setDrawerForm({})}>
-              Novo fornecedor
-            </Button>
-          </div>
-        </div>
-      </Card>
+          </BarraFerramentas>
 
-      {/* Lista */}
-      <Card padding="none">
-        {carregando ? (
-          <div className="text-sm text-[var(--text-muted)] py-12 text-center">Carregando...</div>
-        ) : filtrados.length === 0 ? (
-          <EmptyState
-            icon={Truck}
-            title={busca ? 'Nenhum fornecedor encontrado' : 'Nenhum fornecedor cadastrado'}
-            description={
-              busca
-                ? 'Ajuste a busca ou limpe o filtro para ver todos.'
-                : 'Cadastre o primeiro fornecedor ou importe a sua lista por CSV.'
-            }
-            action={
-              !busca && (
-                <Button variant="primary" size="sm" icon={Plus} onClick={() => setDrawerForm({})}>
-                  Novo fornecedor
-                </Button>
-              )
-            }
-          />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[var(--border-main)] text-left">
-                  <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">Nome</th>
-                  <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">CNPJ</th>
-                  <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">Contato</th>
-                  <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">Status</th>
-                  <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] text-right">Acoes</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border-main)]">
-                {filtrados.map((f) => (
-                  <tr key={f.id} className="hover:bg-[var(--bg-subtle)] transition-colors">
-                    <td className="px-5 py-3">
-                      <div className="font-semibold text-[var(--text-main)]">{f.nome}</div>
-                      {f.observacoes && (
-                        <div className="text-xs text-[var(--text-muted)] truncate max-w-[280px]">{f.observacoes}</div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 tabular-nums text-[var(--text-secondary)]">{fmtCnpj(f.cnpj)}</td>
-                    <td className="px-5 py-3 text-[var(--text-secondary)]">
-                      {f.email && <div className="truncate max-w-[220px]">{f.email}</div>}
-                      {f.telefone && <div className="text-xs text-[var(--text-muted)] tabular-nums">{fmtTelefone(f.telefone)}</div>}
-                      {!f.email && !f.telefone && <span className="text-[var(--text-muted)]">—</span>}
-                    </td>
-                    <td className="px-5 py-3">
-                      <Badge variant={f.ativo ? 'success' : 'neutral'} size="sm">
-                        {f.ativo ? 'Ativo' : 'Inativo'}
-                      </Badge>
-                    </td>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button variant="ghost" size="sm" icon={Pencil} onClick={() => setDrawerForm(f)}>
-                          Editar
-                        </Button>
-                        <Button variant="ghost" size="sm" icon={Trash2} onClick={() => excluir(f)} title="Excluir" />
-                      </div>
-                    </td>
+          {carregando ? (
+            <div className="text-[13px] text-[var(--text-muted)] py-12 text-center">Carregando...</div>
+          ) : filtrados.length === 0 ? (
+            <EmptyState
+              icon={Truck}
+              title={busca ? 'Nenhum fornecedor encontrado' : 'Nenhum fornecedor cadastrado'}
+              description={
+                busca
+                  ? 'Ajuste a busca ou limpe o filtro para ver todos.'
+                  : 'Cadastre quem fornece seus produtos, um a um ou importando a sua lista por CSV. Eles servem de base para a entrada de notas.'
+              }
+              action={
+                !busca && (
+                  <Button variant="primary" size="sm" icon={Plus} onClick={() => setDrawerForm({})}>
+                    Novo fornecedor
+                  </Button>
+                )
+              }
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr>
+                    <th className={TH}>Nome</th>
+                    <th className={TH}>CNPJ</th>
+                    <th className={TH}>Contato</th>
+                    <th className={TH}>Situação</th>
+                    <th className={`${TH} text-right`}>Ações</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+                </thead>
+                <tbody>
+                  {filtrados.map((f) => (
+                    <tr key={f.id} className="hover:bg-[var(--bg-subtle)]">
+                      <td className={TD}>
+                        <div className="font-semibold text-[var(--text-main)]">{f.nome}</div>
+                        {f.observacoes && (
+                          <div className="text-xs text-[var(--text-muted)] truncate max-w-[280px]">{f.observacoes}</div>
+                        )}
+                      </td>
+                      <td className={`${TD} tabular-nums text-[var(--text-secondary)] whitespace-nowrap`}>{fmtCnpj(f.cnpj)}</td>
+                      <td className={`${TD} text-[var(--text-secondary)]`}>
+                        {f.email && <div className="truncate max-w-[220px]">{f.email}</div>}
+                        {f.telefone && <div className="text-xs text-[var(--text-muted)] tabular-nums">{fmtTelefone(f.telefone)}</div>}
+                        {!f.email && !f.telefone && <span className="text-[var(--text-muted)]">—</span>}
+                      </td>
+                      <td className={TD}>
+                        <Badge variant={f.ativo ? 'success' : 'neutral'} size="sm">
+                          {f.ativo ? 'Ativo' : 'Inativo'}
+                        </Badge>
+                      </td>
+                      <td className={TD}>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button variant="ghost" size="sm" icon={Pencil} onClick={() => setDrawerForm(f)}>
+                            Editar
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            icon={Trash2}
+                            onClick={() => excluir(f)}
+                            title="Excluir"
+                            aria-label={`Excluir ${f.nome}`}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Painel>
+      </ColunasPagina>
 
       {drawerForm && (
         <FornecedorDrawer
@@ -197,7 +215,7 @@ export default function FornecedoresPage() {
         onClose={() => setImportAberto(false)}
         aoImportar={carregar}
       />
-    </div>
+    </Pagina>
   );
 }
 

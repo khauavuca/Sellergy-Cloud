@@ -2,7 +2,7 @@
 // Conta de recebimento do negocio (subconta Asaas aberta pelo Sellergy):
 // assistente de 3 passos -> em analise -> ativa (saldo, a liberar, extrato,
 // taxas, saque pra chave Pix). A chave da conta fica no servidor.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Wallet, Loader2, AlertCircle, CheckCircle2, Clock, RotateCw, ExternalLink, Search, ArrowDownToLine, XCircle, Info,
@@ -10,7 +10,11 @@ import {
 import clsx from 'clsx';
 import api from '../services/api';
 import Modal from '../components/Modal';
-import { Badge, Button, Card, Input, Select, useToast } from '../components/ui';
+import {
+  Badge, Button, Input, Select, useToast,
+  Pagina, FaixaNumeros, Numero, ColunasPagina, Painel, LinhaInfo, BarraFerramentas, AbasPilula,
+} from '../components/ui';
+import { useAcaoTopo } from '../hooks/useAcaoTopo';
 import {
   fmtBRL, mascaraCnpj, mascaraCpf, mascaraTelefone, mascaraCep, erroDaApi,
 } from '../components/pedidos/util';
@@ -40,6 +44,25 @@ const STATUS = {
 };
 const CAMPOS_POR_PASSO = { negocio: 0, responsavel: 1, repasse: 2 };
 
+// Tipos de movimentação do extrato do Asaas (/financialTransactions).
+function tipoDoExtrato(t) {
+  const tipo = String(t.tipo || '').toUpperCase();
+  if (tipo.includes('FEE')) return { rotulo: tipo.startsWith('TRANSFER') ? 'Taxa de saque' : 'Taxa', variante: 'neutral', grupo: 'taxas' };
+  if (tipo.startsWith('TRANSFER')) return { rotulo: 'Saque', variante: 'info', grupo: 'saques' };
+  if (tipo.includes('REFUND') || tipo.includes('REVERSAL') || tipo.includes('CHARGEBACK')) return { rotulo: 'Estorno', variante: 'warning', grupo: 'saidas' };
+  if (tipo.includes('PAYMENT') && t.valor >= 0) return { rotulo: 'Recebimento', variante: 'success', grupo: 'entradas' };
+  return t.valor >= 0
+    ? { rotulo: 'Entrada', variante: 'success', grupo: 'entradas' }
+    : { rotulo: 'Saída', variante: 'neutral', grupo: 'saidas' };
+}
+
+const fmtTaxa = (l) => [l.percentual !== null ? `${String(l.percentual).replace('.', ',')}%` : null, l.fixo ? fmtBRL(l.fixo) : null].filter(Boolean).join(' + ') || 'Grátis';
+const paraNumero = (s) => Number(String(s).replace(/\./g, '').replace(',', '.'));
+const valorEmTexto = (v) => (v ? v.toFixed(2).replace('.', ',') : '');
+
+const TH = 'text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap';
+const TD = 'px-4 py-2.5 border-b border-[var(--border-subtle)]';
+
 const formVazio = () => ({
   negocio: { cnpj: '', razaoSocial: '', nomeFantasia: '', tipoEmpresa: 'LIMITED', email: '', telefone: '', faturamentoMensal: '', cep: '', endereco: '', numero: '', complemento: '', bairro: '' },
   responsavel: { nome: '', cpf: '', dataNascimento: '', celular: '' },
@@ -48,21 +71,32 @@ const formVazio = () => ({
 
 function Erro({ texto, onTentar }) {
   return (
-    <div role="alert" className="flex flex-wrap items-center gap-2 p-4 rounded-xl bg-[var(--danger-soft)] text-sm text-[var(--danger-text)]">
-      <AlertCircle size={16} /> {texto}
-      {onTentar && <Button variant="secondary" icon={RotateCw} className="ml-auto min-h-11" onClick={onTentar}>Tentar de novo</Button>}
+    <div role="alert" className="flex flex-wrap items-center gap-2 px-4 py-3 rounded-[10px] bg-[var(--danger-soft)] text-[13px] text-[var(--danger-text)]">
+      <AlertCircle size={16} aria-hidden="true" /> {texto}
+      {onTentar && <Button variant="secondary" size="sm" icon={RotateCw} className="ml-auto" onClick={onTentar}>Tentar de novo</Button>}
     </div>
   );
 }
 
-function Kpi({ rotulo, valor, detalhe }) {
+function Carregando() {
+  return <div className="py-16 grid place-items-center"><Loader2 className="animate-spin text-[var(--text-muted)]" aria-label="Carregando" /></div>;
+}
+
+function PorQueUsar() {
   return (
-    <Card padding="md">
-      <p className="text-xs text-[var(--text-muted)]">{rotulo}</p>
-      <p className="text-2xl font-semibold tabular-nums text-[var(--text-main)] mt-1">{valor}</p>
-      {detalhe && <p className="text-xs text-[var(--text-muted)] mt-1">{detalhe}</p>}
-    </Card>
+    <Painel titulo="Por que usar a conta do Sellergy">
+      <ul className="space-y-2 text-[13px] text-[var(--text-secondary)]">
+        {['Pix e cartão na mesma tela da venda', 'Pagamento confirma sozinho e baixa o estoque', 'Link de pagamento no WhatsApp para pedidos', 'Sem maquininha alugada'].map((t) => (
+          <li key={t} className="flex gap-2"><CheckCircle2 size={16} aria-hidden="true" className="text-[var(--success)] shrink-0 mt-0.5" />{t}</li>
+        ))}
+      </ul>
+      <p className="text-xs text-[var(--text-muted)] mt-3">A conta é aberta no Asaas, instituição de pagamento autorizada pelo Banco Central. Já tem Mercado Pago ou Asaas? Dá pra continuar usando em <Link to="/app/pagamentos" className="underline">Pagamentos</Link>.</p>
+    </Painel>
   );
+}
+
+function nomeProvedor(p) {
+  return p === 'MERCADO_PAGO' ? 'Mercado Pago' : p === 'ASAAS' ? 'Asaas' : 'Pagar.me';
 }
 
 // ---------------------------------------------------------------------
@@ -156,9 +190,9 @@ function Assistente({ inicial, sugestoes, erroAnterior, onAberta }) {
   const p = form.repasse;
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-      <Card padding="lg">
-        <ol className="flex flex-wrap gap-2 mb-5" aria-label="Passos">
+    <ColunasPagina lateral={<PorQueUsar />}>
+      <Painel titulo="Abrir a conta de recebimento" subtitulo={`Passo ${passo + 1} de ${PASSOS.length} · ${PASSOS[passo]}`}>
+        <ol className="flex flex-wrap gap-2 mb-4" aria-label="Passos">
           {PASSOS.map((t, i) => (
             <li key={t} aria-current={i === passo ? 'step' : undefined} className={clsx('flex items-center gap-2 text-sm font-semibold px-2 py-1 rounded-full', i === passo ? 'text-[var(--text-main)] bg-[var(--bg-subtle)]' : i < passo ? 'text-[var(--success-text)]' : 'text-[var(--text-muted)]')}>
               <span className={clsx('w-6 h-6 rounded-full grid place-items-center text-xs', i === passo ? 'bg-[var(--primary)] text-[var(--text-on-primary)]' : i < passo ? 'bg-[var(--success-soft)]' : 'bg-[var(--bg-subtle)]')}>{i < passo ? '✓' : i + 1}</span>
@@ -171,7 +205,7 @@ function Assistente({ inicial, sugestoes, erroAnterior, onAberta }) {
           <div className="grid sm:grid-cols-2 gap-3">
             <div className="sm:col-span-2 flex gap-2 items-end">
               <div className="flex-1"><Input label="CNPJ" aria-label="CNPJ" inputMode="numeric" value={n.cnpj} onChange={set('negocio', 'cnpj')} error={erroDe('negocio.cnpj', 'CNPJ inválido.')} /></div>
-              <Button variant="secondary" icon={Search} className="min-h-11 mb-[1px]" loading={buscandoCnpj} disabled={n.cnpj.replace(/\D/g, '').length !== 14} onClick={buscarCnpj}>Buscar na Receita</Button>
+              <Button variant="secondary" icon={Search} className="h-11 mb-[1px]" loading={buscandoCnpj} disabled={n.cnpj.replace(/\D/g, '').length !== 14} onClick={buscarCnpj}>Buscar na Receita</Button>
             </div>
             <div className="sm:col-span-2"><Input label="Razão social" aria-label="Razão social" value={n.razaoSocial} onChange={set('negocio', 'razaoSocial')} error={erroDe('negocio.razaoSocial', 'Informe a razão social.')} /></div>
             <Input label="Nome do negócio (opcional)" aria-label="Nome do negócio" value={n.nomeFantasia} onChange={set('negocio', 'nomeFantasia')} />
@@ -202,7 +236,7 @@ function Assistente({ inicial, sugestoes, erroAnterior, onAberta }) {
             <fieldset className="space-y-2">
               <legend className="text-sm font-semibold text-[var(--text-main)] mb-2">Quando o dinheiro fica disponível</legend>
               {PRAZOS.map((o) => (
-                <label key={o.value} className={clsx('flex gap-3 p-3 rounded-xl border cursor-pointer min-h-11', p.prazo === o.value ? 'border-[var(--primary)] bg-[var(--bg-subtle)]' : 'border-[var(--border-main)]')}>
+                <label key={o.value} className={clsx('flex gap-3 p-3 rounded-[10px] border cursor-pointer min-h-11', p.prazo === o.value ? 'border-[var(--primary)] bg-[var(--bg-subtle)]' : 'border-[var(--border-main)]')}>
                   <input type="radio" name="prazo" value={o.value} checked={p.prazo === o.value} onChange={set('repasse', 'prazo')} className="mt-1" />
                   <span><span className="block text-sm font-semibold text-[var(--text-main)]">{o.titulo}</span><span className="block text-xs text-[var(--text-muted)]">{o.descricao}</span></span>
                 </label>
@@ -217,40 +251,39 @@ function Assistente({ inicial, sugestoes, erroAnterior, onAberta }) {
 
         {erro && <div className="mt-4"><Erro texto={erro} /></div>}
 
-        <div className="flex flex-wrap justify-between gap-2 mt-6">
-          <Button variant="ghost" className="min-h-11" disabled={passo === 0 || enviando} onClick={() => setPasso((x) => x - 1)}>Voltar</Button>
+        <div className="flex flex-wrap justify-between gap-2 mt-5 pt-4 border-t border-[var(--border-subtle)]">
+          <Button variant="ghost" disabled={passo === 0 || enviando} onClick={() => setPasso((x) => x - 1)}>Voltar</Button>
           {passo < 2
-            ? <Button className="min-h-11" onClick={() => setPasso((x) => x + 1)}>Continuar</Button>
-            : <Button className="min-h-11" loading={enviando} onClick={enviar}>Enviar para análise</Button>}
+            ? <Button onClick={() => setPasso((x) => x + 1)}>Continuar</Button>
+            : <Button loading={enviando} onClick={enviar}>Enviar para análise</Button>}
         </div>
-      </Card>
-
-      <Card padding="md" className="self-start">
-        <h2 className="text-sm font-semibold text-[var(--text-main)]">Por que usar a conta do Sellergy</h2>
-        <ul className="mt-3 space-y-2 text-sm text-[var(--text-secondary)]">
-          {['Pix e cartão na mesma tela da venda', 'Pagamento confirma sozinho e baixa o estoque', 'Link de pagamento no WhatsApp para pedidos', 'Sem maquininha alugada'].map((t) => (
-            <li key={t} className="flex gap-2"><CheckCircle2 size={16} className="text-[var(--success)] shrink-0 mt-0.5" />{t}</li>
-          ))}
-        </ul>
-        <p className="text-xs text-[var(--text-muted)] mt-4">A conta é aberta no Asaas, instituição de pagamento autorizada pelo Banco Central. Já tem Mercado Pago ou Asaas? Dá pra continuar usando em <Link to="/app/pagamentos" className="underline">Pagamentos</Link>.</p>
-      </Card>
-    </div>
+      </Painel>
+    </ColunasPagina>
   );
 }
 
 // ---------------------------------------------------------------------
 // Conta ativa
 // ---------------------------------------------------------------------
-function ContaAtiva({ conta, onMudou }) {
+const FILTROS = [
+  { valor: 'todos', rotulo: 'Todos' },
+  { valor: 'entradas', rotulo: 'Entradas' },
+  { valor: 'taxas', rotulo: 'Taxas' },
+  { valor: 'saques', rotulo: 'Saques' },
+];
+
+function ContaAtiva({ conta, st, onMudou }) {
   const toast = useToast();
   const [fin, setFin] = useState(null);
   const [erro, setErro] = useState(null);
   const [offset, setOffset] = useState(0);
   const [carregandoMais, setCarregandoMais] = useState(false);
-  const [saque, setSaque] = useState(null);
+  const [filtro, setFiltro] = useState('todos');
+  const [valorSaque, setValorSaque] = useState(null); // null = usa o saldo todo
   const [enviandoSaque, setEnviandoSaque] = useState(false);
   const [repasse, setRepasse] = useState(null);
   const [salvandoRepasse, setSalvandoRepasse] = useState(false);
+  const campoSaque = useRef(null);
 
   const carregar = useCallback(() => api.get('/conta-recebimento/financeiro')
     .then((r) => { setFin(r.data); setOffset(0); setErro(null); })
@@ -259,6 +292,25 @@ function ContaAtiva({ conta, onMudou }) {
   useEffect(() => {
     carregar();
   }, [carregar]);
+
+  const carregou = Boolean(fin);
+  const podeSacar = Boolean(fin?.saldo && fin.saldo >= 1);
+  useAcaoTopo(
+    carregou ? (
+      <Button
+        size="sm"
+        icon={ArrowDownToLine}
+        disabled={!podeSacar}
+        onClick={() => {
+          campoSaque.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          campoSaque.current?.focus();
+        }}
+      >
+        Sacar agora
+      </Button>
+    ) : null,
+    [carregou, podeSacar],
+  );
 
   const maisExtrato = async () => {
     setCarregandoMais(true);
@@ -276,13 +328,13 @@ function ContaAtiva({ conta, onMudou }) {
 
   const sacar = async (e) => {
     e.preventDefault();
-    const valor = Number(String(saque).replace(/\./g, '').replace(',', '.'));
+    const valor = paraNumero(valorSaque ?? valorEmTexto(fin?.saldo));
     if (!(valor >= 1)) { toast.error('Informe um valor a partir de R$ 1,00.'); return; }
     setEnviandoSaque(true);
     try {
       const r = await api.post('/conta-recebimento/saque', { valor });
       toast.success(`Saque de ${fmtBRL(r.data.valor)} pedido. ${r.data.status === 'DONE' ? 'Já caiu.' : 'Cai na sua chave Pix em instantes.'}`);
-      setSaque(null);
+      setValorSaque(null);
       carregar();
     } catch (err) {
       toast.error(erroDaApi(err, 'Não foi possível sacar.'));
@@ -306,106 +358,154 @@ function ContaAtiva({ conta, onMudou }) {
     }
   };
 
+  const itens = useMemo(() => (fin?.extrato?.itens || []).map((t) => ({ ...t, tipoInfo: tipoDoExtrato(t) })), [fin]);
+  const contagem = useMemo(() => {
+    const c = { todos: itens.length, entradas: 0, taxas: 0, saques: 0 };
+    itens.forEach((t) => { if (c[t.tipoInfo.grupo] !== undefined) c[t.tipoInfo.grupo] += 1; });
+    return c;
+  }, [itens]);
+  const visiveis = filtro === 'todos' ? itens : itens.filter((t) => t.tipoInfo.grupo === filtro);
+
   const rep = conta.dados?.repasse || {};
+  const neg = conta.dados?.negocio || {};
   const tipoChave = TIPOS_CHAVE.find((t) => t.value === rep.tipoChavePix)?.label || rep.tipoChavePix;
   const prazo = PRAZOS.find((o) => o.value === conta.prazoRepasse) || PRAZOS[0];
 
   if (erro) return <Erro texto={erro} onTentar={carregar} />;
-  if (!fin) return <div className="py-16 grid place-items-center"><Loader2 className="animate-spin text-[var(--text-muted)]" aria-label="Carregando" /></div>;
+  if (!fin) return <Carregando />;
+
+  const taxaSaque = fin.taxas?.saque;
+  const temTaxaSaque = taxaSaque !== null && taxaSaque !== undefined;
+
+  const lateral = (
+    <>
+      <Painel
+        titulo="Sacar pro seu banco"
+        acoes={temTaxaSaque && <Badge variant={taxaSaque ? 'neutral' : 'success'}>{taxaSaque ? `taxa ${fmtBRL(taxaSaque)}` : 'sem custo'}</Badge>}
+      >
+        <form onSubmit={sacar} className="flex flex-col gap-3">
+          <Input
+            ref={campoSaque}
+            size="sm"
+            label="Quanto sacar (R$)"
+            aria-label="Valor do saque em reais"
+            inputMode="decimal"
+            value={valorSaque ?? valorEmTexto(fin.saldo)}
+            onChange={(e) => setValorSaque(e.target.value)}
+            disabled={!podeSacar}
+            hint={fin.saldo === null ? 'Não deu pra carregar o saldo agora.' : `Disponível: ${fmtBRL(fin.saldo)}`}
+          />
+          <p className="m-0 text-xs text-[var(--text-muted)] [overflow-wrap:anywhere]">
+            Vai para a chave Pix {tipoChave}: <strong className="text-[var(--text-main)]">{rep.chavePix || '—'}</strong>
+          </p>
+          <Button type="submit" icon={ArrowDownToLine} loading={enviandoSaque} disabled={!podeSacar}>Confirmar saque</Button>
+        </form>
+      </Painel>
+
+      <Painel titulo="Dados da conta" acoes={st && <Badge variant={st.variante}>Ativa</Badge>} semPadding>
+        <LinhaInfo rotulo="Titular" valor={neg.razaoSocial || '—'} />
+        <LinhaInfo rotulo="CNPJ" valor={neg.cnpj ? mascaraCnpj(neg.cnpj) : '—'} />
+        {neg.nomeFantasia && <LinhaInfo rotulo="Nome do negócio" valor={neg.nomeFantasia} />}
+        <LinhaInfo rotulo={`Chave Pix (${tipoChave || '—'})`} valor={<span className="break-all">{rep.chavePix || '—'}</span>} />
+        <LinhaInfo rotulo="Prazo" valor={prazo.titulo}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setRepasse({ prazo: conta.prazoRepasse || 'PADRAO', tipoChavePix: rep.tipoChavePix || 'CNPJ', chavePix: rep.chavePix || '' })}
+          >
+            Alterar
+          </Button>
+        </LinhaInfo>
+        <p className="m-0 px-4 py-2.5 text-xs text-[var(--text-muted)] flex items-start gap-1.5">
+          <Wallet size={14} aria-hidden="true" className="shrink-0 mt-0.5" />Conta no Asaas em nome da empresa.
+        </p>
+      </Painel>
+
+      <Painel titulo="Suas taxas" semPadding>
+        {!fin.taxas || fin.taxas.linhas.length === 0 ? (
+          <p className="m-0 px-4 py-3 text-[13px] text-[var(--text-muted)]">Não deu pra carregar as taxas agora.</p>
+        ) : (
+          <>
+            {fin.taxas.linhas.map((l) => <LinhaInfo key={l.forma} rotulo={l.forma} valor={fmtTaxa(l)} forte />)}
+            {temTaxaSaque && <LinhaInfo rotulo="Saque por Pix" valor={taxaSaque ? fmtBRL(taxaSaque) : 'Grátis'} forte />}
+          </>
+        )}
+      </Painel>
+    </>
+  );
 
   return (
-    <div className="space-y-4">
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        <Kpi rotulo="Disponível pra sacar" valor={fin.saldo === null ? '—' : fmtBRL(fin.saldo)} detalhe={fin.saldo === null ? 'Não deu pra carregar agora.' : `Saque pra chave ${tipoChave}`} />
-        <Kpi rotulo="A liberar (cartão)" valor={fin.aLiberar === null ? '—' : fmtBRL(fin.aLiberar)} detalhe={prazo.titulo} />
-        <Card padding="md" className="flex flex-col justify-between gap-3">
-          <p className="text-xs text-[var(--text-muted)]">Mandar pro seu banco</p>
-          <Button size="lg" icon={ArrowDownToLine} disabled={!fin.saldo || fin.saldo < 1} onClick={() => setSaque(fin.saldo ? String(fin.saldo.toFixed(2)).replace('.', ',') : '')}>Sacar agora</Button>
-        </Card>
-      </div>
+    <Pagina>
+      <FaixaNumeros>
+        <Numero
+          destaque
+          rotulo="Disponível pra sacar"
+          valor={fin.saldo === null ? '—' : fmtBRL(fin.saldo)}
+          detalhe={fin.saldo === null ? 'Não deu pra carregar agora.' : `Saque pra chave ${tipoChave}`}
+        />
+        <Numero
+          rotulo="A liberar (cartão)"
+          valor={fin.aLiberar === null ? '—' : fmtBRL(fin.aLiberar)}
+          detalhe={fin.aLiberar === null ? 'Não deu pra carregar agora.' : prazo.titulo}
+        />
+        <Numero
+          rotulo="Saque por Pix"
+          valor={temTaxaSaque ? (taxaSaque ? fmtBRL(taxaSaque) : 'Grátis') : '—'}
+          detalhe="custo de cada saque"
+        />
+      </FaixaNumeros>
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
-        <Card padding="none" className="overflow-hidden">
-          <h2 className="px-5 pt-4 pb-2 text-base font-semibold text-[var(--text-main)]">Extrato</h2>
+      <ColunasPagina lateral={lateral}>
+        <Painel titulo="Extrato" subtitulo="Movimentações da conta, das mais novas para as mais antigas" semPadding>
           {!fin.extrato ? (
-            <p className="px-5 pb-5 text-sm text-[var(--text-muted)]">Não deu pra carregar o extrato agora.</p>
-          ) : fin.extrato.itens.length === 0 ? (
-            <p className="px-5 pb-5 text-sm text-[var(--text-muted)]">Nenhuma movimentação ainda. Os pagamentos aparecem aqui assim que caem.</p>
+            <p className="m-0 px-4 py-4 text-[13px] text-[var(--text-muted)]">Não deu pra carregar o extrato agora.</p>
+          ) : itens.length === 0 ? (
+            <p className="m-0 px-4 py-4 text-[13px] text-[var(--text-muted)]">Nenhuma movimentação ainda. Os pagamentos aparecem aqui assim que caem.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs text-[var(--text-muted)]">
-                    <th className="px-5 py-2 font-semibold">Quando</th>
-                    <th className="px-5 py-2 font-semibold">O quê</th>
-                    <th className="px-5 py-2 font-semibold text-right">Valor</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {fin.extrato.itens.map((t) => (
-                    <tr key={t.id} className="border-t border-[var(--border-subtle)]">
-                      <td className="px-5 py-2.5 whitespace-nowrap text-[var(--text-secondary)]">{t.data ? new Date(`${t.data}T12:00:00`).toLocaleDateString('pt-BR') : ''}</td>
-                      <td className="px-5 py-2.5 text-[var(--text-main)]">{t.descricao}</td>
-                      <td className={clsx('px-5 py-2.5 text-right tabular-nums whitespace-nowrap', t.valor < 0 ? 'text-[var(--danger-text)]' : 'text-[var(--success-text)]')}>{fmtBRL(t.valor)}</td>
+            <>
+              <BarraFerramentas>
+                <AbasPilula
+                  rotulo="Filtrar extrato"
+                  abas={FILTROS.map((f) => ({ ...f, qtd: contagem[f.valor] }))}
+                  valor={filtro}
+                  onChange={setFiltro}
+                />
+              </BarraFerramentas>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr>
+                      <th className={TH}>Quando</th>
+                      <th className={TH}>O quê</th>
+                      <th className={TH}>Tipo</th>
+                      <th className={clsx(TH, 'text-right')}>Valor</th>
+                      <th className={clsx(TH, 'text-right')}>Saldo depois</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {visiveis.map((t) => (
+                      <tr key={t.id}>
+                        <td className={clsx(TD, 'whitespace-nowrap text-[var(--text-secondary)]')}>{t.data ? new Date(`${t.data}T12:00:00`).toLocaleDateString('pt-BR') : ''}</td>
+                        <td className={clsx(TD, 'text-[var(--text-main)]')}>{t.descricao}</td>
+                        <td className={clsx(TD, 'whitespace-nowrap')}><Badge variant={t.tipoInfo.variante}>{t.tipoInfo.rotulo}</Badge></td>
+                        <td className={clsx(TD, 'text-right tabular-nums whitespace-nowrap font-semibold', t.valor < 0 ? 'text-[var(--danger-text)]' : 'text-[var(--success-text)]')}>{fmtBRL(t.valor)}</td>
+                        <td className={clsx(TD, 'text-right tabular-nums whitespace-nowrap text-[var(--text-secondary)]')}>{t.saldo === null || t.saldo === undefined ? '—' : fmtBRL(t.saldo)}</td>
+                      </tr>
+                    ))}
+                    {visiveis.length === 0 && (
+                      <tr><td colSpan={5} className={clsx(TD, 'text-center text-[var(--text-muted)]')}>Nada desse tipo nas movimentações carregadas.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+                <span className="text-xs text-[var(--text-muted)]">{visiveis.length} de {itens.length} movimentações carregadas</span>
+                {fin.extrato.temMais && <Button variant="secondary" size="sm" loading={carregandoMais} onClick={maisExtrato}>Carregar mais</Button>}
+              </div>
+            </>
           )}
-          {fin.extrato?.temMais && (
-            <div className="px-5 py-3 border-t border-[var(--border-subtle)]">
-              <Button variant="secondary" className="min-h-11" loading={carregandoMais} onClick={maisExtrato}>Carregar mais</Button>
-            </div>
-          )}
-        </Card>
-
-        <div className="space-y-4">
-          <Card padding="md">
-            <h2 className="text-base font-semibold text-[var(--text-main)]">Suas taxas</h2>
-            {!fin.taxas || fin.taxas.linhas.length === 0 ? (
-              <p className="text-sm text-[var(--text-muted)] mt-2">Não deu pra carregar as taxas agora.</p>
-            ) : (
-              <ul className="mt-2">
-                {fin.taxas.linhas.map((l) => (
-                  <li key={l.forma} className="flex justify-between py-2 border-t border-[var(--border-subtle)] first:border-t-0 text-sm">
-                    <span className="text-[var(--text-secondary)]">{l.forma}</span>
-                    <span className="tabular-nums text-[var(--text-main)]">
-                      {[l.percentual !== null ? `${String(l.percentual).replace('.', ',')}%` : null, l.fixo ? fmtBRL(l.fixo) : null].filter(Boolean).join(' + ') || 'Grátis'}
-                    </span>
-                  </li>
-                ))}
-                {fin.taxas.saque !== null && (
-                  <li className="flex justify-between py-2 border-t border-[var(--border-subtle)] text-sm">
-                    <span className="text-[var(--text-secondary)]">Saque por Pix</span>
-                    <span className="tabular-nums text-[var(--text-main)]">{fin.taxas.saque ? fmtBRL(fin.taxas.saque) : 'Grátis'}</span>
-                  </li>
-                )}
-              </ul>
-            )}
-          </Card>
-
-          <Card padding="md">
-            <h2 className="text-base font-semibold text-[var(--text-main)]">Repasse</h2>
-            <dl className="mt-2 text-sm space-y-1.5">
-              <div><dt className="text-xs text-[var(--text-muted)]">Prazo</dt><dd className="text-[var(--text-main)]">{prazo.titulo}</dd></div>
-              <div><dt className="text-xs text-[var(--text-muted)]">Chave Pix ({tipoChave})</dt><dd className="text-[var(--text-main)] break-all">{rep.chavePix || '—'}</dd></div>
-            </dl>
-            <Button variant="secondary" className="min-h-11 mt-3" onClick={() => setRepasse({ prazo: conta.prazoRepasse || 'PADRAO', tipoChavePix: rep.tipoChavePix || 'CNPJ', chavePix: rep.chavePix || '' })}>Alterar</Button>
-          </Card>
-        </div>
-      </div>
-
-      <Modal isOpen={saque !== null} onClose={() => !enviandoSaque && setSaque(null)} title="Sacar para o seu banco" size="sm">
-        <form onSubmit={sacar} className="space-y-4">
-          <Input label="Valor (R$)" aria-label="Valor do saque em reais" inputMode="decimal" value={saque || ''} onChange={(e) => setSaque(e.target.value)} hint={`Disponível: ${fmtBRL(fin.saldo)}`} />
-          <p className="text-sm text-[var(--text-secondary)]">Vai para a chave Pix {tipoChave}: <b className="break-all">{rep.chavePix}</b></p>
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" className="min-h-11" onClick={() => setSaque(null)} disabled={enviandoSaque}>Voltar</Button>
-            <Button type="submit" className="min-h-11" loading={enviandoSaque}>Confirmar saque</Button>
-          </div>
-        </form>
-      </Modal>
+        </Painel>
+      </ColunasPagina>
 
       <Modal isOpen={repasse !== null} onClose={() => !salvandoRepasse && setRepasse(null)} title="Alterar repasse" size="md">
         {repasse && (
@@ -413,7 +513,7 @@ function ContaAtiva({ conta, onMudou }) {
             <fieldset className="space-y-2">
               <legend className="text-sm font-semibold text-[var(--text-main)] mb-2">Prazo</legend>
               {PRAZOS.map((o) => (
-                <label key={o.value} className={clsx('flex gap-3 p-3 rounded-xl border cursor-pointer min-h-11', repasse.prazo === o.value ? 'border-[var(--primary)] bg-[var(--bg-subtle)]' : 'border-[var(--border-main)]')}>
+                <label key={o.value} className={clsx('flex gap-3 p-3 rounded-[10px] border cursor-pointer min-h-11', repasse.prazo === o.value ? 'border-[var(--primary)] bg-[var(--bg-subtle)]' : 'border-[var(--border-main)]')}>
                   <input type="radio" name="prazo-alt" checked={repasse.prazo === o.value} onChange={() => setRepasse({ ...repasse, prazo: o.value })} className="mt-1" />
                   <span><span className="block text-sm font-semibold text-[var(--text-main)]">{o.titulo}</span><span className="block text-xs text-[var(--text-muted)]">{o.descricao}</span></span>
                 </label>
@@ -422,13 +522,13 @@ function ContaAtiva({ conta, onMudou }) {
             <Select label="Tipo da chave Pix" aria-label="Tipo da chave Pix" value={repasse.tipoChavePix} onChange={(e) => setRepasse({ ...repasse, tipoChavePix: e.target.value })} options={TIPOS_CHAVE} placeholder="" />
             <Input label="Chave Pix" aria-label="Chave Pix" value={repasse.chavePix} onChange={(e) => setRepasse({ ...repasse, chavePix: e.target.value })} hint="No nome do mesmo CNPJ da conta." />
             <div className="flex justify-end gap-2">
-              <Button variant="ghost" className="min-h-11" onClick={() => setRepasse(null)} disabled={salvandoRepasse}>Voltar</Button>
-              <Button type="submit" className="min-h-11" loading={salvandoRepasse}>Salvar</Button>
+              <Button variant="ghost" onClick={() => setRepasse(null)} disabled={salvandoRepasse}>Voltar</Button>
+              <Button type="submit" loading={salvandoRepasse}>Salvar</Button>
             </div>
           </form>
         )}
       </Modal>
-    </div>
+    </Pagina>
   );
 }
 
@@ -466,96 +566,123 @@ export default function RecebimentosPage() {
   };
 
   if (erro) return <Erro texto={erro} onTentar={carregar} />;
-  if (!estado) return <div className="py-16 grid place-items-center"><Loader2 className="animate-spin text-[var(--text-muted)]" aria-label="Carregando" /></div>;
+  if (!estado) return <Carregando />;
 
   const { conta, pagamento, automaticaDisponivel } = estado;
   const st = conta ? STATUS[conta.status] : null;
   const enviada = conta && conta.status !== 'RASCUNHO';
 
+  if (conta?.status === 'ATIVA') return <ContaAtiva conta={conta} st={st} onMudou={carregar} />;
+
+  const neg = conta?.dados?.negocio || {};
+
+  // Lateral dos estados "em análise" e "recusada": dados enviados + como recebe hoje.
+  const lateralEnviada = enviada && (
+    <>
+      <Painel titulo="Dados da conta" acoes={st && <Badge variant={st.variante}>{st.rotulo}</Badge>} semPadding>
+        <LinhaInfo rotulo="Titular" valor={neg.razaoSocial || '—'} />
+        <LinhaInfo rotulo="CNPJ" valor={neg.cnpj ? mascaraCnpj(neg.cnpj) : '—'} />
+        <p className="m-0 px-4 py-2.5 text-xs text-[var(--text-muted)] flex items-start gap-1.5">
+          <Wallet size={14} aria-hidden="true" className="shrink-0 mt-0.5" />Conta no Asaas em nome de {neg.razaoSocial} · CNPJ {mascaraCnpj(neg.cnpj)}
+        </p>
+      </Painel>
+      <Painel titulo="Como você recebe hoje" semPadding>
+        <LinhaInfo
+          rotulo="Forma conectada"
+          valor={pagamento?.usaContaSellergy ? 'Conta do Sellergy' : pagamento?.ativo ? nomeProvedor(pagamento.provedor) : 'Nenhuma'}
+        />
+        <p className="m-0 px-4 py-2.5 text-xs text-[var(--text-muted)]">Dá pra conectar Mercado Pago ou Asaas em <Link to="/app/pagamentos" className="underline">Pagamentos</Link>.</p>
+      </Painel>
+    </>
+  );
+
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs text-[var(--text-muted)]">Financeiro</p>
-          <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-main)]">Conta de recebimento</h1>
-          <p className="text-sm text-[var(--text-muted)] mt-1">{enviada ? 'Onde caem o Pix e o cartão das suas vendas.' : 'Abra em poucos minutos. Não precisa abrir conta em banco nem alugar maquininha.'}</p>
-        </div>
-        {st && enviada && <Badge variant={st.variante} size="lg">{st.rotulo}</Badge>}
-      </div>
+    <Pagina>
+      <p className="m-0 text-[13px] text-[var(--text-muted)]">
+        {enviada ? 'Onde caem o Pix e o cartão das suas vendas.' : 'Abra em poucos minutos. Não precisa abrir conta em banco nem alugar maquininha.'}
+      </p>
 
       {!enviada && !automaticaDisponivel && (
-        <Card padding="lg">
-          <div className="flex gap-3">
-            <Info className="text-[var(--text-muted)] shrink-0" />
-            <div>
-              <h2 className="text-base font-semibold text-[var(--text-main)]">A abertura automática de conta está desligada no momento</h2>
-              <p className="text-sm text-[var(--text-secondary)] mt-1">Enquanto isso, você pode receber Pix e cartão conectando uma conta que já tem no Mercado Pago ou no Asaas. Os pagamentos confirmam sozinhos do mesmo jeito.</p>
-              <p className="text-sm text-[var(--text-secondary)] mt-2">
-                {pagamento?.ativo ? `Hoje você recebe por: ${pagamento.provedor === 'MERCADO_PAGO' ? 'Mercado Pago' : pagamento.provedor === 'ASAAS' ? 'Asaas' : 'Pagar.me'}.` : 'Hoje nenhuma forma de receber está conectada.'}
-              </p>
-              <Link to="/app/pagamentos" className="inline-flex items-center gap-2 mt-4 min-h-11 px-4 rounded-lg bg-[var(--primary)] text-[var(--text-on-primary)] text-sm font-semibold">
-                Conectar Mercado Pago ou Asaas <ExternalLink size={14} />
-              </Link>
+        <ColunasPagina lateral={<PorQueUsar />}>
+          <Painel titulo="A abertura automática de conta está desligada no momento">
+            <div className="flex gap-3">
+              <Info aria-hidden="true" className="text-[var(--text-muted)] shrink-0" />
+              <div className="text-[13px] text-[var(--text-secondary)]">
+                <p className="m-0">Enquanto isso, você pode receber Pix e cartão conectando uma conta que já tem no Mercado Pago ou no Asaas. Os pagamentos confirmam sozinhos do mesmo jeito.</p>
+                <p className="m-0 mt-2">
+                  {pagamento?.ativo ? `Hoje você recebe por: ${nomeProvedor(pagamento.provedor)}.` : 'Hoje nenhuma forma de receber está conectada.'}
+                </p>
+                <Link to="/app/pagamentos" className="inline-flex items-center gap-2 mt-3 h-10 px-4 rounded-lg bg-[var(--primary)] text-[var(--text-on-primary)] text-sm font-semibold">
+                  Conectar Mercado Pago ou Asaas <ExternalLink size={14} aria-hidden="true" />
+                </Link>
+              </div>
             </div>
-          </div>
-        </Card>
+          </Painel>
+        </ColunasPagina>
       )}
 
       {!enviada && automaticaDisponivel && (
         conta?.abrindo
-          ? <Card padding="lg"><p className="flex items-center gap-2 text-sm text-[var(--text-secondary)]"><Loader2 size={16} className="animate-spin" />Estamos abrindo sua conta. Atualize a página em instantes.</p></Card>
+          ? (
+            <ColunasPagina lateral={<PorQueUsar />}>
+              <Painel titulo="Abrindo sua conta">
+                <p className="m-0 flex items-center gap-2 text-[13px] text-[var(--text-secondary)]"><Loader2 size={16} aria-hidden="true" className="animate-spin" />Estamos abrindo sua conta. Atualize a página em instantes.</p>
+              </Painel>
+            </ColunasPagina>
+          )
           : <Assistente inicial={conta?.dados} sugestoes={estado.sugestoes} erroAnterior={conta?.motivoRecusa ? `O Asaas não aceitou da última vez: ${conta.motivoRecusa}` : null} onAberta={() => { toast.success('Dados enviados para análise.'); carregar(); }} />
       )}
 
       {conta?.status === 'EM_ANALISE' && (
-        <Card padding="lg">
-          <div className="flex gap-3">
-            <Clock className="text-[var(--warning)] shrink-0" />
-            <div className="flex-1 min-w-0">
-              <h2 className="text-base font-semibold text-[var(--text-main)]">Recebemos seus dados</h2>
-              <p className="text-sm text-[var(--text-secondary)] mt-1">O Asaas está analisando a conta de {conta.dados?.negocio?.razaoSocial}. Avisamos aqui e no WhatsApp quando liberar.</p>
-              {pagamento?.usaContaSellergy
-                ? <p className="text-sm text-[var(--text-secondary)] mt-1">Os pedidos e cobranças já saem por esta conta.</p>
-                : pagamento?.ativo && <p className="text-sm text-[var(--text-secondary)] mt-1">Até liberar, você continua recebendo pela conta que já está conectada em Pagamentos.</p>}
-              {documentos && documentos.length > 0 && (
-                <div className="mt-4">
-                  <h3 className="text-sm font-semibold text-[var(--text-main)]">Falta enviar</h3>
-                  <ul className="mt-2 space-y-2">
-                    {documentos.map((d, i) => (
-                      <li key={i} className="flex flex-wrap items-center gap-2 text-sm">
-                        <span className="flex-1 min-w-0 text-[var(--text-secondary)]">{d.titulo}{d.descricao ? ` — ${d.descricao}` : ''}</span>
-                        {d.link && <a href={d.link} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 min-h-11 px-3 rounded-lg border border-[var(--border-strong)] font-semibold text-[var(--text-main)]">Enviar pelo celular <ExternalLink size={14} /></a>}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {documentos && documentos.length === 0 && <p className="text-sm text-[var(--text-muted)] mt-3">Nenhum documento pendente. Agora é só esperar a análise.</p>}
-              <Button variant="secondary" icon={RotateCw} className="min-h-11 mt-4" loading={atualizando} onClick={atualizarStatus}>Atualizar status</Button>
+        <ColunasPagina lateral={lateralEnviada}>
+          <Painel
+            titulo="Recebemos seus dados"
+            subtitulo="Conta em análise no Asaas"
+            acoes={<Button variant="secondary" size="sm" icon={RotateCw} loading={atualizando} onClick={atualizarStatus}>Atualizar status</Button>}
+          >
+            <div className="flex gap-3">
+              <Clock aria-hidden="true" className="text-[var(--warning)] shrink-0" />
+              <div className="flex-1 min-w-0 text-[13px] text-[var(--text-secondary)]">
+                <p className="m-0">O Asaas está analisando a conta de {neg.razaoSocial}. Avisamos aqui e no WhatsApp quando liberar.</p>
+                {pagamento?.usaContaSellergy
+                  ? <p className="m-0 mt-1">Os pedidos e cobranças já saem por esta conta.</p>
+                  : pagamento?.ativo && <p className="m-0 mt-1">Até liberar, você continua recebendo pela conta que já está conectada em Pagamentos.</p>}
+                {documentos && documentos.length === 0 && <p className="m-0 mt-3 text-[var(--text-muted)]">Nenhum documento pendente. Agora é só esperar a análise.</p>}
+              </div>
             </div>
-          </div>
-        </Card>
+          </Painel>
+          {documentos && documentos.length > 0 && (
+            <Painel titulo="Falta enviar" subtitulo="O Asaas pede estes documentos para liberar a conta" semPadding>
+              {documentos.map((d, i) => (
+                <LinhaInfo key={i} rotulo={`${d.titulo}${d.descricao ? ` — ${d.descricao}` : ''}`}>
+                  {d.link && (
+                    <a href={d.link} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--border-strong)] text-xs font-semibold text-[var(--text-main)]">
+                      Enviar pelo celular <ExternalLink size={14} aria-hidden="true" />
+                    </a>
+                  )}
+                </LinhaInfo>
+              ))}
+            </Painel>
+          )}
+        </ColunasPagina>
       )}
 
       {conta?.status === 'RECUSADA' && (
-        <Card padding="lg">
-          <div className="flex gap-3">
-            <XCircle className="text-[var(--danger)] shrink-0" />
-            <div>
-              <h2 className="text-base font-semibold text-[var(--text-main)]">A conta não foi aprovada</h2>
-              <p className="text-sm text-[var(--text-secondary)] mt-1">{conta.motivoRecusa}</p>
-              <p className="text-sm text-[var(--text-secondary)] mt-2">Fale com o suporte para revisar os dados. Enquanto isso, dá pra receber conectando o Mercado Pago ou o Asaas em <Link to="/app/pagamentos" className="underline font-semibold">Pagamentos</Link>.</p>
-              <Button variant="secondary" icon={RotateCw} className="min-h-11 mt-4" loading={atualizando} onClick={atualizarStatus}>Consultar de novo</Button>
+        <ColunasPagina lateral={lateralEnviada}>
+          <Painel
+            titulo="A conta não foi aprovada"
+            acoes={<Button variant="secondary" size="sm" icon={RotateCw} loading={atualizando} onClick={atualizarStatus}>Consultar de novo</Button>}
+          >
+            <div className="flex gap-3">
+              <XCircle aria-hidden="true" className="text-[var(--danger)] shrink-0" />
+              <div className="text-[13px] text-[var(--text-secondary)]">
+                <p className="m-0">{conta.motivoRecusa}</p>
+                <p className="m-0 mt-2">Fale com o suporte para revisar os dados. Enquanto isso, dá pra receber conectando o Mercado Pago ou o Asaas em <Link to="/app/pagamentos" className="underline font-semibold">Pagamentos</Link>.</p>
+              </div>
             </div>
-          </div>
-        </Card>
+          </Painel>
+        </ColunasPagina>
       )}
-
-      {conta?.status === 'ATIVA' && <ContaAtiva conta={conta} onMudou={carregar} />}
-
-      {enviada && (
-        <p className="text-xs text-[var(--text-muted)] flex items-center gap-1.5"><Wallet size={14} />Conta no Asaas em nome de {conta.dados?.negocio?.razaoSocial} · CNPJ {mascaraCnpj(conta.dados?.negocio?.cnpj)}</p>
-      )}
-    </div>
+    </Pagina>
   );
 }

@@ -1,12 +1,17 @@
 // /app/agenda/encaixe — fila de encaixe (frente A da fase 2).
-// Vaga em destaque, "Oferecer pra fila", status de cada pessoa, automatico
-// e historico do mes. Regra no backend: src/agenda/encaixe.js.
+// Layout: numeros no topo, horarios que vagaram + fila em tabela e, na
+// lateral, oferta automatica, resultado do mes e como funciona.
+// Regra no backend: src/agenda/encaixe.js.
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, CalendarClock, Clock, Loader2, Plus, Send, UserMinus, Users, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, CalendarClock, CalendarDays, Clock, Loader2, Plus, Send, Users, X } from 'lucide-react';
 import api from '../services/api';
-import { Badge, Button, Card, EmptyState, Input, Select, Switch, useToast } from '../components/ui';
+import {
+  Badge, Button, EmptyState, Input, Select, Switch, useToast,
+  Pagina, FaixaNumeros, Numero, ColunasPagina, Painel, LinhaInfo, BarraFerramentas,
+} from '../components/ui';
 import Modal from '../components/Modal';
+import { useAcaoTopo } from '../hooks/useAcaoTopo';
 import { formatarTelefoneBR } from '../utils/formatTelefone';
 
 const fmtBRL = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -32,13 +37,51 @@ const RESPOSTA = {
   TARDE_DEMAIS: { label: 'Chegou tarde', variant: 'neutral' },
 };
 
-function quandoTexto(f) {
+// Dias e horarios que a pessoa pode (a validade vai em coluna propria).
+function diasHorarios(f) {
   const partes = [];
   if (Array.isArray(f.diasSemana) && f.diasSemana.length) partes.push(f.diasSemana.map((d) => DIAS[d]).join(', '));
-  else partes.push('qualquer dia');
+  else partes.push('Qualquer dia');
   if (f.horaInicio || f.horaFim) partes.push(`${f.horaInicio || 'abertura'}–${f.horaFim || 'fechamento'}`);
-  if (f.ate) partes.push(`até ${new Date(f.ate).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`);
   return partes.join(' · ');
+}
+
+// Rotulo curto do dia pra caixinha de horario: "Hoje", "Amanhã" ou "qua 26/11".
+function diaCurto(d) {
+  const t = diaTexto(d);
+  if (t === 'hoje') return 'Hoje';
+  if (t === 'amanhã') return 'Amanhã';
+  const data = new Date(d);
+  return `${DIAS[data.getDay()]} ${data.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`;
+}
+
+function iniciais(nome = '') {
+  const p = nome.trim().split(/\s+/).filter(Boolean);
+  return ((p[0]?.[0] || '') + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase() || '?';
+}
+
+// "hoje", "ontem", "3 dias", "2 semanas"
+function haQuanto(d) {
+  if (!d) return '—';
+  const dias = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+  if (dias <= 0) return 'hoje';
+  if (dias === 1) return 'ontem';
+  if (dias < 14) return `${dias} dias`;
+  return `${Math.floor(dias / 7)} semanas`;
+}
+
+// Telefone guardado so com digitos (pode vir com 55 na frente).
+function telefoneTela(tel) {
+  let d = String(tel || '').replace(/\D/g, '');
+  if (d.length > 11 && d.startsWith('55')) d = d.slice(2);
+  return formatarTelefoneBR(d) || '—';
+}
+
+// competencia "YYYY-MM" -> "novembro"
+function nomeMes(competencia) {
+  if (!competencia) return 'este mês';
+  const [a, m] = competencia.split('-').map(Number);
+  return new Date(a, m - 1, 1).toLocaleDateString('pt-BR', { month: 'long' });
 }
 
 export default function EncaixePage() {
@@ -48,6 +91,13 @@ export default function EncaixePage() {
   const [carregando, setCarregando] = useState(true);
   const [acao, setAcao] = useState(null);
   const [modalFila, setModalFila] = useState(false);
+  const [filtroServico, setFiltroServico] = useState('');
+  const [filtroProf, setFiltroProf] = useState('');
+  const carregou = !!dados;
+  useAcaoTopo(
+    carregou ? <Button size="sm" icon={Plus} onClick={() => setModalFila(true)}>Pôr cliente na fila</Button> : null,
+    [carregou]
+  );
 
   // Recarregar = mudar a versao (setState so nos callbacks da promessa).
   const [versao, setVersao] = useState(0);
@@ -123,194 +173,338 @@ export default function EncaixePage() {
   }
   if (erro && !dados) {
     return (
-      <Card padding="lg">
+      <Painel>
         <div role="alert" className="flex items-start gap-3">
-          <AlertCircle size={18} className="text-[var(--danger)] mt-0.5" />
+          <AlertCircle size={18} className="text-[var(--danger)] mt-0.5" aria-hidden="true" />
           <div className="space-y-3">
             <p className="text-sm text-[var(--text-main)]">{erro}</p>
-            <Button variant="secondary" onClick={() => { setCarregando(true); carregar(); }}>Tentar de novo</Button>
+            <Button variant="secondary" size="sm" onClick={() => { setCarregando(true); carregar(); }}>Tentar de novo</Button>
           </div>
         </div>
-      </Card>
+      </Painel>
     );
   }
 
   const vagas = dados.vagas || [];
   const filaAtiva = (dados.fila || []).filter((f) => f.status !== 'AGENDADO');
   const encaixadas = (dados.fila || []).filter((f) => f.status === 'AGENDADO');
+  const mes = dados.mes || { vagas: 0, ofertadas: 0, preenchidas: 0, valorRecuperado: 0 };
+
+  // Numeros do topo: tudo do que o GET /encaixe ja devolve.
+  const vagasAbertas = vagas.filter((v) => v.status !== 'PREENCHIDA');
+  const vagasHoje = vagasAbertas.filter((v) => diaTexto(v.data) === 'hoje').length;
+  const esperandoVoce = vagas.filter((v) => v.status === 'VAGA' || v.status === 'EXPIRADA').length;
+  const comOferta = filaAtiva.filter((f) => f.status === 'OFERTADO').length;
+
+  // Filtros da tabela (opcoes saem da propria fila). A posicao e a da fila inteira.
+  const posicao = new Map(filaAtiva.map((f, i) => [f.id, i + 1]));
+  const servicosFila = [...new Set(filaAtiva.map((f) => f.servico || SEM_SERVICO))];
+  const profsFila = [...new Set(filaAtiva.map((f) => f.profissional || SEM_PROF))];
+  const filaVisivel = filaAtiva.filter((f) =>
+    (!filtroServico || (f.servico || SEM_SERVICO) === filtroServico)
+    && (!filtroProf || (f.profissional || SEM_PROF) === filtroProf));
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3">
-        <Link to="/app/agenda" className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-main)] min-h-[44px]">
-          <ArrowLeft size={16} /> Agenda
-        </Link>
-        <h1 className="text-xl font-semibold tracking-tight text-[var(--text-main)] flex-1">Fila de encaixe</h1>
-        <Button variant="primary" icon={Plus} className="min-h-[44px]" onClick={() => setModalFila(true)}>Pôr cliente na fila</Button>
-      </div>
+    <Pagina>
+      <FaixaNumeros>
+        <Numero
+          rotulo="Na fila"
+          valor={filaAtiva.length}
+          detalhe={comOferta ? `${comOferta} com oferta enviada` : 'esperando vaga'}
+        />
+        <Numero
+          rotulo="Vagas abertas"
+          valor={vagasAbertas.length}
+          tom={esperandoVoce ? 'alerta' : 'neutro'}
+          detalhe={esperandoVoce ? `${esperandoVoce} esperando você oferecer` : `${vagasHoje} hoje`}
+          tomDetalhe={esperandoVoce ? 'alerta' : 'neutro'}
+        />
+        <Numero
+          rotulo="Preenchidas no mês"
+          valor={`${mes.preenchidas} de ${mes.vagas}`}
+          progresso={mes.vagas ? (mes.preenchidas / mes.vagas) * 100 : 0}
+        />
+        <Numero
+          rotulo="Recuperado no mês"
+          valor={fmtBRL(mes.valorRecuperado)}
+          detalhe="que seriam perdidos"
+          destaque
+        />
+      </FaixaNumeros>
 
-      <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
-        <div className="space-y-5 min-w-0">
-          {vagas.length === 0 ? (
-            <Card padding="lg">
-              <EmptyState
-                icon={CalendarClock}
-                title="Nenhum horário vago agora"
-                description="Quando alguém cancelar ou remarcar, a vaga aparece aqui com quem da fila serve pra ela."
-              />
-            </Card>
-          ) : (
-            vagas.map((v) => (
-              <CardVaga key={v.id} vaga={v} acao={acao} onOfertar={() => ofertar(v)} onDescartar={() => descartar(v)} />
-            ))
-          )}
-
-          <Card padding="none">
-            <div className="flex flex-wrap items-center gap-2 px-5 py-4 border-b border-[var(--border-main)]">
-              <h2 className="text-base font-semibold text-[var(--text-main)] flex-1">Na fila ({filaAtiva.length})</h2>
-              <span className="text-xs text-[var(--text-muted)]">Ordem: quem entrou primeiro</span>
-            </div>
-            {filaAtiva.length === 0 ? (
-              <div className="px-5 py-8 text-sm text-center text-[var(--text-muted)]">
-                Ninguém esperando. Quando um horário estiver cheio, ponha a cliente na fila — ou ela mesma entra pelo link de agendamento.
+      <ColunasPagina
+        lateral={
+          <>
+            <Painel
+              titulo="Oferta automática"
+              acoes={<Badge variant={dados.automatico ? 'success' : 'neutral'}>{dados.automatico ? 'Ligada' : 'Desligada'}</Badge>}
+              semPadding
+            >
+              <div className="flex items-start gap-3 px-4 py-3 border-b border-[var(--border-subtle)]">
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-semibold text-[var(--text-main)]">Oferecer sozinho, sem me perguntar</div>
+                  <p className="m-0 mt-0.5 text-xs text-[var(--text-muted)]">Só para vagas com mais de 2 h de antecedência. A oferta vence em 30 min.</p>
+                </div>
+                <Switch checked={!!dados.automatico} onChange={mudarAutomatico} ariaLabel="Oferecer vagas pra fila sozinho" />
               </div>
-            ) : (
-              <ul>
-                {filaAtiva.map((f, i) => (
-                  <li key={f.id} className="flex flex-wrap items-center gap-3 px-5 py-3 border-t border-[var(--border-main)] first:border-t-0">
-                    <span className="w-7 text-sm font-semibold tabular-nums text-[var(--text-muted)]">{i + 1}º</span>
-                    <div className="flex-1 min-w-[180px]">
-                      <div className="text-sm font-semibold text-[var(--text-main)]">{f.nome}</div>
-                      <div className="text-xs text-[var(--text-secondary)]">
-                        {f.servico || 'Qualquer serviço'}{f.profissional ? ` com ${f.profissional}` : ''} · {quandoTexto(f)}
-                      </div>
-                      {f.preferencia && <div className="text-xs text-[var(--text-muted)] mt-0.5">{f.preferencia}</div>}
-                    </div>
-                    <Badge variant={STATUS_FILA[f.status]?.variant || 'neutral'}>{STATUS_FILA[f.status]?.label || f.status}</Badge>
-                    {f.ultimaResposta === 'RECUSOU' && f.status === 'AGUARDANDO' && <span className="text-xs text-[var(--text-muted)]">recusou a última</span>}
-                    <Button variant="ghost" size="sm" icon={UserMinus} className="min-h-[44px]" aria-label={`Tirar ${f.nome} da fila`} onClick={() => tirarDaFila(f)}>
-                      Tirar
-                    </Button>
+              <LinhaInfo rotulo="Mandar pra quantas por vez" valor="até 3 pessoas" />
+              <LinhaInfo rotulo="Ninguém respondeu a tempo" valor="avisa você" />
+            </Painel>
+
+            <Painel titulo="Resultado do mês" acoes={<span className="text-xs text-[var(--text-muted)]">{nomeMes(mes.competencia)}</span>} semPadding>
+              {mes.vagas === 0 ? (
+                <p className="m-0 px-4 py-3 text-[13px] text-[var(--text-muted)]">Nenhum horário vagou ainda este mês.</p>
+              ) : (
+                <div className="flex flex-col gap-3 px-4 py-3 border-b border-[var(--border-subtle)]">
+                  <BarraResultado rotulo="Preenchidas pela fila" valor={mes.preenchidas} total={mes.vagas} />
+                  <BarraResultado rotulo="Ainda esperando oferta" valor={Math.max(0, mes.vagas - mes.ofertadas)} total={mes.vagas} />
+                </div>
+              )}
+              <LinhaInfo rotulo="Horários que vagaram" valor={mes.vagas} />
+              <LinhaInfo rotulo="Que seriam perdidos" valor={fmtBRL(mes.valorRecuperado)} forte />
+            </Painel>
+
+            <Painel titulo="Como funciona" semPadding>
+              <ol className="m-0 list-none flex flex-col gap-2.5 px-4 pt-3 pb-3.5 text-[13px] text-[var(--text-secondary)]">
+                {PASSOS.map((p, i) => (
+                  <li key={p} className="flex items-start gap-2.5 leading-snug">
+                    <span aria-hidden="true" className="grid place-items-center w-[22px] h-[22px] rounded-full flex-shrink-0 bg-[var(--primary-soft)] text-[var(--text-main)] text-xs font-bold">{i + 1}</span>
+                    <span>{p}</span>
                   </li>
                 ))}
-              </ul>
-            )}
-            {encaixadas.length > 0 && (
-              <div className="px-5 py-3 border-t border-[var(--border-main)] text-xs text-[var(--text-muted)]">
-                Encaixadas nos últimos 7 dias: {encaixadas.map((f) => f.nome).join(', ')}
-              </div>
-            )}
-          </Card>
-        </div>
+              </ol>
+            </Painel>
+          </>
+        }
+      >
+        <Painel
+          titulo="Horários que vagaram"
+          subtitulo="Próximos horários liberados e os preenchidos nos últimos 2 dias"
+          acoes={
+            <Link to="/app/agenda" className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--primary)] hover:underline">
+              <CalendarDays size={14} aria-hidden="true" /> Abrir agenda
+            </Link>
+          }
+          semPadding
+        >
+          {vagas.length === 0 ? (
+            <EmptyState
+              icon={CalendarClock}
+              title="Nenhum horário vago agora"
+              description="Quando alguém cancelar ou remarcar, a vaga aparece aqui com quem da fila serve pra ela."
+            />
+          ) : (
+            <ul className="m-0 p-0 list-none">
+              {vagas.map((v) => (
+                <LinhaVaga key={v.id} vaga={v} acao={acao} onOfertar={() => ofertar(v)} onDescartar={() => descartar(v)} />
+              ))}
+            </ul>
+          )}
+        </Painel>
 
-        <aside className="space-y-5">
-          <Card padding="lg">
-            <h2 className="text-sm font-semibold text-[var(--text-main)] mb-3">Como a fila funciona</h2>
-            <ol className="space-y-2.5 text-sm text-[var(--text-secondary)] list-decimal pl-5">
-              <li>Cliente pede um horário que está cheio, pela recepção ou pelo link.</li>
-              <li>Entra na fila com o serviço e os dias que pode.</li>
-              <li>Quando alguém remarca ou cancela, o sistema avisa você e acha quem serve.</li>
-              <li>Um toque manda a oferta no WhatsApp; o primeiro que aceitar fica.</li>
-            </ol>
-          </Card>
-
-          <Card padding="lg">
-            <div className="flex items-start gap-3">
-              <div className="flex-1">
-                <div className="text-sm font-semibold text-[var(--text-main)]">Oferecer sozinho, sem me perguntar</div>
-                <p className="text-xs text-[var(--text-muted)] mt-1">Só para vagas com mais de 2 h de antecedência.</p>
-              </div>
-              <Switch checked={!!dados.automatico} onChange={mudarAutomatico} ariaLabel="Oferecer vagas pra fila sozinho" />
+        <Painel
+          titulo={`Fila de espera (${filaAtiva.length})`}
+          subtitulo="Ordem: quem entrou primeiro"
+          semPadding
+        >
+          {filaAtiva.length > 0 && (
+            <BarraFerramentas>
+              <FiltroSelect rotulo="Serviço" valor={filtroServico} onChange={setFiltroServico} opcoes={servicosFila} vazio="Todos" />
+              <FiltroSelect rotulo="Profissional" valor={filtroProf} onChange={setFiltroProf} opcoes={profsFila} vazio="Todos" />
+              {(filtroServico || filtroProf) && (
+                <Button variant="ghost" size="sm" onClick={() => { setFiltroServico(''); setFiltroProf(''); }}>Limpar filtros</Button>
+              )}
+            </BarraFerramentas>
+          )}
+          {filaAtiva.length === 0 ? (
+            <div className="px-4 py-8 text-[13px] text-center text-[var(--text-muted)]">
+              Ninguém esperando. Quando um horário estiver cheio, ponha a cliente na fila — ou ela mesma entra pelo link de agendamento.
             </div>
-          </Card>
-
-          <Card padding="lg">
-            <h2 className="text-sm font-semibold text-[var(--text-main)] mb-2">Este mês</h2>
-            {dados.mes.vagas === 0 ? (
-              <p className="text-sm text-[var(--text-muted)]">Nenhum horário vagou ainda este mês.</p>
-            ) : (
-              <p className="text-sm text-[var(--text-secondary)]">
-                {dados.mes.vagas} horário(s) vago(s), {dados.mes.preenchidas} preenchido(s) pela fila.
-                {dados.mes.valorRecuperado > 0 && <> <strong className="text-[var(--text-main)]">{fmtBRL(dados.mes.valorRecuperado)}</strong> que seriam perdidos.</>}
-              </p>
-            )}
-          </Card>
-        </aside>
-      </div>
+          ) : filaVisivel.length === 0 ? (
+            <div className="px-4 py-8 text-[13px] text-center text-[var(--text-muted)]">Ninguém na fila com esses filtros.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr>
+                    {['#', 'Cliente', 'Quer', 'Com quem', 'Dias e horários', 'Vale até', 'Na fila há', 'Situação'].map((h) => (
+                      <th key={h} scope="col" className={TH}>{h}</th>
+                    ))}
+                    <th scope="col" className={TH}><span className="sr-only">Ações</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filaVisivel.map((f) => (
+                    <tr key={f.id} className="align-middle">
+                      <td className={`${TD} tabular-nums font-semibold text-[var(--text-muted)]`}>{posicao.get(f.id)}º</td>
+                      <td className={TD}>
+                        <div className="flex items-center gap-2.5 min-w-[180px]">
+                          <span aria-hidden="true" className="grid place-items-center w-[30px] h-[30px] rounded-full flex-shrink-0 bg-[var(--primary-soft)] text-[var(--text-main)] text-[11px] font-bold">{iniciais(f.nome)}</span>
+                          <div className="min-w-0">
+                            <div className="font-semibold text-[var(--text-main)]">{f.nome}</div>
+                            <div className="text-xs text-[var(--text-muted)] whitespace-nowrap">{telefoneTela(f.telefone)}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className={TD}>
+                        <div className="text-[var(--text-main)]">{f.servico || SEM_SERVICO}</div>
+                        {f.preferencia && <div className="text-xs text-[var(--text-muted)] max-w-[220px] [overflow-wrap:anywhere]">{f.preferencia}</div>}
+                      </td>
+                      <td className={`${TD} whitespace-nowrap`}>{f.profissional || SEM_PROF}</td>
+                      <td className={TD}>{diasHorarios(f)}</td>
+                      <td className={`${TD} whitespace-nowrap tabular-nums`}>{f.ate ? new Date(f.ate).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : 'sem prazo'}</td>
+                      <td className={`${TD} whitespace-nowrap`}>{haQuanto(f.criadoEm)}</td>
+                      <td className={TD}>
+                        <div className="flex flex-col items-start gap-0.5">
+                          <Badge variant={STATUS_FILA[f.status]?.variant || 'neutral'}>{STATUS_FILA[f.status]?.label || f.status}</Badge>
+                          {f.ultimaResposta === 'RECUSOU' && f.status === 'AGUARDANDO' && <span className="text-xs text-[var(--text-muted)] whitespace-nowrap">recusou a última</span>}
+                        </div>
+                      </td>
+                      <td className={`${TD} text-right`}>
+                        <button
+                          type="button"
+                          onClick={() => tirarDaFila(f)}
+                          aria-label={`Tirar ${f.nome} da fila`}
+                          title="Tirar da fila"
+                          className="inline-grid place-items-center w-9 h-9 rounded-lg border border-[var(--border-main)] text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-main)]"
+                        >
+                          <X size={16} aria-hidden="true" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {encaixadas.length > 0 && (
+            <div className="px-4 py-2.5 border-t border-[var(--border-subtle)] text-xs text-[var(--text-muted)]">
+              Encaixadas nos últimos 7 dias: {encaixadas.map((f) => f.nome).join(', ')}
+            </div>
+          )}
+        </Painel>
+      </ColunasPagina>
 
       <ModalFila isOpen={modalFila} onClose={() => setModalFila(false)} onSalvo={() => { setModalFila(false); carregar(); }} />
+    </Pagina>
+  );
+}
+
+const TH = 'text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap';
+const TD = 'px-4 py-2.5 border-b border-[var(--border-subtle)] text-[var(--text-secondary)]';
+const SEM_SERVICO = 'Qualquer serviço';
+const SEM_PROF = 'Qualquer profissional';
+const PASSOS = [
+  'Cliente pede um horário que está cheio, pela recepção ou pelo link.',
+  'Entra na fila com o serviço e os dias que pode.',
+  'Quando alguém remarca ou cancela, o sistema avisa e acha quem serve.',
+  'A oferta vai no WhatsApp; a primeira que tocar em “Quero” fica.',
+];
+
+function FiltroSelect({ rotulo, valor, onChange, opcoes, vazio }) {
+  return (
+    <label className="inline-flex items-center gap-2 text-xs font-medium text-[var(--text-muted)]">
+      {rotulo}
+      <select
+        value={valor}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-9 px-2.5 rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-main)] focus:outline-none focus:border-[var(--primary)]"
+      >
+        <option value="">{vazio}</option>
+        {opcoes.map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function BarraResultado({ rotulo, valor, total }) {
+  const pct = total ? Math.round((valor / total) * 100) : 0;
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 text-[13px] text-[var(--text-secondary)]">
+        <span>{rotulo}</span>
+        <strong className="text-[var(--text-main)] tabular-nums">{valor}</strong>
+      </div>
+      <div className="h-1.5 rounded-full bg-[var(--bg-subtle)] mt-1.5" aria-hidden="true">
+        <div className="h-1.5 rounded-full bg-[var(--primary)]" style={{ width: `${pct}%` }} />
+      </div>
     </div>
   );
 }
 
-function CardVaga({ vaga, acao, onOfertar, onDescartar }) {
-  const titulo = `Vagou ${diaTexto(vaga.data)} às ${hora(vaga.data)}${vaga.profissional ? ` com ${vaga.profissional}` : ''} (${vaga.duracao} min)`;
+const SITUACAO_VAGA = {
+  VAGA: { label: 'Horário vago', variant: 'danger' },
+  EXPIRADA: { label: 'Ninguém aceitou a tempo', variant: 'neutral' },
+  ABERTA: { label: 'Esperando resposta', variant: 'warning' },
+  PREENCHIDA: { label: 'Preenchido', variant: 'success' },
+};
 
+function LinhaVaga({ vaga, acao, onOfertar, onDescartar }) {
+  const sit = SITUACAO_VAGA[vaga.status] || SITUACAO_VAGA.VAGA;
+  const cabecalho = [vaga.servico || 'Horário', vaga.profissional, `${vaga.duracao} min`].filter(Boolean).join(' · ');
+  const n = vaga.candidatos?.total || 0;
+  const podeOferecer = vaga.status === 'VAGA' || vaga.status === 'EXPIRADA';
+
+  let motivo = vaga.origem ? `${vaga.origem.nome} liberou esse horário.` : 'Horário liberado na agenda.';
+  let detalhe;
   if (vaga.status === 'PREENCHIDA') {
-    return (
-      <Card padding="lg" className="border-[var(--success)]">
-        <div className="flex items-start gap-3">
-          <CheckCircle2 size={20} className="text-[var(--success)] mt-0.5 flex-shrink-0" />
-          <div className="flex-1 space-y-1">
-            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--success-text)]">Horário preenchido</div>
-            <div className="text-base font-semibold text-[var(--text-main)]">
-              {vaga.novoAgendamento?.nome || 'Uma cliente da fila'} ficou com {diaTexto(vaga.data)} às {hora(vaga.data)}{vaga.servico ? `, ${vaga.servico}` : ''}
-            </div>
-            <p className="text-sm text-[var(--text-secondary)]">Já está confirmada na agenda. Quem também recebeu a oferta foi avisado que continua na fila.</p>
-            <Link to="/app/agenda" className="inline-flex items-center min-h-[44px] text-sm font-semibold text-[var(--primary)] hover:underline">Ver na agenda</Link>
-          </div>
-        </div>
-      </Card>
-    );
+    motivo = `${vaga.novoAgendamento?.nome || 'Uma cliente da fila'} ficou com o horário e já está confirmada na agenda.`;
+    detalhe = 'Quem também recebeu a oferta foi avisado que continua na fila.';
+  } else if (vaga.status === 'ABERTA') {
+    detalhe = `Oferta enviada${vaga.automatica ? ' sozinha' : ''} pra ${vaga.envios.length} pessoa(s). Quem tocar em “Quero” primeiro fica. Vence às ${hora(vaga.expiraEm)}.`;
+  } else if (n === 0) {
+    detalhe = vaga.envios.length ? 'Todas as pessoas que servem já receberam a oferta.' : 'Ninguém da fila serve pra esse horário agora.';
+  } else {
+    detalhe = `${n} pessoa(s) da fila ${n === 1 ? 'serve' : 'servem'} pra esse horário${vaga.candidatos.primeiros.length ? `: ${vaga.candidatos.primeiros.join(', ')}${n > 3 ? '…' : ''}` : ''}.`;
   }
 
-  if (vaga.status === 'ABERTA') {
-    return (
-      <Card padding="lg" className="border-[var(--warning)]">
-        <div className="space-y-3">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--warning-text)]">
-            <Clock size={14} /> Esperando resposta
-          </div>
-          <div className="text-base font-semibold text-[var(--text-main)]">{titulo}</div>
-          <p className="text-sm text-[var(--text-secondary)]">
-            Oferta enviada{vaga.automatica ? ' sozinha' : ''} pra {vaga.envios.length} pessoa(s). Quem tocar em “Quero” primeiro fica com o horário. A oferta vence às {hora(vaga.expiraEm)}.
-          </p>
-          <ul className="divide-y divide-[var(--border-main)] border border-[var(--border-main)] rounded-xl">
+  return (
+    <li className="flex flex-wrap items-center gap-x-3.5 gap-y-2.5 px-4 py-3.5 border-b border-[var(--border-subtle)] last:border-b-0">
+      <div className="w-16 flex-shrink-0 text-center py-2 rounded-lg bg-[var(--bg-subtle)]">
+        <div className="text-xs font-medium text-[var(--text-muted)] capitalize">{diaCurto(vaga.data)}</div>
+        <div className="text-[15px] font-bold tabular-nums text-[var(--text-main)]">{hora(vaga.data)}</div>
+      </div>
+      <div className="flex-1 min-w-[220px]">
+        <div className="flex flex-wrap items-center gap-2">
+          <strong className="text-[13px] font-semibold text-[var(--text-main)]">{cabecalho}</strong>
+          <Badge variant={sit.variant}>{sit.label}</Badge>
+        </div>
+        <div className="text-xs text-[var(--text-muted)] mt-0.5">{motivo}</div>
+        <div className="text-[13px] text-[var(--text-secondary)] mt-0.5">{detalhe}</div>
+        {vaga.status === 'ABERTA' && vaga.envios.length > 0 && (
+          <ul className="m-0 mt-2 p-0 list-none flex flex-wrap gap-1.5" aria-label="Respostas da oferta">
             {vaga.envios.map((e) => (
-              <li key={e.id} className="flex items-center gap-3 px-3 py-2.5">
-                <span className="flex-1 text-sm text-[var(--text-main)]">{e.nome}</span>
-                {e.resposta ? <Badge variant={RESPOSTA[e.resposta]?.variant}>{RESPOSTA[e.resposta]?.label}</Badge> : <Badge variant="warning">Sem resposta</Badge>}
+              <li key={e.id} className="inline-flex items-center gap-1.5 h-7 pl-2.5 pr-1 rounded-full border border-[var(--border-main)] text-xs text-[var(--text-main)]">
+                {e.nome}
+                <Badge size="sm" variant={e.resposta ? RESPOSTA[e.resposta]?.variant : 'warning'}>
+                  {e.resposta ? RESPOSTA[e.resposta]?.label : 'Sem resposta'}
+                </Badge>
               </li>
             ))}
           </ul>
-        </div>
-      </Card>
-    );
-  }
-
-  // VAGA ou EXPIRADA (ninguem aceitou a tempo)
-  const n = vaga.candidatos.total;
-  return (
-    <Card padding="lg" className="border-[var(--primary)]">
-      <div className="space-y-3">
-        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
-          <CalendarClock size={14} /> {vaga.status === 'EXPIRADA' ? 'Ninguém aceitou a tempo' : 'Horário vago'}
-        </div>
-        <div className="text-base font-semibold text-[var(--text-main)]">{titulo}</div>
-        <p className="text-sm text-[var(--text-secondary)]">
-          {vaga.origem ? `${vaga.origem.nome} liberou esse horário${vaga.servico ? ` (${vaga.servico})` : ''}. ` : ''}
-          {n === 0
-            ? (vaga.envios.length ? 'Todas as pessoas que servem já receberam a oferta.' : 'Ninguém da fila serve pra esse horário agora.')
-            : `${n} pessoa(s) da fila ${n === 1 ? 'serve' : 'servem'} pra esse horário${vaga.candidatos.primeiros.length ? `: ${vaga.candidatos.primeiros.join(', ')}${n > 3 ? '…' : ''}` : ''}.`}
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="primary" icon={Send} className="min-h-[44px]" disabled={n === 0} loading={acao === `ofertar-${vaga.id}`} onClick={onOfertar}>
-            Oferecer pra fila{n > 0 ? ` (${Math.min(n, 3)})` : ''}
-          </Button>
-          <Button variant="ghost" className="min-h-[44px]" loading={acao === `descartar-${vaga.id}`} onClick={onDescartar}>Não oferecer</Button>
-        </div>
+        )}
       </div>
-    </Card>
+      <div className="flex flex-wrap items-center gap-2">
+        {podeOferecer && (
+          <>
+            <Button variant="secondary" size="sm" loading={acao === `descartar-${vaga.id}`} onClick={onDescartar}>Não oferecer</Button>
+            <Button variant="primary" size="sm" icon={Send} disabled={n === 0} loading={acao === `ofertar-${vaga.id}`} onClick={onOfertar}>
+              Oferecer pra fila{n > 0 ? ` (${Math.min(n, 3)})` : ''}
+            </Button>
+          </>
+        )}
+        {vaga.status === 'ABERTA' && (
+          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--warning-text)]">
+            <Clock size={14} aria-hidden="true" /> até {hora(vaga.expiraEm)}
+          </span>
+        )}
+        {vaga.status === 'PREENCHIDA' && (
+          <Link to="/app/agenda" className="inline-flex items-center h-8 px-3 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-card)] text-xs font-semibold text-[var(--text-main)] hover:bg-[var(--bg-subtle)]">
+            Ver na agenda
+          </Link>
+        )}
+      </div>
+    </li>
   );
 }
 

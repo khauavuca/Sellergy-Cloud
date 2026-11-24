@@ -1,4 +1,4 @@
-import { forwardRef, useState } from 'react';
+import { forwardRef, useState, useId } from 'react';
 import clsx from 'clsx';
 import { Eye, EyeOff } from 'lucide-react';
 
@@ -21,6 +21,9 @@ const Input = forwardRef(function Input({
   className,
   ...props
 }, ref) {
+  // Liga o rótulo ao campo (leitor de tela e clique no rótulo).
+  const idGerado = useId();
+  const idCampo = props.id || idGerado;
   const [showPassword, setShowPassword] = useState(false);
   const isPassword = type === 'password';
   const actualType = isPassword ? (showPassword ? 'text' : 'password') : type;
@@ -44,7 +47,7 @@ const Input = forwardRef(function Input({
   return (
     <div className={clsx(fullWidth && 'w-full')}>
       {label && (
-        <label className={labelCls}>
+        <label htmlFor={idCampo} className={labelCls}>
           {label}
         </label>
       )}
@@ -55,6 +58,7 @@ const Input = forwardRef(function Input({
           </div>
         )}
         <input
+          id={idCampo}
           ref={ref}
           type={actualType}
           className={clsx(

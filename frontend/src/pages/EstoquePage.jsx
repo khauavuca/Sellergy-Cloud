@@ -2,54 +2,95 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   Box, ArrowDownToLine, ArrowUpFromLine, AlertTriangle, TrendingUp,
-  Plus, Edit2, Trash2, MoreHorizontal, Activity, Tag, Image as ImageIcon, ArrowLeftRight,
+  Plus, Edit2, Trash2, MoreHorizontal, Tag, Image as ImageIcon, ArrowLeftRight,
   HelpCircle,
 } from 'lucide-react';
 import api from '../services/api';
 import {
-  Card, CardHeader, CardTitle, Button, IconButton, Input, Textarea, Select, Badge,
-  EmptyState, SearchBar, useToast, Tabs, TabsList, TabsTrigger, TabsContent,
-  Dropdown, DropdownItem, DropdownDivider, UploadImagem, InputDuracao,
-  KpiCard, Tooltip, Switch,
+  Button, IconButton, Input, Textarea, Select, Badge,
+  EmptyState, useToast,
+  Dropdown, DropdownItem, DropdownDivider, UploadImagem,
+  Tooltip, Switch,
+  Pagina, FaixaNumeros, Numero, ColunasPagina, Painel, BarraFerramentas,
 } from '../components/ui';
 import Modal from '../components/Modal';
 import catalogoService from '../services/catalogoService';
+import { useAcaoTopo } from '../hooks/useAcaoTopo';
+import { AbasEstoque, BuscaEstoque } from '../components/estoque/NavEstoque';
+import LateralEstoque from '../components/estoque/LateralEstoque';
 
-// Mapeia o slug da URL pro `value` da Tab interna do componente.
-// O TabsList nao e mais visivel — a navegacao acontece via sidebar.
-// Mantemos o componente Tabs/TabsContent porque ja existe e seleciona o
-// conteudo pela prop `value`.
-const SLUG_PARA_TAB = {
-  'visao-geral': 'dashboard',
-  'produtos': 'estoque',
-  'movimentacoes': 'movimentacoes',
-  'reposicao': 'reposicao',
-  'categorias': 'categorias',
-};
-const TITULOS_ABA = {
-  'visao-geral': { titulo: 'Visão geral', descricao: 'Patrimônio, ruptura e alertas do seu estoque.' },
-  'produtos': { titulo: 'Produtos', descricao: 'Listagem completa com estoque, custos e ações rápidas.' },
-  'movimentacoes': { titulo: 'Movimentações', descricao: 'Histórico de entradas, saídas e ajustes.' },
-  'reposicao': { titulo: 'Reposição', descricao: 'Produtos abaixo do mínimo — fila pra compra.' },
-  'categorias': { titulo: 'Categorias', descricao: 'Agrupamentos de produtos por categoria financeira.' },
+// Abas da tela (slug da URL). A navegação entre elas fica nas pílulas do
+// topo do painel principal (AbasEstoque) e no menu lateral.
+const ABAS_VALIDAS = ['visao-geral', 'produtos', 'movimentacoes', 'reposicao', 'categorias'];
+
+const PLACEHOLDER_BUSCA = {
+  produtos: 'Buscar produto, variação, SKU...',
+  movimentacoes: 'Buscar por produto ou observação...',
+  reposicao: 'Buscar produto pra repor...',
+  categorias: 'Buscar categoria...',
 };
 
 const fmtBRL = (v) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const fmtNum = (v) => Number(v ?? 0).toLocaleString('pt-BR');
 
 const TIPO_MOV_LABELS = {
   COMPRA_FORNECEDOR: { label: 'Compra', variant: 'info', sentido: 'in' },
   VENDA: { label: 'Venda', variant: 'success', sentido: 'out' },
   AJUSTE: { label: 'Ajuste', variant: 'warning', sentido: 'in' },
-  DEVOLUCAO: { label: 'Devolucao', variant: 'neutral', sentido: 'in' },
+  DEVOLUCAO: { label: 'Devolução', variant: 'neutral', sentido: 'in' },
   RESERVA: { label: 'Reserva', variant: 'neutral', sentido: 'out' },
 };
 
+const TH = 'text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap';
+const TD = 'px-4 py-2.5 border-b border-[var(--border-subtle)]';
+
+const ehVariacaoPadrao = (nome) => !nome || nome === 'Padrão' || nome === 'Padrao';
+
+// Situação da variação a partir do estoque atual x mínimo (mesma regra do
+// "abaixo do mínimo" do backend: atual < mínimo).
+function situacaoEstoque(v) {
+  const qtd = v.estoqueAtual || 0;
+  const min = v.estoqueMinimo || 0;
+  if (min > 0 && qtd < min) return { rotulo: 'Repor', variant: 'danger', cor: 'var(--danger)' };
+  if (qtd <= 0) return { rotulo: 'Zerado', variant: 'danger', cor: 'var(--danger)' };
+  if (min > 0 && qtd === min) return { rotulo: 'No mínimo', variant: 'warning', cor: 'var(--warning)' };
+  return { rotulo: 'Ok', variant: 'success', cor: 'var(--success)' };
+}
+
+// Barra de nível: cheia em 2x o mínimo (ou no ideal, quando não há mínimo).
+function NivelEstoque({ v, situacao }) {
+  const qtd = v.estoqueAtual || 0;
+  const min = v.estoqueMinimo || 0;
+  const base = min > 0 ? min * 2 : (v.estoqueIdeal > 0 ? v.estoqueIdeal : Math.max(qtd, 1));
+  const pct = Math.max(0, Math.min(100, Math.round((qtd / base) * 100)));
+  return (
+    <div className="flex items-center gap-2 min-w-[120px]">
+      <div className="flex-1 h-1.5 rounded-full bg-[var(--bg-subtle)]" aria-hidden="true">
+        <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, background: situacao.cor }} />
+      </div>
+      <span className="font-semibold tabular-nums text-right min-w-[44px] text-[var(--text-main)]">
+        {fmtNum(qtd)} un.
+      </span>
+    </div>
+  );
+}
+
+function Miniatura({ url }) {
+  return url ? (
+    <img src={url} alt="" className="w-8 h-8 rounded-md object-contain flex-shrink-0 bg-[var(--bg-subtle)]" />
+  ) : (
+    <div className="w-8 h-8 rounded-md bg-[var(--bg-subtle)] flex items-center justify-center flex-shrink-0 text-[var(--text-muted)]">
+      <ImageIcon size={14} aria-hidden="true" />
+    </div>
+  );
+}
+
 export default function EstoquePage() {
   const toast = useToast();
-  const { aba } = useParams();
+  const { aba: abaUrl } = useParams();
   const navigate = useNavigate();
-  const tab = SLUG_PARA_TAB[aba] || 'dashboard';
-  const tituloAba = TITULOS_ABA[aba] || TITULOS_ABA['visao-geral'];
+  const aba = ABAS_VALIDAS.includes(abaUrl) ? abaUrl : 'visao-geral';
+  const [carregado, setCarregado] = useState(false);
   const [stats, setStats] = useState(null);
   const [movimentacoes, setMovimentacoes] = useState([]);
   const [reposicao, setReposicao] = useState([]);
@@ -62,8 +103,7 @@ export default function EstoquePage() {
   const [modalEditarVar, setModalEditarVar] = useState({ open: false, variacao: null });
   const [modalCategoria, setModalCategoria] = useState({ open: false, data: null });
 
-  // O estado "carregando" que existia aqui nunca era lido na tela; foi
-  // removido. A busca so faz setState na resposta (sem setState sincrono).
+  // A busca so faz setState na resposta (sem setState sincrono no efeito).
   const carregar = useCallback(() => Promise.all([
     api.get('/estoque/dashboard').catch(() => ({ data: null })),
     api.get('/estoque/movimentacoes').catch(() => ({ data: [] })),
@@ -79,11 +119,24 @@ export default function EstoquePage() {
     // (ex: bot) — backend continua retornando tudo do tenant.
     setProdutos((p.data || []).filter((prod) => prod.tipo === 'FISICO'));
     setCategorias(c.data || []);
+    setCarregado(true);
   }), []);
 
   useEffect(() => {
     carregar();
   }, [carregar]);
+
+  // Botão principal no topo (um por aba).
+  useAcaoTopo(
+    aba === 'movimentacoes' || aba === 'reposicao' ? (
+      <Button size="sm" icon={Plus} onClick={() => setModalMov({ open: true })}>Nova movimentação</Button>
+    ) : aba === 'categorias' ? (
+      <Button size="sm" icon={Plus} onClick={() => setModalCategoria({ open: true, data: null })}>Nova categoria</Button>
+    ) : (
+      <Button size="sm" icon={Plus} onClick={() => setModalProduto({ open: true, data: null })}>Novo produto</Button>
+    ),
+    [aba]
+  );
 
   // Categorias do estoque = categorias financeiras de tipo RECEITA (produtos vendidos viram receita)
   const categoriasProdutos = useMemo(
@@ -109,8 +162,7 @@ export default function EstoquePage() {
     );
   }, [variacoesFlat, busca]);
 
-  // Filtros pra as outras abas — todos usam o mesmo `busca` global pra
-  // simplificar (a SearchBar fica no header, compartilhada).
+  // Filtros das outras abas — todas usam o mesmo `busca` (campo na barra do painel).
   const movimentacoesFiltered = useMemo(() => {
     const q = busca.trim().toLowerCase();
     if (!q) return movimentacoes;
@@ -136,10 +188,32 @@ export default function EstoquePage() {
     return categoriasProdutos.filter((c) => c.nome?.toLowerCase().includes(q));
   }, [categoriasProdutos, busca]);
 
+  // Entradas e saídas do mês corrente (soma das quantidades das movimentações).
+  const resumoMes = useMemo(() => {
+    const agora = new Date();
+    const inicio = new Date(agora.getFullYear(), agora.getMonth(), 1);
+    let saidas = 0;
+    let entradas = 0;
+    movimentacoes.forEach((m) => {
+      if (new Date(m.data) < inicio) return;
+      const q = Number(m.quantidade) || 0;
+      if (q < 0) saidas += -q;
+      else entradas += q;
+    });
+    return { saidas, entradas };
+  }, [movimentacoes]);
+
+  const abrirReposicao = (r) => setModalMov({
+    open: true,
+    variacaoIdInicial: r.variacaoId || r.id,
+    quantidadeInicial: r.necessidade,
+    tipoInicial: 'COMPRA_FORNECEDOR',
+  });
+
   const handleMovimentar = async (dados) => {
     try {
       await api.post('/estoque/movimentar', dados);
-      toast.success('Movimentacao registrada');
+      toast.success('Movimentação registrada');
       setModalMov({ open: false });
       carregar();
     } catch (e) {
@@ -179,298 +253,250 @@ export default function EstoquePage() {
     if (!confirm(`Excluir categoria "${c.nome}"?`)) return;
     try {
       await api.delete(`/financeiro/categorias/${c.id}`);
-      toast.success('Categoria excluida');
+      toast.success('Categoria excluída');
       carregar();
     } catch (e) {
       toast.error(e.response?.data?.error || 'Erro ao excluir');
     }
   };
 
+  const abaixoMin = stats?.itensAbaixoMinimo ?? 0;
+  const ruptura = stats?.indiceRuptura ?? 0;
+
   return (
-    <div className="space-y-5">
-      {/* Header — titulo dinamico vindo da sub-rota + acoes */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-xs text-[var(--text-muted)] font-medium uppercase tracking-wider">
-            Estoque
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-main)] mt-1">
-            {tituloAba.titulo}
-            {tab === 'reposicao' && reposicao.length > 0 && (
-              <span className="ml-2 text-base font-semibold text-[var(--warning)] tabular-nums">({reposicao.length})</span>
-            )}
-            {tab === 'categorias' && categoriasProdutos.length > 0 && (
-              <span className="ml-2 text-base font-semibold text-[var(--text-muted)] tabular-nums">({categoriasProdutos.length})</span>
-            )}
-          </h1>
-          <p className="text-sm text-[var(--text-muted)] mt-1">{tituloAba.descricao}</p>
-        </div>
-        {/* Botoes condicionais por aba — cada tela so mostra o que cabe.
-            Visao geral nao tem botao de cadastro (e dashboard, nao cadastro). */}
-        <div className="flex flex-wrap gap-2">
-          {tab === 'estoque' && (
-            <Button variant="primary" icon={Plus} onClick={() => setModalProduto({ open: true, data: null })}>
-              Novo produto
-            </Button>
-          )}
-          {tab === 'movimentacoes' && (
-            <Button variant="primary" icon={Plus} onClick={() => setModalMov({ open: true })}>
-              Nova movimentação
-            </Button>
-          )}
-          {tab === 'categorias' && (
-            <Button variant="primary" icon={Plus} onClick={() => setModalCategoria({ open: true, data: null })}>
-              Nova categoria
-            </Button>
-          )}
-          {/* Reposicao: sem botao no header — cada item tem '3 pontinhos'
-              com acao 'Repor agora' (abre movimentacao prefilada).
-              Visao geral: sem botao de cadastro. */}
-        </div>
-      </div>
+    <Pagina>
+      <FaixaNumeros min={190}>
+        <Numero
+          rotulo="Valor em estoque (custo)"
+          valor={fmtBRL(stats?.valorTotalInventario)}
+          detalhe={`${fmtNum(variacoesFlat.length)} ${variacoesFlat.length === 1 ? 'item físico' : 'itens físicos'}`}
+          carregando={!carregado}
+        />
+        <Numero
+          rotulo="Abaixo do mínimo"
+          valor={fmtNum(abaixoMin)}
+          tom={abaixoMin > 0 ? 'perigo' : 'neutro'}
+          detalhe={`${fmtNum(reposicao.length)} na fila de reposição`}
+          carregando={!carregado}
+          onClick={aba !== 'reposicao' ? () => navigate('/app/estoque/reposicao') : undefined}
+        />
+        <Numero
+          rotulo="Saídas no mês"
+          valor={`${fmtNum(resumoMes.saidas)} un.`}
+          detalhe={`${fmtNum(resumoMes.entradas)} un. de entrada`}
+          carregando={!carregado}
+          onClick={aba !== 'movimentacoes' ? () => navigate('/app/estoque/movimentacoes') : undefined}
+        />
+        <Numero
+          rotulo="Índice de ruptura"
+          valor={`${String(ruptura).replace('.', ',')}%`}
+          tom={ruptura > 5 ? 'alerta' : 'neutro'}
+          detalhe="itens com estoque zerado"
+          carregando={!carregado}
+        />
+      </FaixaNumeros>
 
-      {/* Barra de busca condicional — todas as abas tem (exceto Visao geral).
-          Placeholder muda pelo contexto. */}
-      {tab !== 'dashboard' && (
-        <div className="max-w-md">
-          <SearchBar
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            placeholder={
-              tab === 'estoque'        ? 'Buscar produto, variação, SKU...' :
-              tab === 'movimentacoes'  ? 'Buscar por produto ou observação...' :
-              tab === 'reposicao'      ? 'Buscar produto pra repor...' :
-              tab === 'categorias'     ? 'Buscar categoria...' :
-              'Buscar...'
-            }
+      <ColunasPagina
+        lateral={
+          <LateralEstoque
+            reposicao={carregado ? reposicao : null}
+            onRepor={abrirReposicao}
           />
-        </div>
-      )}
-
-      <Tabs value={tab}>
-        <TabsContent value="dashboard">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
-            <KpiCard icon={TrendingUp} color="accent" label="Valor inventario" valor={stats ? fmtBRL(stats.valorTotalInventario) : '—'} />
-            <KpiCard icon={Box} color="info" label="Total variacoes" valor={stats?.totalProdutos ?? '—'} />
-            <KpiCard icon={AlertTriangle} color={stats?.itensAbaixoMinimo > 0 ? 'warning' : 'neutral'} label="Abaixo do minimo" valor={stats?.itensAbaixoMinimo ?? '—'} />
-            <KpiCard icon={Activity} color={(stats?.indiceRuptura || 0) > 5 ? 'danger' : 'neutral'} label="Indice ruptura" valor={stats ? `${stats.indiceRuptura}%` : '—'} />
-          </div>
-
-          <Card padding="lg">
-            <CardHeader>
-              <div><CardTitle>Movimentacoes recentes</CardTitle></div>
-            </CardHeader>
-            {movimentacoes.length === 0 ? (
-              <EmptyState icon={TrendingUp} title="Nenhuma movimentacao" description="Registre entradas e saidas." />
-            ) : (
-              <ListaMovimentacoes movimentacoes={movimentacoes.slice(0, 10)} />
+        }
+      >
+        <Painel semPadding>
+          <BarraFerramentas>
+            <AbasEstoque ativa={aba} qtds={{ reposicao: reposicao.length }} />
+            {aba !== 'visao-geral' && (
+              <BuscaEstoque value={busca} onChange={setBusca} placeholder={PLACEHOLDER_BUSCA[aba]} />
             )}
-          </Card>
-        </TabsContent>
+          </BarraFerramentas>
 
-        {/* Produtos — SearchBar foi promovida pro header (compartilhada). */}
-        <TabsContent value="estoque">
-          {variacoesFiltered.length === 0 ? (
-            <Card padding="lg">
+          {/* Visão geral */}
+          {aba === 'visao-geral' && (
+            <>
+              <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[var(--border-subtle)]">
+                <h2 className="m-0 text-sm font-bold text-[var(--text-main)] tracking-tight">Movimentações recentes</h2>
+                {movimentacoes.length > 0 && (
+                  <Link to="/app/estoque/movimentacoes" className="text-xs font-semibold text-[var(--primary)] hover:underline">
+                    Ver todas
+                  </Link>
+                )}
+              </div>
+              {movimentacoes.length === 0 ? (
+                <EmptyState icon={TrendingUp} title="Nenhuma movimentação" description="Registre entradas e saídas." />
+              ) : (
+                <ListaMovimentacoes movimentacoes={movimentacoes.slice(0, 10)} />
+              )}
+            </>
+          )}
+
+          {/* Produtos */}
+          {aba === 'produtos' && (
+            variacoesFiltered.length === 0 ? (
               <EmptyState
                 icon={Box}
-                title="Nenhum produto"
-                description="Cadastre seus produtos pra controlar estoque."
-                action={<Button variant="primary" icon={Plus} onClick={() => setModalProduto({ open: true, data: null })}>Novo produto</Button>}
+                title={busca ? 'Nenhum produto encontrado' : 'Nenhum produto'}
+                description={busca ? 'Tente outro termo.' : 'Cadastre seus produtos pra controlar estoque.'}
+                action={!busca && <Button variant="primary" size="sm" icon={Plus} onClick={() => setModalProduto({ open: true, data: null })}>Novo produto</Button>}
               />
-            </Card>
-          ) : (
-            <Card padding="none">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-[var(--border-main)]">
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5 w-28"></th>
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Produto</th>
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Categoria</th>
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Variacao / SKU</th>
-                    <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Estoque</th>
-                    <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Custo</th>
-                    <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Venda</th>
-                    <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Lucro</th>
-                    <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Valor total</th>
-                    <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5 w-14"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {variacoesFiltered.map((v) => {
-                    const abaixo = v.estoqueAtual < (v.estoqueMinimo || 0);
-                    const cat = categorias.find((c) => c.id === v.produto?.categoriaId);
-                    const imagemUrl = v.imagemUrl || v.produto?.imagemUrl;
-                    return (
-                      <tr key={v.id} className="border-b border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]/50">
-                        {/* Foto reduzida pra w-14 h-14 (era w-24 = exagerado) */}
-                        <td className="py-3 px-5">
-                          {imagemUrl ? (
-                            <img
-                              src={imagemUrl}
-                              alt=""
-                              className="w-14 h-14 object-contain"
-                            />
-                          ) : (
-                            <div className="w-14 h-14 rounded-md bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)]">
-                              <ImageIcon size={20} />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr>
+                      <th className={TH}>Produto</th>
+                      <th className={TH}>Categoria</th>
+                      <th className={TH}>Estoque</th>
+                      <th className={`${TH} text-right`}>Custo</th>
+                      <th className={`${TH} text-right`}>Venda</th>
+                      <th className={`${TH} text-right`}>Lucro</th>
+                      <th className={`${TH} text-right`}>Valor total</th>
+                      <th className={TH}>Situação</th>
+                      <th className={TH}><span className="sr-only">Ações</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {variacoesFiltered.map((v) => {
+                      const cat = categorias.find((c) => c.id === v.produto?.categoriaId);
+                      const situacao = situacaoEstoque(v);
+                      return (
+                        <tr key={v.id} className="hover:bg-[var(--bg-subtle)]">
+                          <td className={TD}>
+                            <div className="flex items-center gap-2.5 min-w-[180px]">
+                              <Miniatura url={v.imagemUrl || v.produto?.imagemUrl} />
+                              <div className="min-w-0">
+                                <div className="font-semibold text-[var(--text-main)] truncate">{v.produto?.nome}</div>
+                                {(!ehVariacaoPadrao(v.nome) || v.sku) && (
+                                  <div className="text-xs text-[var(--text-muted)] truncate">
+                                    {!ehVariacaoPadrao(v.nome) && v.nome}
+                                    {!ehVariacaoPadrao(v.nome) && v.sku && ' · '}
+                                    {v.sku && `SKU ${v.sku}`}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          )}
-                        </td>
-                        <td className="py-3 px-5 text-sm font-semibold text-[var(--text-main)] tracking-tight">{v.produto?.nome}</td>
-                        <td className="py-3 px-5 text-xs">{cat ? <Badge variant="neutral" size="sm">{cat.nome}</Badge> : '—'}</td>
-                        <td className="py-3 px-5 text-xs">
-                          <div className="text-[var(--text-secondary)]">{v.nome}</div>
-                          {v.sku && <div className="text-[var(--text-muted)]">SKU: {v.sku}</div>}
-                        </td>
-                        <td className={`py-3 px-5 text-right text-sm font-semibold tabular-nums ${abaixo ? 'text-[var(--danger)]' : 'text-[var(--text-main)]'}`}>
-                          {v.estoqueAtual}
-                          {abaixo && <AlertTriangle size={12} className="inline ml-1 -mt-0.5" />}
-                        </td>
-                        <td className="py-3 px-5 text-right text-sm text-[var(--text-secondary)] tabular-nums">{fmtBRL(v.precoCusto)}</td>
-                        <td className="py-3 px-5 text-right text-sm text-[var(--text-main)] tabular-nums">{fmtBRL(v.preco)}</td>
-                        <td className="py-3 px-5 text-right text-sm text-[var(--success)] tabular-nums">{fmtBRL((v.preco || 0) - (v.precoCusto || 0))}</td>
-                        <td className="py-3 px-5 text-right text-sm font-semibold text-[var(--text-main)] tabular-nums">{fmtBRL(v.estoqueAtual * (v.precoCusto || 0))}</td>
-                        <td className="py-3 px-5 text-right">
-                          <Dropdown trigger={<IconButton icon={MoreHorizontal} size="sm" variant="ghost" ariaLabel="Ações" />} align="right">
-                            <DropdownItem
-                              icon={ArrowLeftRight}
-                              onClick={() => setModalMov({ open: true, variacaoIdInicial: v.id })}
-                            >
-                              Nova movimentação
-                            </DropdownItem>
-                            <DropdownItem
-                              icon={Edit2}
-                              onClick={() => setModalEditarVar({ open: true, variacao: v })}
-                            >
-                              Editar produto
-                            </DropdownItem>
-                            {cat && (
-                              <>
-                                <DropdownDivider />
-                                <DropdownItem
-                                  icon={Tag}
-                                  onClick={() => {
-                                    setBusca(cat.nome);
-                                    navigate('/app/estoque/categorias');
-                                  }}
-                                >
-                                  Ver categoria
-                                </DropdownItem>
-                              </>
-                            )}
-                          </Dropdown>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </Card>
+                          </td>
+                          <td className={`${TD} text-[var(--text-secondary)] whitespace-nowrap`}>{cat ? cat.nome : '—'}</td>
+                          <td className={TD}><NivelEstoque v={v} situacao={situacao} /></td>
+                          <td className={`${TD} text-right tabular-nums text-[var(--text-secondary)] whitespace-nowrap`}>{fmtBRL(v.precoCusto)}</td>
+                          <td className={`${TD} text-right tabular-nums text-[var(--text-main)] whitespace-nowrap`}>{fmtBRL(v.preco)}</td>
+                          <td className={`${TD} text-right tabular-nums text-[var(--success-text)] whitespace-nowrap`}>{fmtBRL((v.preco || 0) - (v.precoCusto || 0))}</td>
+                          <td className={`${TD} text-right tabular-nums font-semibold text-[var(--text-main)] whitespace-nowrap`}>{fmtBRL(v.estoqueAtual * (v.precoCusto || 0))}</td>
+                          <td className={TD}><Badge variant={situacao.variant} size="sm">{situacao.rotulo}</Badge></td>
+                          <td className={`${TD} text-right`}>
+                            <Dropdown trigger={<IconButton icon={MoreHorizontal} size="sm" variant="ghost" ariaLabel={`Ações de ${v.produto?.nome}`} />} align="right">
+                              <DropdownItem
+                                icon={ArrowLeftRight}
+                                onClick={() => setModalMov({ open: true, variacaoIdInicial: v.id })}
+                              >
+                                Nova movimentação
+                              </DropdownItem>
+                              <DropdownItem
+                                icon={Edit2}
+                                onClick={() => setModalEditarVar({ open: true, variacao: v })}
+                              >
+                                Editar produto
+                              </DropdownItem>
+                              {cat && (
+                                <>
+                                  <DropdownDivider />
+                                  <DropdownItem
+                                    icon={Tag}
+                                    onClick={() => {
+                                      setBusca(cat.nome);
+                                      navigate('/app/estoque/categorias');
+                                    }}
+                                  >
+                                    Ver categoria
+                                  </DropdownItem>
+                                </>
+                              )}
+                            </Dropdown>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
           )}
-        </TabsContent>
 
-        {/* Movimentacoes */}
-        <TabsContent value="movimentacoes">
-          {movimentacoesFiltered.length === 0 ? (
-            <Card padding="lg">
+          {/* Movimentações */}
+          {aba === 'movimentacoes' && (
+            movimentacoesFiltered.length === 0 ? (
               <EmptyState
                 icon={TrendingUp}
                 title={busca ? 'Nenhuma movimentação encontrada' : 'Nenhuma movimentação'}
                 description={busca ? 'Tente outro termo.' : 'Registre entradas e saídas pra rastrear o estoque.'}
                 action={!busca && (
-                  <Button variant="primary" icon={Plus} onClick={() => setModalMov({ open: true })}>
+                  <Button variant="primary" size="sm" icon={Plus} onClick={() => setModalMov({ open: true })}>
                     Nova movimentação
                   </Button>
                 )}
               />
-            </Card>
-          ) : (
-            <Card padding="none">
+            ) : (
               <ListaMovimentacoes
                 movimentacoes={movimentacoesFiltered}
                 onVerProduto={(nome) => {
-                  // Hyperlink cruzado: leva pra aba Produtos ja filtrando pelo nome.
+                  // Link cruzado: leva pra aba Produtos ja filtrando pelo nome.
                   setBusca(nome);
                   navigate('/app/estoque/produtos');
                 }}
               />
-            </Card>
+            )
           )}
-        </TabsContent>
 
-        {/* Reposicao */}
-        <TabsContent value="reposicao">
-          {reposicaoFiltered.length === 0 ? (
-            <Card padding="lg">
+          {/* Reposição */}
+          {aba === 'reposicao' && (
+            reposicaoFiltered.length === 0 ? (
               <EmptyState
                 icon={AlertTriangle}
                 title={busca ? 'Nenhum produto encontrado' : 'Nada para repor'}
                 description={busca ? 'Tente outro termo.' : 'Tudo acima do mínimo. Você está em dia.'}
               />
-            </Card>
-          ) : (
-            <Card padding="none">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-[var(--border-main)]">
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5 w-20"></th>
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Produto / Variação</th>
-                    <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Atual</th>
-                    <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Min</th>
-                    <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Ideal</th>
-                    <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Repor</th>
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Urgência</th>
-                    <th className="w-36"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {reposicaoFiltered.map((r) => {
-                    const ehVarPadrao = !r.variacao || r.variacao === 'Padrão' || r.variacao === 'Padrao';
-                    return (
-                      <tr key={r.id} className="border-b border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]/50">
-                        {/* Foto menor (w-14 h-14) — antes era w-24 h-24 e tava enorme */}
-                        <td className="py-3 px-5">
-                          {r.imagemUrl ? (
-                            <img
-                              src={r.imagemUrl}
-                              alt=""
-                              className="w-14 h-14 object-contain"
-                            />
-                          ) : (
-                            <div className="w-14 h-14 rounded-md bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)]">
-                              <ImageIcon size={20} />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr>
+                      <th className={TH}>Produto / Variação</th>
+                      <th className={`${TH} text-right`}>Atual</th>
+                      <th className={`${TH} text-right`}>Mínimo</th>
+                      <th className={`${TH} text-right`}>Ideal</th>
+                      <th className={`${TH} text-right`}>Repor</th>
+                      <th className={TH}>Urgência</th>
+                      <th className={TH}><span className="sr-only">Ações</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reposicaoFiltered.map((r) => (
+                      <tr key={r.id} className="hover:bg-[var(--bg-subtle)]">
+                        <td className={TD}>
+                          <div className="flex items-center gap-2.5 min-w-[180px]">
+                            <Miniatura url={r.imagemUrl} />
+                            <div className="min-w-0">
+                              <div className="font-semibold text-[var(--text-main)] truncate">{r.produto}</div>
+                              {!ehVariacaoPadrao(r.variacao) && <div className="text-xs text-[var(--text-muted)] truncate">{r.variacao}</div>}
                             </div>
-                          )}
+                          </div>
                         </td>
-                        <td className="py-3 px-5">
-                          <div className="text-sm font-semibold text-[var(--text-main)] tracking-tight">{r.produto}</div>
-                          {!ehVarPadrao && <div className="text-xs text-[var(--text-muted)]">{r.variacao}</div>}
+                        <td className={`${TD} text-right font-semibold tabular-nums text-[var(--danger-text)]`}>{r.estoqueAtual}</td>
+                        <td className={`${TD} text-right tabular-nums text-[var(--text-muted)]`}>{r.estoqueMinimo || 0}</td>
+                        <td className={`${TD} text-right tabular-nums text-[var(--text-muted)]`}>{r.estoqueIdeal || 0}</td>
+                        <td className={`${TD} text-right font-semibold tabular-nums text-[var(--text-main)]`}>{r.necessidade}</td>
+                        <td className={TD}>
+                          <Badge variant={r.urgencia === 'ALTA' ? 'danger' : 'warning'} size="sm">
+                            {r.urgencia === 'ALTA' ? 'Alta' : 'Média'}
+                          </Badge>
                         </td>
-                        <td className="py-3 px-5 text-right text-sm font-semibold tabular-nums text-[var(--danger)]">{r.estoqueAtual}</td>
-                        <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--text-muted)]">{r.estoqueMinimo || 0}</td>
-                        <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--text-muted)]">{r.estoqueIdeal || 0}</td>
-                        <td className="py-3 px-5 text-right text-sm font-semibold tabular-nums text-[var(--text-main)]">{r.necessidade}</td>
-                        <td className="py-3 px-5"><Badge variant={r.urgencia === 'ALTA' ? 'danger' : 'warning'} size="sm">{r.urgencia}</Badge></td>
-                        {/* Botao 'Repor' direto + 3 pontinhos pra acoes secundarias.
-                            Como toda a tela e sobre repor, a acao principal fica
-                            visivel sem precisar abrir dropdown. */}
-                        <td className="py-3 px-3">
+                        <td className={TD}>
                           <div className="flex items-center justify-end gap-1">
-                            <Button
-                              variant="primary"
-                              size="sm"
-                              icon={ArrowDownToLine}
-                              onClick={() => setModalMov({
-                                open: true,
-                                variacaoIdInicial: r.variacaoId || r.id,
-                                quantidadeInicial: r.necessidade,
-                                tipoInicial: 'COMPRA_FORNECEDOR',
-                              })}
-                            >
+                            <Button variant="primary" size="sm" icon={ArrowDownToLine} onClick={() => abrirReposicao(r)}>
                               Repor
                             </Button>
-                            <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel="Mais ações" />} align="right">
+                            <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel={`Mais ações de ${r.produto}`} />} align="right">
                               <DropdownItem
                                 icon={Box}
                                 onClick={() => {
@@ -484,18 +510,16 @@ export default function EstoquePage() {
                           </div>
                         </td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </Card>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
           )}
-        </TabsContent>
 
-        {/* Categorias — botao 'Nova categoria' fica no header (condicional). */}
-        <TabsContent value="categorias">
-          {categoriasFiltered.length === 0 ? (
-            <Card padding="lg">
+          {/* Categorias */}
+          {aba === 'categorias' && (
+            categoriasFiltered.length === 0 ? (
               <EmptyState
                 icon={Tag}
                 title={busca ? 'Nenhuma categoria encontrada' : 'Nenhuma categoria'}
@@ -505,32 +529,27 @@ export default function EstoquePage() {
                     : 'Categorias agrupam seus produtos (ex: Bebidas, Roupas, Cabelo). Vincule cada produto a uma categoria pra organizar relatórios e CMV.'
                 }
                 action={!busca && (
-                  <Button variant="primary" icon={Plus} onClick={() => setModalCategoria({ open: true, data: null })}>
+                  <Button variant="primary" size="sm" icon={Plus} onClick={() => setModalCategoria({ open: true, data: null })}>
                     Criar primeira categoria
                   </Button>
                 )}
               />
-            </Card>
-          ) : (
-            <Card padding="none">
-              <div className="divide-y divide-[var(--border-subtle)]">
+            ) : (
+              <div>
                 {categoriasFiltered.map((c) => {
                   const qtdVariacoes = variacoesFlat.filter((v) => v.produto?.categoriaId === c.id).length;
                   return (
-                    <div key={c.id} className="flex items-center gap-3 px-5 py-3 hover:bg-[var(--bg-subtle)]/50">
-                      {/* Icone reduzido (w-10 h-10) — alinhado com o padrao das
-                          outras telas (movimentacoes/reposicao usam w-14 pra foto
-                          e w-8 pra badges). Aqui meio termo. */}
-                      <div className="w-10 h-10 rounded-lg bg-[var(--accent-soft)] text-[var(--accent)] flex items-center justify-center flex-shrink-0">
-                        <Tag size={16} strokeWidth={1.75} />
+                    <div key={c.id} className="flex items-center gap-3 px-4 py-2.5 border-b border-[var(--border-subtle)] last:border-b-0 hover:bg-[var(--bg-subtle)]">
+                      <div className="w-8 h-8 rounded-lg bg-[var(--accent-soft)] text-[var(--accent-text)] flex items-center justify-center flex-shrink-0">
+                        <Tag size={14} strokeWidth={1.75} aria-hidden="true" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-semibold text-[var(--text-main)] tracking-tight truncate">{c.nome}</div>
-                        <div className="text-xs text-[var(--text-muted)] mt-0.5">
+                        <div className="text-[13px] font-semibold text-[var(--text-main)] truncate">{c.nome}</div>
+                        <div className="text-xs text-[var(--text-muted)]">
                           {qtdVariacoes} {qtdVariacoes === 1 ? 'variação vinculada' : 'variações vinculadas'}
                         </div>
                       </div>
-                      <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel="Ações" />} align="right">
+                      <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel={`Ações da categoria ${c.nome}`} />} align="right">
                         <DropdownItem icon={Edit2} onClick={() => setModalCategoria({ open: true, data: c })}>Editar</DropdownItem>
                         <DropdownDivider />
                         <DropdownItem icon={Trash2} variant="danger" onClick={() => handleExcluirCategoria(c)}>Excluir</DropdownItem>
@@ -539,10 +558,10 @@ export default function EstoquePage() {
                   );
                 })}
               </div>
-            </Card>
+            )
           )}
-        </TabsContent>
-      </Tabs>
+        </Painel>
+      </ColunasPagina>
 
       <ModalMovimentacao
         key={modalMov.open ? 'mov-aberto' : 'mov-fechado'}
@@ -578,7 +597,7 @@ export default function EstoquePage() {
         cat={modalCategoria.data}
         onSalvar={handleSalvarCategoria}
       />
-    </div>
+    </Pagina>
   );
 }
 
@@ -602,50 +621,38 @@ function formatarMotivoMov(m) {
 // Quando nao passado, o 3 pontinhos nao aparece (uso na Visao geral).
 function ListaMovimentacoes({ movimentacoes, onVerProduto }) {
   return (
-    <div className="divide-y divide-[var(--border-subtle)]">
+    <div>
       {movimentacoes.map((m) => {
         const tipo = TIPO_MOV_LABELS[m.tipo] || { label: m.tipo, variant: 'neutral', sentido: 'in' };
         const Icon = tipo.sentido === 'in' ? ArrowDownToLine : ArrowUpFromLine;
         const imagemUrl = m.variacao?.imagemUrl || m.variacao?.produto?.imagemUrl;
-        const ehVarPadrao = !m.variacao?.nome || m.variacao.nome === 'Padrão' || m.variacao.nome === 'Padrao';
         const motivoLimpo = formatarMotivoMov(m);
         const nomeProduto = m.variacao?.produto?.nome;
         return (
-          <div key={m.id} className="flex items-center gap-4 px-5 py-3 hover:bg-[var(--bg-subtle)]/50">
-            {/* Foto reduzida pra w-14 h-14 (era w-24 h-24 = tava enorme) */}
-            {imagemUrl ? (
-              <img
-                src={imagemUrl}
-                alt=""
-                className="w-14 h-14 object-contain flex-shrink-0"
-              />
-            ) : (
-              <div className="w-14 h-14 rounded-md bg-[var(--bg-subtle)] flex items-center justify-center flex-shrink-0 text-[var(--text-muted)]">
-                <ImageIcon size={20} />
-              </div>
-            )}
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-              tipo.sentido === 'in' ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--danger-soft)] text-[var(--danger)]'
+          <div key={m.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 border-b border-[var(--border-subtle)] last:border-b-0 hover:bg-[var(--bg-subtle)]">
+            <Miniatura url={imagemUrl} />
+            <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${
+              tipo.sentido === 'in' ? 'bg-[var(--success-soft)] text-[var(--success-text)]' : 'bg-[var(--danger-soft)] text-[var(--danger-text)]'
             }`}>
-              <Icon size={14} strokeWidth={2} />
+              <Icon size={13} strokeWidth={2} aria-label={tipo.sentido === 'in' ? 'Entrada' : 'Saída'} />
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold text-[var(--text-main)] tracking-tight truncate">
-                {nomeProduto}{!ehVarPadrao && ` · ${m.variacao?.nome}`}
+            <div className="flex-1 min-w-[160px]">
+              <div className="text-[13px] font-semibold text-[var(--text-main)] truncate">
+                {nomeProduto}{!ehVariacaoPadrao(m.variacao?.nome) && ` · ${m.variacao?.nome}`}
               </div>
-              <div className="text-xs text-[var(--text-muted)] mt-0.5">
+              <div className="text-xs text-[var(--text-muted)] truncate">
                 {motivoLimpo} · {new Date(m.data).toLocaleString('pt-BR')}
               </div>
             </div>
             <Badge variant={tipo.variant} size="sm">{tipo.label}</Badge>
-            <div className={`text-base font-bold tabular-nums w-16 text-right ${
-              m.quantidade > 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'
+            <div className={`text-sm font-bold tabular-nums w-14 text-right ${
+              m.quantidade > 0 ? 'text-[var(--success-text)]' : 'text-[var(--danger-text)]'
             }`}>
               {m.quantidade > 0 ? '+' : ''}{m.quantidade}
             </div>
             {/* 3 pontinhos so quando habilitado (aba Movimentacoes — nao em Visao geral) */}
             {onVerProduto && nomeProduto && (
-              <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel="Ações" />} align="right">
+              <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel={`Ações de ${nomeProduto}`} />} align="right">
                 <DropdownItem
                   icon={Box}
                   onClick={() => onVerProduto(nomeProduto)}

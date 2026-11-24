@@ -3,10 +3,14 @@
 // pacote (saldo, pagamento, validade). Regra no backend: src/agenda/pacotes.js.
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Package, Loader2, AlertCircle, Edit2, ShoppingBag, Send, XCircle, Lock, RefreshCw } from 'lucide-react';
+import { Plus, Package, Loader2, AlertCircle, Edit2, ShoppingBag, Send, XCircle, Lock, RefreshCw, Search, CalendarPlus } from 'lucide-react';
 import api from '../services/api';
-import { Badge, Button, Card, EmptyState, Input, Select, useToast } from '../components/ui';
+import {
+  Badge, Button, Card, EmptyState, Input, Select, useToast,
+  Pagina, FaixaNumeros, Numero, ColunasPagina, Painel, LinhaInfo, BarraFerramentas, AbasPilula,
+} from '../components/ui';
 import Modal from '../components/Modal';
+import { useAcaoTopo } from '../hooks/useAcaoTopo';
 import { formatarTelefoneBR } from '../utils/formatTelefone';
 
 const fmtBRL = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -17,17 +21,58 @@ const STATUS = {
   VENCIDO: { label: 'Vencido', variant: 'warning' },
   CANCELADO: { label: 'Cancelado', variant: 'danger' },
 };
+const DIA_MS = 86400000;
 
 function textoValidade(dias) {
   if (dias % 30 === 0) return `${dias / 30} ${dias / 30 === 1 ? 'mês' : 'meses'}`;
   return `${dias} dias`;
 }
 
+const diasAte = (data, agora) => Math.ceil((new Date(data).getTime() - agora) / DIA_MS);
+const plural = (n, um, varios) => `${n} ${n === 1 ? um : varios}`;
+
+// Situação mostrada na tabela: pacote ativo perto do fim vira "Acabando".
+function situacao(c) {
+  if (c.status === 'ATIVO' && c.acabando) return { label: 'Acabando', variant: 'warning' };
+  return STATUS[c.status] || { label: c.status, variant: 'neutral' };
+}
+
+function textoPagamento(c) {
+  if (c.parcelasPagas >= c.parcelas) return `Pago${c.parcelas > 1 ? ` (${c.parcelas}×)` : ''}`;
+  return `${c.parcelasPagas} de ${c.parcelas} parcela(s)${c.cobrancaPendente ? ` · ${fmtBRL(c.cobrancaPendente.valor)} em aberto` : ''}`;
+}
+
+function textoValidadeCliente(c, agora) {
+  const d = diasAte(c.validoAte, agora);
+  if (d < 0) return `venceu ${fmtData(c.validoAte)}`;
+  return `${fmtData(c.validoAte)}${d <= 30 && c.status === 'ATIVO' ? ` · ${plural(d, 'dia', 'dias')}` : ''}`;
+}
+
+/** Barra "usadas/total" da coluna Sessões. */
+function BarraSessoes({ c }) {
+  const pct = c.sessoesTotal > 0 ? Math.round((c.sessoesUsadas / c.sessoesTotal) * 100) : 0;
+  const cor = c.status !== 'ATIVO' ? 'bg-[var(--text-muted)]' : c.acabando ? 'bg-[var(--warning)]' : 'bg-[var(--primary)]';
+  return (
+    <div className="flex items-center gap-2">
+      <span className="tabular-nums w-10 text-[var(--text-main)]">{c.sessoesUsadas}/{c.sessoesTotal}</span>
+      <span className="h-1.5 w-20 rounded-full bg-[var(--bg-subtle)] overflow-hidden" aria-hidden="true">
+        <span className={`block h-full rounded-full ${cor}`} style={{ width: `${pct}%` }} />
+      </span>
+      {c.reservados > 0 && <span className="text-xs text-[var(--text-muted)]">{c.reservados} marcada(s)</span>}
+    </div>
+  );
+}
+
 export default function PacotesPage() {
   const toast = useToast();
   const [modelos, setModelos] = useState([]);
-  const [clientes, setClientes] = useState([]);
+  const [ativosLista, setAtivosLista] = useState([]);
+  const [encerradosLista, setEncerradosLista] = useState([]);
+  const [agora, setAgora] = useState(0);
   const [filtro, setFiltro] = useState('ativos');
+  const [filtroModelo, setFiltroModelo] = useState('');
+  const [busca, setBusca] = useState('');
+  const [selId, setSelId] = useState(null);
   const [carregando, setCarregando] = useState(true);
   const [carregandoClientes, setCarregandoClientes] = useState(true);
   const [erro, setErro] = useState(null);
@@ -41,7 +86,6 @@ export default function PacotesPage() {
   const [versaoClientes, setVersaoClientes] = useState(0);
   const carregarModelos = useCallback(() => setVersaoModelos((v) => v + 1), []);
   const carregarClientes = useCallback(() => { setCarregandoClientes(true); setVersaoClientes((v) => v + 1); }, []);
-  const mudarFiltro = (f) => { if (f !== filtro) { setCarregandoClientes(true); setFiltro(f); } };
 
   useEffect(() => {
     let vivo = true;
@@ -60,20 +104,37 @@ export default function PacotesPage() {
     api.get('/agenda/config').then((r) => setConfig(r.data)).catch(() => setConfig(null));
   }, []);
 
+  // Busca ativos e encerrados de uma vez: as abas (Ativos, Acabando,
+  // Encerrados, Todos), os contadores e os números do topo saem dessas listas.
   useEffect(() => {
     let vivo = true;
-    api.get('/pacotes/clientes', { params: { filtro } })
-      .then((r) => { if (vivo) setClientes(r.data || []); })
+    Promise.all([
+      api.get('/pacotes/clientes', { params: { filtro: 'ativos' } }),
+      api.get('/pacotes/clientes', { params: { filtro: 'encerrados' } }),
+    ])
+      .then(([a, e]) => {
+        if (!vivo) return;
+        setAtivosLista(a.data || []);
+        setEncerradosLista(e.data || []);
+        setAgora(Date.now());
+      })
       .catch((e) => {
         if (!vivo) return;
         if (e.response?.data?.codigo !== 'PLANO_SEM_RECURSO') toast.error(e.response?.data?.erro || 'Não foi possível carregar as clientes com pacote.');
-        setClientes([]);
+        setAtivosLista([]);
+        setEncerradosLista([]);
       })
       .finally(() => { if (vivo) setCarregandoClientes(false); });
     return () => { vivo = false; };
-  }, [filtro, versaoClientes, toast]);
+  }, [versaoClientes, toast]);
 
   const recarregarTudo = () => { carregarModelos(); carregarClientes(); };
+
+  const mostrarNovoPacote = !carregando && !semPlano && !erro;
+  useAcaoTopo(
+    mostrarNovoPacote ? <Button size="sm" icon={Plus} onClick={() => setModalModelo({ open: true, modelo: null })}>Novo pacote</Button> : null,
+    [mostrarNovoPacote]
+  );
 
   const desativar = async (m) => {
     if (!confirm(`Parar de vender "${m.nome}"? Quem já comprou continua usando.`)) return;
@@ -148,130 +209,212 @@ export default function PacotesPage() {
 
   const ativos = modelos.filter((m) => m.ativo);
   const inativos = modelos.filter((m) => !m.ativo);
+  const modeloAtivoDe = (c) => modelos.find((m) => m.id === c.modeloId && m.ativo);
+  const abrirNovoModelo = () => setModalModelo({ open: true, modelo: null });
+  const renovar = (c) => setModalVender({ open: true, modelo: modeloAtivoDe(c), cliente: c.cliente });
+
+  // Listas por aba
+  const acabandoLista = ativosLista.filter((c) => c.acabando);
+  const todosLista = [...ativosLista, ...encerradosLista];
+  const porAba = { ativos: ativosLista, acabando: acabandoLista, encerrados: encerradosLista, todos: todosLista };
+  const daAba = porAba[filtro] || ativosLista;
+  const termo = busca.trim().toLowerCase();
+  const digitosBusca = termo.replace(/\D/g, '');
+  const linhas = daAba
+    .filter((c) => !filtroModelo || c.modeloId === filtroModelo)
+    .filter((c) => !termo
+      || c.cliente.nome.toLowerCase().includes(termo)
+      || (digitosBusca && String(c.cliente.telefone || '').replace(/\D/g, '').includes(digitosBusca)));
+  const sel = todosLista.find((c) => c.id === selId) || linhas[0] || null;
+
+  // Números do topo (tudo calculado das listas carregadas)
+  const sessoesARealizar = ativosLista.reduce((s, c) => s + (c.saldo || 0), 0);
+  const sessoesMarcadas = ativosLista.reduce((s, c) => s + (c.reservados || 0), 0);
+  const inicioMes = new Date(agora || 0);
+  inicioMes.setDate(1); inicioMes.setHours(0, 0, 0, 0);
+  const vendidosMes = todosLista.filter((c) => c.status !== 'CANCELADO' && new Date(c.criadoEm).getTime() >= inicioMes.getTime());
+  const valorVendidoMes = vendidosMes.reduce((s, c) => s + Number(c.valor || 0), 0);
+  const vencem30 = ativosLista.filter((c) => c.saldo > 0 && diasAte(c.validoAte, agora) <= 30).length;
+
+  const abas = [
+    { valor: 'ativos', rotulo: 'Ativos', qtd: ativosLista.length },
+    { valor: 'acabando', rotulo: 'Acabando', qtd: acabandoLista.length },
+    { valor: 'encerrados', rotulo: 'Encerrados', qtd: encerradosLista.length },
+    { valor: 'todos', rotulo: 'Todos', qtd: todosLista.length },
+  ];
+  const textoVazio = filtroModelo || termo
+    ? 'Nenhuma cliente encontrada com esse filtro.'
+    : filtro === 'acabando' ? 'Nenhum pacote acabando (2 sessões ou menos, ou vencendo em 30 dias).'
+      : filtro === 'encerrados' ? 'Nenhum pacote encerrado.'
+        : filtro === 'todos' ? 'Nenhuma cliente com pacote ainda.' : 'Nenhuma cliente com pacote ativo.';
+
+  const lateral = (
+    <>
+      <DetalhePacote
+        c={sel} agora={agora} modelo={sel ? modelos.find((m) => m.id === sel.modeloId) : null}
+        podeRenovar={!!sel && (sel.acabando || sel.status !== 'ATIVO') && sel.status !== 'CANCELADO' && !!modeloAtivoDe(sel)}
+        onRenovar={renovar} onPix={reenviarPix} onCancelar={cancelar}
+      />
+
+      <Painel
+        titulo="Pacotes acabando"
+        acoes={<Badge variant="warning">{acabandoLista.length}</Badge>}
+        semPadding
+      >
+        {carregandoClientes ? (
+          <div className="py-6 grid place-items-center"><Loader2 className="animate-spin text-[var(--text-muted)]" aria-label="Carregando" /></div>
+        ) : acabandoLista.length === 0 ? (
+          <p className="m-0 px-4 py-4 text-[13px] text-[var(--text-muted)]">Nenhum pacote acabando agora.</p>
+        ) : (
+          <>
+            {acabandoLista.slice(0, 6).map((c) => {
+              const d = diasAte(c.validoAte, agora);
+              const motivo = [`resta${c.saldo === 1 ? '' : 'm'} ${plural(c.saldo, 'sessão', 'sessões')}`, d <= 30 ? `vence em ${plural(d, 'dia', 'dias')}` : null].filter(Boolean).join(' · ');
+              return (
+                <div key={c.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 border-b border-[var(--border-subtle)] text-[13px]">
+                  <span className="flex-1 min-w-0">
+                    <button type="button" onClick={() => setSelId(c.id)} className="block font-semibold text-[var(--text-main)] hover:text-[var(--primary)] hover:underline text-left">{c.cliente.nome}</button>
+                    <span className="block text-xs text-[var(--text-muted)] [overflow-wrap:anywhere]">{c.pacote} · {motivo}</span>
+                  </span>
+                  {modeloAtivoDe(c) && (
+                    <Button variant="secondary" size="sm" onClick={() => renovar(c)}>Oferecer renovação</Button>
+                  )}
+                </div>
+              );
+            })}
+            <p className="m-0 px-4 py-2.5 text-xs text-[var(--text-muted)]">A renovação vende o mesmo pacote de novo, no caixa ou por Pix no WhatsApp.</p>
+          </>
+        )}
+      </Painel>
+
+      <Painel
+        titulo="Pacotes à venda"
+        semPadding
+      >
+        {modelos.length === 0 ? (
+          <p className="m-0 px-4 py-4 text-[13px] text-[var(--text-muted)]">Nenhum pacote criado ainda.</p>
+        ) : (
+          [...ativos, ...inativos].map((m) => (
+            <div key={m.id} className={`px-4 py-2.5 border-b border-[var(--border-subtle)] last:border-b-0 text-[13px] ${m.ativo ? '' : 'opacity-75'}`}>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="flex-1 min-w-0 font-semibold text-[var(--text-main)] [overflow-wrap:anywhere]">{m.nome}</span>
+                {m.ativo ? (
+                  <>
+                    <span className="text-xs text-[var(--text-muted)]">{textoValidade(m.validadeDias)}</span>
+                    <strong className="tabular-nums text-[var(--text-main)]">{fmtBRL(m.preco)}</strong>
+                  </>
+                ) : <Badge variant="neutral" size="sm">Fora de venda</Badge>}
+              </div>
+              <div className="mt-0.5 text-xs text-[var(--text-muted)] [overflow-wrap:anywhere]">
+                {m.servico} · {m.sessoes} sessões · {fmtBRL(m.valorSessao)} a sessão
+                {m.precoAvulso && m.precoAvulso * m.sessoes > m.preco ? ` · economia de ${fmtBRL(m.precoAvulso * m.sessoes - m.preco)}` : ''}
+                {m.intervaloMinDias ? ` · intervalo mínimo ${m.intervaloMinDias} dias` : ''}
+                {` · ${m.clientesAtivas} cliente(s) ativa(s)`}
+              </div>
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {m.ativo && <Button variant="primary" size="sm" icon={ShoppingBag} onClick={() => setModalVender({ open: true, modelo: m, cliente: null })}>Vender</Button>}
+                <Button variant="ghost" size="sm" icon={Edit2} onClick={() => setModalModelo({ open: true, modelo: m })} aria-label={`Editar ${m.nome}`}>Editar</Button>
+                {m.ativo
+                  ? <Button variant="ghost" size="sm" onClick={() => desativar(m)}>Parar de vender</Button>
+                  : <Button variant="ghost" size="sm" onClick={() => reativar(m)}>Voltar a vender</Button>}
+              </div>
+            </div>
+          ))
+        )}
+      </Painel>
+    </>
+  );
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold tracking-tight text-[var(--text-main)] flex-1">Pacotes de sessões</h1>
-        <Button variant="primary" icon={Plus} className="min-h-[44px]" onClick={() => setModalModelo({ open: true, modelo: null })}>Novo pacote</Button>
-      </div>
+    <Pagina>
+      <FaixaNumeros min={170}>
+        <Numero rotulo="Pacotes ativos" valor={ativosLista.length} carregando={carregandoClientes} onClick={() => setFiltro('ativos')} />
+        <Numero rotulo="Vendidos no mês" valor={fmtBRL(valorVendidoMes)} detalhe={plural(vendidosMes.length, 'pacote', 'pacotes')} carregando={carregandoClientes} />
+        <Numero rotulo="Sessões a realizar" valor={sessoesARealizar} detalhe={`${sessoesMarcadas} já marcada(s) na agenda`} carregando={carregandoClientes} />
+        <Numero rotulo="Acabando" valor={acabandoLista.length} detalhe="poucas sessões ou perto de vencer" tom="alerta" carregando={carregandoClientes} onClick={() => setFiltro('acabando')} />
+        <Numero rotulo="Vencem em 30 dias" valor={vencem30} detalhe="com sessões sobrando" tom="perigo" carregando={carregandoClientes} />
+      </FaixaNumeros>
 
-      {modelos.length === 0 ? (
-        <Card padding="lg">
-          <EmptyState
-            icon={Package}
-            title="Nenhum pacote criado"
-            description="Crie um pacote (ex.: 10 sessões de drenagem) e venda pra suas clientes. Cada atendimento concluído desconta uma sessão."
-            action={<Button variant="primary" icon={Plus} className="min-h-[44px]" onClick={() => setModalModelo({ open: true, modelo: null })}>Criar pacote</Button>}
-          />
-        </Card>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {[...ativos, ...inativos].map((m) => (
-            <Card key={m.id} padding="lg" className={m.ativo ? '' : 'opacity-70'}>
-              <div className="space-y-2">
-                <div className="flex items-start gap-2">
-                  <div className="flex-1">
-                    <div className="text-base font-semibold text-[var(--text-main)]">{m.nome}</div>
-                    <div className="text-xs text-[var(--text-muted)]">
-                      {m.servico} · validade {textoValidade(m.validadeDias)}{m.intervaloMinDias ? ` · intervalo mínimo ${m.intervaloMinDias} dias` : ''}
-                    </div>
-                  </div>
-                  {!m.ativo && <Badge variant="neutral">Fora de venda</Badge>}
-                </div>
-                <div className="text-xl font-semibold tabular-nums text-[var(--text-main)]">{fmtBRL(m.preco)}</div>
-                <div className="text-sm text-[var(--text-secondary)]">
-                  {m.sessoes} sessões · sai {fmtBRL(m.valorSessao)} a sessão
-                  {m.precoAvulso && m.precoAvulso * m.sessoes > m.preco ? ` (economia de ${fmtBRL(m.precoAvulso * m.sessoes - m.preco)})` : ''}
-                </div>
-                <div className="text-xs text-[var(--text-muted)]">{m.clientesAtivas} cliente(s) com pacote ativo</div>
-                <div className="flex flex-wrap gap-2 pt-2">
-                  {m.ativo && <Button variant="primary" icon={ShoppingBag} className="min-h-[44px]" onClick={() => setModalVender({ open: true, modelo: m, cliente: null })}>Vender</Button>}
-                  <Button variant="secondary" icon={Edit2} className="min-h-[44px]" onClick={() => setModalModelo({ open: true, modelo: m })}>Editar</Button>
-                  {m.ativo
-                    ? <Button variant="ghost" className="min-h-[44px]" onClick={() => desativar(m)}>Parar de vender</Button>
-                    : <Button variant="ghost" className="min-h-[44px]" onClick={() => reativar(m)}>Voltar a vender</Button>}
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      <Card padding="none">
-        <div className="flex flex-wrap items-center gap-2 px-5 py-4 border-b border-[var(--border-main)]">
-          <h2 className="text-base font-semibold text-[var(--text-main)] flex-1">Clientes com pacote</h2>
-          <div className="flex gap-1.5" role="group" aria-label="Filtrar clientes">
-            {[['ativos', 'Ativos'], ['acabando', 'Acabando'], ['encerrados', 'Encerrados']].map(([v, l]) => (
-              <button
-                key={v} type="button" aria-pressed={filtro === v} onClick={() => mudarFiltro(v)}
-                className={`min-h-[44px] px-4 rounded-full border text-sm font-medium ${filtro === v ? 'bg-[var(--primary)] text-[var(--text-on-primary)] border-[var(--primary)]' : 'border-[var(--border-strong)] text-[var(--text-secondary)]'}`}
-              >{l}</button>
-            ))}
-          </div>
-        </div>
-        {carregandoClientes ? (
-          <div className="py-10 grid place-items-center"><Loader2 className="animate-spin text-[var(--text-muted)]" aria-label="Carregando" /></div>
-        ) : clientes.length === 0 ? (
-          <div className="px-5 py-8 text-sm text-center text-[var(--text-muted)]">
-            {filtro === 'acabando' ? 'Nenhum pacote acabando (2 sessões ou menos, ou vencendo em 30 dias).' : filtro === 'encerrados' ? 'Nenhum pacote encerrado.' : 'Nenhuma cliente com pacote ativo.'}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-[var(--text-muted)]">
-                  <th className="px-5 py-2 font-semibold">Cliente</th>
-                  <th className="px-3 py-2 font-semibold">Pacote</th>
-                  <th className="px-3 py-2 font-semibold">Sessões</th>
-                  <th className="px-3 py-2 font-semibold">Pagamento</th>
-                  <th className="px-3 py-2 font-semibold">Validade</th>
-                  <th className="px-5 py-2"><span className="sr-only">Ações</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {clientes.map((c) => (
-                  <tr key={c.id} className="border-t border-[var(--border-main)] align-top">
-                    <td className="px-5 py-3">
-                      <div className="font-semibold text-[var(--text-main)]">{c.cliente.nome}</div>
-                      {c.cliente.telefone && <div className="text-xs text-[var(--text-muted)]">{formatarTelefoneBR(c.cliente.telefone)}</div>}
-                    </td>
-                    <td className="px-3 py-3 text-[var(--text-secondary)]">{c.pacote}</td>
-                    <td className="px-3 py-3">
-                      <div className="tabular-nums text-[var(--text-main)]">{c.sessoesUsadas} de {c.sessoesTotal} usadas</div>
-                      <div className="text-xs text-[var(--text-muted)]">{c.saldo} restante(s){c.reservados ? ` · ${c.reservados} marcada(s)` : ''}</div>
-                      {c.acabando && <Badge variant="warning" size="sm">Acabando</Badge>}
-                    </td>
-                    <td className="px-3 py-3 text-[var(--text-secondary)]">
-                      {c.parcelasPagas >= c.parcelas
-                        ? <span>Pago{c.parcelas > 1 ? ` (${c.parcelas}×)` : ''}</span>
-                        : <span>{c.parcelasPagas} de {c.parcelas} parcela(s){c.cobrancaPendente ? ` · ${fmtBRL(c.cobrancaPendente.valor)} em aberto` : ''}</span>}
-                      <div className="text-xs text-[var(--text-muted)]">{fmtBRL(c.valor)}</div>
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="text-[var(--text-secondary)]">{fmtData(c.validoAte)}</div>
-                      <Badge variant={STATUS[c.status]?.variant} size="sm">{STATUS[c.status]?.label || c.status}</Badge>
-                    </td>
-                    <td className="px-5 py-3">
-                      <div className="flex flex-wrap justify-end gap-1">
-                        {c.status === 'ATIVO' && c.parcelasPagas < c.parcelas && (
-                          <Button variant="ghost" size="sm" icon={Send} className="min-h-[44px]" onClick={() => reenviarPix(c)}>Mandar Pix</Button>
-                        )}
-                        {(c.acabando || c.status !== 'ATIVO') && c.status !== 'CANCELADO' && modelos.find((m) => m.id === c.modeloId && m.ativo) && (
-                          <Button variant="ghost" size="sm" icon={RefreshCw} className="min-h-[44px]" onClick={() => setModalVender({ open: true, modelo: modelos.find((m) => m.id === c.modeloId), cliente: c.cliente })}>Renovar</Button>
-                        )}
-                        {c.status === 'ATIVO' && (
-                          <Button variant="ghost" size="sm" icon={XCircle} className="min-h-[44px]" aria-label={`Cancelar pacote de ${c.cliente.nome}`} onClick={() => cancelar(c)}>Cancelar</Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      <ColunasPagina lateral={lateral}>
+        {modelos.length === 0 && (
+          <Card padding="lg">
+            <EmptyState
+              icon={Package}
+              title="Nenhum pacote criado"
+              description="Crie um pacote (ex.: 10 sessões de drenagem) e venda pra suas clientes. Cada atendimento concluído desconta uma sessão."
+              action={<Button variant="primary" icon={Plus} className="min-h-[44px]" onClick={abrirNovoModelo}>Criar pacote</Button>}
+            />
+          </Card>
         )}
-      </Card>
+
+        <Painel semPadding as="section" className="overflow-hidden">
+          <h2 className="sr-only">Clientes com pacote</h2>
+          <BarraFerramentas>
+            <AbasPilula abas={abas} valor={filtro} onChange={setFiltro} rotulo="Situação" />
+            <label className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-muted)]">
+              Pacote
+              <select
+                value={filtroModelo} onChange={(e) => setFiltroModelo(e.target.value)}
+                className="h-9 px-2.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-main)]"
+              >
+                <option value="">Todos</option>
+                {modelos.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
+              </select>
+            </label>
+            <div className="relative ml-auto min-w-[200px] flex-1 max-w-xs">
+              <Search size={16} aria-hidden="true" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+              <label htmlFor="filtra-cli-pacote" className="sr-only">Filtrar clientes</label>
+              <input
+                id="filtra-cli-pacote" type="search" placeholder="Filtrar clientes" value={busca} onChange={(e) => setBusca(e.target.value)}
+                className="w-full h-9 pl-8 pr-2.5 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-card)] text-[13px] text-[var(--text-main)] placeholder:text-[var(--text-muted)]"
+              />
+            </div>
+          </BarraFerramentas>
+
+          {carregandoClientes ? (
+            <div className="py-10 grid place-items-center"><Loader2 className="animate-spin text-[var(--text-muted)]" aria-label="Carregando" /></div>
+          ) : linhas.length === 0 ? (
+            <div className="px-4 py-8 text-[13px] text-center text-[var(--text-muted)]">{textoVazio}</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr>
+                    {['Cliente', 'Pacote', 'Sessões', 'Validade', 'Pagamento', 'Valor', 'Situação'].map((t) => (
+                      <th key={t} className={`text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap ${t === 'Valor' ? 'text-right' : 'text-left'}`}>{t}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {linhas.map((c) => {
+                    const ativa = sel?.id === c.id;
+                    const st = situacao(c);
+                    const d = diasAte(c.validoAte, agora);
+                    const td = `px-4 py-2.5 border-b border-[var(--border-subtle)] whitespace-nowrap ${ativa ? 'bg-[var(--primary-soft)]' : ''}`;
+                    return (
+                      <tr key={c.id}>
+                        <td className={td}>
+                          <button type="button" onClick={() => setSelId(c.id)} className="font-semibold text-[var(--text-main)] hover:text-[var(--primary)] hover:underline text-left" aria-label={`Ver pacote de ${c.cliente.nome}`}>{c.cliente.nome}</button>
+                        </td>
+                        <td className={`${td} text-[var(--text-secondary)]`}>{c.pacote}</td>
+                        <td className={td}><BarraSessoes c={c} /></td>
+                        <td className={`${td} tabular-nums ${c.status === 'ATIVO' && d <= 30 ? 'text-[var(--danger-text)] font-semibold' : 'text-[var(--text-secondary)]'}`}>{textoValidadeCliente(c, agora)}</td>
+                        <td className={`${td} text-[var(--text-secondary)]`}>{textoPagamento(c)}</td>
+                        <td className={`${td} text-right tabular-nums text-[var(--text-main)]`}>{fmtBRL(c.valor)}</td>
+                        <td className={td}><Badge variant={st.variant} size="sm">{st.label}</Badge></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 px-4 py-2.5 text-xs text-[var(--text-muted)]">
+            <span>Cada atendimento concluído na agenda desconta uma sessão sozinho.</span>
+            {!carregandoClientes && <span>Mostrando {linhas.length} de {daAba.length}</span>}
+          </div>
+        </Painel>
+      </ColunasPagina>
 
       <ModalModelo
         isOpen={modalModelo.open} modelo={modalModelo.modelo}
@@ -284,7 +427,67 @@ export default function PacotesPage() {
         onClose={() => setModalVender({ open: false, modelo: null, cliente: null })}
         onVendido={() => { setModalVender({ open: false, modelo: null, cliente: null }); recarregarTudo(); }}
       />
-    </div>
+    </Pagina>
+  );
+}
+
+/** Coluna da direita: o pacote da cliente selecionada na tabela. */
+function DetalhePacote({ c, agora, modelo, podeRenovar, onRenovar, onPix, onCancelar }) {
+  if (!c) {
+    return (
+      <Painel titulo="Pacote selecionado">
+        <p className="m-0 text-[13px] text-[var(--text-muted)]">Escolha uma cliente na tabela pra ver o saldo, a validade e as ações do pacote.</p>
+      </Painel>
+    );
+  }
+  const st = situacao(c);
+  const d = diasAte(c.validoAte, agora);
+  const livres = c.saldo - (c.reservados || 0);
+  return (
+    <Painel
+      titulo={c.cliente.nome}
+      subtitulo={c.cliente.telefone ? formatarTelefoneBR(c.cliente.telefone) : undefined}
+      acoes={<Badge variant={st.variant}>{st.label}</Badge>}
+      semPadding
+    >
+      <div className="px-4 py-3 border-b border-[var(--border-subtle)]">
+        <div className="text-sm font-semibold text-[var(--text-main)]">{c.pacote}</div>
+        <div className="text-xs text-[var(--text-muted)] mt-0.5">Restam {c.saldo} de {c.sessoesTotal} sessões</div>
+        <div className="flex flex-wrap gap-1.5 mt-2.5" role="img" aria-label={`${c.sessoesUsadas} de ${c.sessoesTotal} sessões usadas`}>
+          {Array.from({ length: c.sessoesTotal }, (_, n) => (
+            <span
+              key={n}
+              className={`w-[18px] h-[18px] rounded-full border-2 border-[var(--primary)] ${n < c.sessoesUsadas ? 'bg-[var(--primary)]' : 'bg-[var(--bg-card)]'}`}
+            />
+          ))}
+        </div>
+      </div>
+      <LinhaInfo rotulo="Vendido em" valor={fmtData(c.criadoEm)} />
+      <LinhaInfo rotulo="Validade" valor={d < 0 ? `Venceu em ${fmtData(c.validoAte)}` : `${fmtData(c.validoAte)} (${plural(d, 'dia', 'dias')})`} />
+      {modelo?.intervaloMinDias ? <LinhaInfo rotulo="Intervalo mínimo" valor={`${modelo.intervaloMinDias} dias entre sessões`} /> : null}
+      <LinhaInfo rotulo="Pagamento" valor={`${textoPagamento(c)} · ${fmtBRL(c.valor)}`} />
+      <LinhaInfo rotulo="Marcadas na agenda" valor={plural(c.reservados || 0, 'sessão', 'sessões')} />
+
+      <div className="px-4 py-3 flex flex-col gap-2">
+        {c.status === 'ATIVO' && livres > 0 && (
+          <Link
+            to="/app/agenda"
+            className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-[var(--primary)] text-[var(--text-on-primary)] hover:bg-[var(--primary-hover)] text-sm font-semibold"
+          >
+            <CalendarPlus size={16} aria-hidden="true" /> Agendar próxima sessão
+          </Link>
+        )}
+        <div className="flex flex-wrap gap-2">
+          {podeRenovar && <Button variant="secondary" size="sm" icon={RefreshCw} onClick={() => onRenovar(c)}>Renovar</Button>}
+          {c.status === 'ATIVO' && c.parcelasPagas < c.parcelas && (
+            <Button variant="secondary" size="sm" icon={Send} onClick={() => onPix(c)}>Mandar Pix</Button>
+          )}
+          {c.status === 'ATIVO' && (
+            <Button variant="danger-soft" size="sm" icon={XCircle} aria-label={`Cancelar pacote de ${c.cliente.nome}`} onClick={() => onCancelar(c)}>Cancelar pacote</Button>
+          )}
+        </div>
+      </div>
+    </Painel>
   );
 }
 
