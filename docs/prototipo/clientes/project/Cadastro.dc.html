@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Sellergy — criar conta</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#136F4D}a:hover{color:#0C4F37}
+.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.bp,.bs{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:0 22px;border-radius:10px;font-weight:600;font-size:15px;text-decoration:none;cursor:pointer;font-family:inherit;box-sizing:border-box}
+.bp{background:#136F4D;color:#fff;border:1px solid #136F4D}.bp:hover{background:#0F5C40;color:#fff}
+.bs{background:#fff;color:#15171A;border:1px solid #D5D8DC}.bs:hover{background:#F1F2EF;color:#15171A}
+.campo{display:flex;flex-direction:column;gap:6px}
+.campo label{font-size:14px;font-weight:600}
+.campo input{font:inherit;font-size:16px;min-height:48px;padding:0 14px;border:1px solid #CDD1D6;border-radius:10px;background:#fff;color:#15171A;box-sizing:border-box;width:100%}
+.campo input:focus{outline:2px solid #136F4D;outline-offset:1px;border-color:#136F4D}
+.seg{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;padding:14px 16px;border-radius:12px;border:1px solid #D5D8DC;background:#fff;font:inherit;color:#15171A;cursor:pointer;min-height:64px}
+.seg:hover{border-color:#8A9099}
+.bar{background:#DADDD8}.bar.on{background:#136F4D}
+.seg.on{border:2px solid #136F4D;background:#EEF6F1;padding:13px 15px}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #15171A; background: #F6F7F5; min-height: 900px; display: flex; flex-wrap: wrap">
+
+<main style="flex: 999 1 560px; min-width: 0; padding: 40px 24px 56px; display: flex; justify-content: center">
+<div style="width: 100%; max-width: 560px">
+<a href="Main.dc.html" style="display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: #15171A">
+<span style="width: 32px; height: 32px; border-radius: 9px; background: #136F4D; color: #fff; display: grid; place-items: center; font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 18px">S</span>
+<span style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 20px">Sellergy</span>
+</a>
+
+<div style="display: flex; align-items: center; gap: 10px; margin-top: 48px" aria-label="Progresso do cadastro">
+<span class="{{barra1}}" style="height: 4px; flex: 1; border-radius: 4px"></span>
+<span class="{{barra2}}" style="height: 4px; flex: 1; border-radius: 4px"></span>
+</div>
+<p style="margin: 12px 0 0; font-size: 13px; font-weight: 600; color: #5B616B">Passo {{passo}} de 2</p>
+
+<sc-if value="{{noPasso1}}" hint-placeholder-val="{{ true }}">
+<h1 style="font-family: 'Space Grotesk', sans-serif; font-size: 36px; letter-spacing: -0.025em; line-height: 1.1; margin: 8px 0 0">Vamos montar o seu negócio</h1>
+<p style="margin: 10px 0 0; color: #4A5059; font-size: 16px; line-height: 1.5">Com isso o sistema já chega arrumado do seu jeito: menus, primeiros passos e textos do WhatsApp.</p>
+<div class="campo" style="margin-top: 28px">
+<label for="negocio">Nome do negócio</label>
+<input id="negocio" type="text" autocomplete="organization" value="{{nome}}" onChange="{{setNome}}">
+</div>
+<fieldset style="border: 0; padding: 0; margin: 24px 0 0">
+<legend style="font-size: 14px; font-weight: 600; padding: 0; margin-bottom: 10px">O que você faz?</legend>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 10px">
+<sc-for list="{{segmentos}}" as="s" hint-placeholder-count="6">
+<button type="button" class="{{s.cls}}" aria-pressed="{{s.pressed}}" onClick="{{s.pick}}"><span style="font-weight: 600; font-size: 15px">{{s.nome}}</span><span style="font-size: 13px; color: #5B616B">{{s.ex}}</span></button>
+</sc-for>
+</div>
+</fieldset>
+<div style="display: flex; gap: 12px; margin-top: 32px; align-items: center; flex-wrap: wrap">
+<button type="button" class="bp" style="flex: 1" onClick="{{avancar}}">Continuar <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></button>
+</div>
+<p style="margin: 20px 0 0; font-size: 14px; color: #4A5059">Já tem conta? <a href="Entrar.dc.html">Entrar</a></p>
+</sc-if>
+
+<sc-if value="{{noPasso2}}" hint-placeholder-val="{{ false }}">
+<h1 style="font-family: 'Space Grotesk', sans-serif; font-size: 36px; letter-spacing: -0.025em; line-height: 1.1; margin: 8px 0 0">Agora, sobre você</h1>
+<p style="margin: 10px 0 0; color: #4A5059; font-size: 16px; line-height: 1.5">Você será o dono da conta. Depois dá pra chamar a equipe, cada um com o seu acesso.</p>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 16px; margin-top: 28px">
+<div class="campo"><label for="dono">Seu nome</label><input id="dono" type="text" autocomplete="name" value="Marina Lopes"></div>
+<div class="campo"><label for="whats">WhatsApp com DDD</label><input id="whats" type="tel" autocomplete="tel" value="(11) 98765-4321"></div>
+</div>
+<div class="campo" style="margin-top: 16px"><label for="email">E-mail</label><input id="email" type="email" autocomplete="email" value="marina@clinicalumi.com.br"></div>
+<div class="campo" style="margin-top: 16px"><label for="senha">Senha</label><input id="senha" type="password" autocomplete="new-password" value="lumi2026!"><span style="font-size: 13px; color: #0E5C34; display: flex; gap: 6px; align-items: center"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width: 15px; height: 15px"><path d="m5 12.5 4.5 4.5L19 7.5"></path></svg>Pelo menos 8 caracteres</span></div>
+<label style="display: flex; gap: 10px; align-items: flex-start; margin-top: 20px; font-size: 14px; color: #4A5059; line-height: 1.45; cursor: pointer"><input type="checkbox" checked style="width: 20px; height: 20px; margin: 0; accent-color: #136F4D; flex-shrink: 0">Li e aceito os <a href="#">Termos de uso</a> e a <a href="#">Política de privacidade</a>.</label>
+<div style="display: flex; gap: 12px; margin-top: 28px; flex-wrap: wrap">
+<button type="button" class="bs" onClick="{{voltar}}">Voltar</button>
+<a href="{{destino}}" class="bp" style="flex: 1">Criar conta e começar o teste</a>
+</div>
+<p style="margin: 16px 0 0; font-size: 13px; color: #5B616B; line-height: 1.5">Ao criar a conta você entra direto no sistema. Mandamos um código no WhatsApp só quando for conectar o número do negócio.</p>
+</sc-if>
+</div>
+</main>
+
+<aside style="flex: 1 1 420px; background: #0F3D2C; color: #fff; padding: 56px 40px; box-sizing: border-box; display: flex; flex-direction: column; gap: 28px">
+<div>
+<p style="margin: 0; font-size: 13px; font-weight: 600; color: #9FD6BC; text-transform: uppercase; letter-spacing: .08em">Seu teste grátis</p>
+<p style="margin: 10px 0 0; font-family: 'Space Grotesk', sans-serif; font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15">14 dias do Profissional, sem cartão</p>
+</div>
+<div style="background: rgba(255,255,255,.08); border-radius: 14px; padding: 18px">
+<p style="margin: 0; font-size: 13px; color: #C6E6D6">Seu link de agendamento vai ser</p>
+<p style="margin: 6px 0 0; font-weight: 600; font-size: 16px; word-break: break-all">sellergycloud.com/agendar/<span style="color: #F2C46B">{{slug}}</span></p>
+</div>
+<div>
+<p style="margin: 0 0 12px; font-weight: 600">Seus primeiros passos como {{segNome}}</p>
+<ol style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px">
+<sc-for list="{{passosPrevia}}" as="p" hint-placeholder-count="4">
+<li style="display: flex; gap: 12px; align-items: center; font-size: 15px; color: #E3F1EA"><span style="width: 26px; height: 26px; border-radius: 50%; border: 1px solid rgba(255,255,255,.35); display: grid; place-items: center; font-size: 12px; font-weight: 700; flex-shrink: 0">{{p.n}}</span>{{p.t}}</li>
+</sc-for>
+</ol>
+</div>
+<p style="margin: auto 0 0; font-size: 14px; color: #C6E6D6; line-height: 1.55; border-top: 1px solid rgba(255,255,255,.15); padding-top: 20px">No fim do teste nada é apagado. Sem plano, a conta fica só para consulta até você escolher.</p>
+</aside>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { passo: 1, nome: 'Clínica Lumi Estética', seg: 'estetica' };
+  }
+  renderVals() {
+    const s = this.state;
+    const lista = [
+      { id: 'estetica', nome: 'Estética', ex: 'Clínica, spa, depilação', papel: 'clínica de estética', passos: ['Cadastrar serviços e preços', 'Adicionar profissionais', 'Conectar o WhatsApp', 'Ligar o link de agendamento'] },
+      { id: 'beleza', nome: 'Salão e barbearia', ex: 'Cabelo, unha, barba', papel: 'salão', passos: ['Cadastrar serviços e preços', 'Adicionar profissionais e comissão', 'Conectar o WhatsApp', 'Ligar o link de agendamento'] },
+      { id: 'saude', nome: 'Saúde', ex: 'Fisio, nutri, psicologia', papel: 'consultório', passos: ['Cadastrar tipos de consulta', 'Definir horário de atendimento', 'Conectar o WhatsApp', 'Importar pacientes'] },
+      { id: 'moda', nome: 'Loja de roupas', ex: 'Moda, calçados, acessórios', papel: 'loja', passos: ['Cadastrar produtos com grade', 'Conferir estoque inicial', 'Fazer a primeira venda', 'Conectar o WhatsApp'] },
+      { id: 'cosmeticos', nome: 'Cosméticos', ex: 'Perfumaria, maquiagem', papel: 'loja', passos: ['Cadastrar produtos', 'Conferir estoque inicial', 'Fazer a primeira venda', 'Montar o catálogo online'] },
+      { id: 'outro', nome: 'Outro', ex: 'Me mostre tudo', papel: 'negócio', passos: ['Cadastrar produtos ou serviços', 'Fazer a primeira venda', 'Conectar o WhatsApp', 'Chamar a equipe'] },
+    ];
+    const atual = lista.find((x) => x.id === s.seg) || lista[0];
+    const slug = (s.nome || 'seu-negocio').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'seu-negocio';
+    return {
+      passo: s.passo,
+      noPasso1: s.passo === 1,
+      noPasso2: s.passo === 2,
+      barra1: 'bar on',
+      barra2: s.passo === 2 ? 'bar on' : 'bar',
+      nome: s.nome,
+      setNome: (e) => this.setState({ nome: e.target.value }),
+      segmentos: lista.map((x) => ({ ...x, cls: x.id === s.seg ? 'seg on' : 'seg', pressed: x.id === s.seg ? 'true' : 'false', pick: () => this.setState({ seg: x.id }) })),
+      segNome: atual.papel,
+      destino: atual.papel === 'loja' ? 'InicioLoja.dc.html' : 'Inicio.dc.html',
+      passosPrevia: atual.passos.map((t, i) => ({ n: i + 1, t })),
+      slug,
+      avancar: () => this.setState({ passo: 2 }),
+      voltar: () => this.setState({ passo: 1 }),
+    };
+  }
+}
+</script>
+</body>
+</html>

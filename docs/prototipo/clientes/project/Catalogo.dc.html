@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Catálogo online</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#136F4D}
+.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.bp,.bs{display:flex;align-items:center;justify-content:center;gap:8px;min-height:52px;padding:0 18px;border-radius:12px;font-weight:600;font-size:16px;cursor:pointer;font-family:inherit;box-sizing:border-box;width:100%;text-decoration:none}
+.bp{background:#136F4D;color:#fff;border:1px solid #136F4D}
+.bs{background:#fff;color:#15171A;border:1px solid #D5D8DC}
+.chip{border:1px solid #D5D8DC;background:#fff;font:inherit;font-size:13px;font-weight:600;color:#3D434B;padding:0 14px;min-height:38px;border-radius:999px;cursor:pointer;white-space:nowrap}
+.chip.on{background:#15171A;border-color:#15171A;color:#fff}
+.add{width:40px;height:40px;border-radius:10px;border:0;background:#136F4D;color:#fff;display:grid;place-items:center;cursor:pointer;padding:0}
+.f1{background:#FCEBD3}.f2{background:#E3F1EA}.f3{background:#E6EEF6}.f4{background:#EFE9F6}.f5{background:#F6EEDF}.f6{background:#F3E3E0}
+.qt{width:34px;height:34px;border-radius:8px;border:1px solid #D5D8DC;background:#fff;display:grid;place-items:center;cursor:pointer;padding:0;color:#15171A}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; font-family: Inter, system-ui, sans-serif; color: #15171A; background: #F6F7F5; display: flex; flex-direction: column; overflow: hidden">
+<header style="padding: 18px 16px 12px; background: #fff; border-bottom: 1px solid #E3E5E8">
+<div style="display: flex; align-items: center; gap: 12px">
+<span style="width: 44px; height: 44px; border-radius: 12px; background: #F2C46B; color: #4A3000; display: grid; place-items: center; font-weight: 700">CL</span>
+<span style="flex: 1; line-height: 1.3"><span style="display: block; font-weight: 600">Clínica Lumi Estética</span><span style="font-size: 13px; color: #5B616B">Retire na clínica ou receba pelo motoboy</span></span>
+</div>
+<sc-if value="{{naLoja}}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; gap: 8px; overflow-x: auto; margin-top: 14px" role="group" aria-label="Categoria">
+<sc-for list="{{cats}}" as="c" hint-placeholder-count="4"><button type="button" class="{{c.cls}}" onClick="{{c.pick}}" aria-pressed="{{c.pressed}}">{{c.nome}}</button></sc-for>
+</div>
+</sc-if>
+</header>
+
+<div style="flex: 1; overflow-y: auto; padding: 16px">
+<sc-if value="{{naLoja}}" hint-placeholder-val="{{ true }}">
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+<sc-for list="{{produtos}}" as="p" hint-placeholder-count="6">
+<div style="background: #fff; border: 1px solid #E3E5E8; border-radius: 14px; overflow: hidden; display: flex; flex-direction: column">
+<div class="{{p.cor}}" style="height: 110px; display: grid; place-items: center; color: #3D434B; font-size: 12px; font-weight: 600">{{p.cat}}</div>
+<div style="padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; flex: 1">
+<span style="font-weight: 600; font-size: 14px; line-height: 1.3; flex: 1">{{p.nome}}</span>
+<span style="display: flex; justify-content: space-between; align-items: center"><span style="font-weight: 700; font-variant-numeric: tabular-nums">{{p.precoTxt}}</span><button type="button" class="add" aria-label="Adicionar {{p.nome}}" onClick="{{p.add}}"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button></span>
+</div>
+</div>
+</sc-for>
+</div>
+</sc-if>
+
+<sc-if value="{{naSacola}}" hint-placeholder-val="{{ false }}">
+<h1 style="margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 24px">Sua sacola</h1>
+<div style="background: #fff; border: 1px solid #E3E5E8; border-radius: 14px; margin-top: 14px">
+<sc-for list="{{itens}}" as="l" hint-placeholder-count="2">
+<div style="display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-top: 1px solid #EEF0EC"><span style="flex: 1; font-size: 14px"><span style="display: block; font-weight: 600">{{l.nome}}</span><span style="color: #5B616B">{{l.sub}}</span></span><button type="button" class="qt" aria-label="Diminuir" onClick="{{l.menos}}"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width: 15px; height: 15px"><path d="M5 12h14"></path></svg></button><span style="width: 20px; text-align: center; font-weight: 600">{{l.q}}</span><button type="button" class="qt" aria-label="Aumentar" onClick="{{l.mais}}"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width: 15px; height: 15px"><path d="M12 5v14M5 12h14"></path></svg></button></div>
+</sc-for>
+</div>
+<fieldset style="border: 0; padding: 0; margin: 18px 0 0"><legend style="font-weight: 600; font-size: 14px; margin-bottom: 8px">Como quer receber?</legend>
+<label style="display: flex; gap: 10px; align-items: center; background: #fff; border: 1px solid #D5D8DC; border-radius: 12px; padding: 12px 14px; min-height: 48px; box-sizing: border-box"><input type="radio" name="ent" checked style="accent-color: #136F4D; width: 18px; height: 18px; margin: 0">Retirar na clínica · grátis</label>
+<label style="display: flex; gap: 10px; align-items: center; background: #fff; border: 1px solid #D5D8DC; border-radius: 12px; padding: 12px 14px; min-height: 48px; box-sizing: border-box; margin-top: 8px"><input type="radio" name="ent" style="accent-color: #136F4D; width: 18px; height: 18px; margin: 0">Motoboy · R$ 12,00 até 5 km</label>
+</fieldset>
+<p style="margin: 14px 0 0; font-size: 13px; color: #5B616B; line-height: 1.5">O pedido chega no WhatsApp da clínica. Eles confirmam o estoque e mandam o Pix.</p>
+</sc-if>
+
+<sc-if value="{{enviado}}" hint-placeholder-val="{{ false }}">
+<div style="text-align: center; padding-top: 48px">
+<span style="width: 72px; height: 72px; border-radius: 50%; background: #E3F4EA; color: #136F4D; display: inline-grid; place-items: center"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width: 34px; height: 34px; stroke-width: 2.2"><path d="m5 12.5 4.5 4.5L19 7.5"></path></svg></span>
+<h1 style="margin: 18px 0 0; font-family: 'Space Grotesk', sans-serif; font-size: 26px">Pedido enviado</h1>
+<p style="margin: 8px 0 0; color: #4A5059; line-height: 1.5">A Clínica Lumi recebeu seu pedido de {{total}} no WhatsApp e responde em instantes com o Pix.</p>
+</div>
+</sc-if>
+</div>
+
+<div style="padding: 12px 16px 16px; background: #fff; border-top: 1px solid #E3E5E8">
+<sc-if value="{{barraLoja}}" hint-placeholder-val="{{ false }}"><button type="button" class="bp" onClick="{{verSacola}}">Ver sacola · {{qtd}} · {{total}}</button></sc-if>
+<sc-if value="{{lojaVazia}}" hint-placeholder-val="{{ true }}"><p style="margin: 0; text-align: center; font-size: 13px; color: #5B616B">Toque no + para montar o pedido</p></sc-if>
+<sc-if value="{{naSacola}}" hint-placeholder-val="{{ false }}"><button type="button" class="bp" onClick="{{enviar}}">Enviar pedido pelo WhatsApp · {{total}}</button><button type="button" class="bs" style="margin-top: 8px; min-height: 44px" onClick="{{voltar}}">Continuar comprando</button></sc-if>
+<sc-if value="{{enviado}}" hint-placeholder-val="{{ false }}"><button type="button" class="bs" onClick="{{reiniciar}}">Voltar ao catálogo</button></sc-if>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { cat: 'todos', cart: {}, tela: 'loja' }; }
+  renderVals() {
+    const s = this.state;
+    const brl = (v) => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const P = [
+      { id: 'serum', nome: 'Sérum vitamina C 30 ml', preco: 89.9, cat: 'Skincare', cor: 'f1' },
+      { id: 'protetor', nome: 'Protetor solar FPS 50', preco: 64.9, cat: 'Skincare', cor: 'f2' },
+      { id: 'hidratante', nome: 'Hidratante facial', preco: 49.9, cat: 'Skincare', cor: 'f3' },
+      { id: 'micelar', nome: 'Água micelar 200 ml', preco: 34.9, cat: 'Skincare', cor: 'f4' },
+      { id: 'oleo', nome: 'Óleo corporal de amêndoas', preco: 54.9, cat: 'Corpo', cor: 'f5' },
+      { id: 'kit', nome: 'Kit rotina skincare', preco: 199, cat: 'Kits', cor: 'f6' },
+    ];
+    const setQ = (id, q) => { const cart = { ...s.cart }; if (q <= 0) delete cart[id]; else cart[id] = q; this.setState({ cart }); };
+    const ids = Object.keys(s.cart);
+    const totalN = ids.reduce((t, id) => t + P.find((p) => p.id === id).preco * s.cart[id], 0);
+    const qtd = ids.reduce((t, id) => t + s.cart[id], 0);
+    return {
+      naLoja: s.tela === 'loja', naSacola: s.tela === 'sacola', enviado: s.tela === 'enviado',
+      barraLoja: s.tela === 'loja' && qtd > 0, lojaVazia: s.tela === 'loja' && qtd === 0,
+      cats: ['todos', 'Skincare', 'Corpo', 'Kits'].map((c) => ({ nome: c === 'todos' ? 'Tudo' : c, cls: c === s.cat ? 'chip on' : 'chip', pressed: c === s.cat ? 'true' : 'false', pick: () => this.setState({ cat: c }) })),
+      produtos: P.filter((p) => s.cat === 'todos' || p.cat === s.cat).map((p) => ({ ...p, precoTxt: brl(p.preco), add: () => setQ(p.id, (s.cart[p.id] || 0) + 1) })),
+      itens: ids.map((id) => { const p = P.find((x) => x.id === id); const q = s.cart[id]; return { nome: p.nome, q, sub: brl(p.preco * q), mais: () => setQ(id, q + 1), menos: () => setQ(id, q - 1) }; }),
+      qtd: qtd + (qtd === 1 ? ' item' : ' itens'),
+      total: brl(totalN),
+      verSacola: () => this.setState({ tela: 'sacola' }),
+      voltar: () => this.setState({ tela: 'loja' }),
+      enviar: () => this.setState({ tela: 'enviado' }),
+      reiniciar: () => this.setState({ tela: 'loja', cart: {} }),
+    };
+  }
+}
+</script>
+</body>
+</html>

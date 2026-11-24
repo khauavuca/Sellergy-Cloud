@@ -1,0 +1,93 @@
+@@title Sellergy — importar planilha
+@@nav Clientes.dc.html
+@@h 1040
+@@main
+<div class="row">
+<a href="Clientes.dc.html" class="bg"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"></path></svg>Clientes</a>
+<h1 class="t1 grow">Importar planilha</h1>
+<div class="row" style="gap: 6px"><sc-for list="{{tipos}}" as="t" hint-placeholder-count="3"><button type="button" class="{{t.cls}}" onClick="{{t.pick}}">{{t.t}}</button></sc-for></div>
+</div>
+<div class="steps"><sc-for list="{{passos}}" as="p" hint-placeholder-count="4"><span class="{{p.cls}}"><b>{{p.n}}</b>{{p.t}}</span></sc-for></div>
+
+<section class="card" style="padding: 22px">
+<sc-if value="{{e1}}" hint-placeholder-val="{{ true }}">
+<div class="drop">
+<svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width: 32px; height: 32px; color: #5B616B"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"></path></svg>
+<p style="margin: 10px 0 0; font-weight: 600; font-size: 16px">Arraste a planilha de {{tipoNome}} aqui</p>
+<p class="sm mut" style="margin: 4px 0 14px">Excel, CSV ou Google Planilhas. Pode vir do sistema antigo, do caderno passado a limpo ou dos contatos do celular.</p>
+<div class="row" style="justify-content: center"><button type="button" class="bp" onClick="{{enviar}}">Escolher arquivo</button><button type="button" class="bs">Baixar modelo</button></div>
+</div>
+<div class="row" style="margin-top: 16px; padding: 14px; border-radius: 12px; background: #F6F7F5"><span class="grow sm"><strong>Vem de outro sistema?</strong> Trellis, Avec, Belasis, Simples Agenda: exporte os clientes lá e jogue aqui, a gente reconhece as colunas.</span></div>
+</sc-if>
+
+<sc-if value="{{e2}}" hint-placeholder-val="{{ false }}">
+<div class="row"><h2 class="t2 grow">clientes_lumi.xlsx · 418 linhas</h2><span class="pill ok">Reconhecemos 5 de 6 colunas</span></div>
+<div style="overflow-x: auto; margin-top: 14px"><table style="width: 100%; border-collapse: collapse; min-width: 640px">
+<thead><tr><th>Coluna da planilha</th><th>Exemplo</th><th>Vai para</th></tr></thead>
+<tbody><sc-for list="{{colunas}}" as="c" hint-placeholder-count="6"><tr><td style="font-weight: 600">{{c.col}}</td><td class="mut">{{c.ex}}</td><td><div class="f" style="max-width: 260px"><select aria-label="Campo de destino"><option>{{c.dest}}</option></select></div></td></tr></sc-for></tbody>
+</table></div>
+<p class="ajuda" style="margin: 10px 0 0">"Obs" não tem par certo. Mandamos pra Anotações da ficha.</p>
+</sc-if>
+
+<sc-if value="{{e3}}" hint-placeholder-val="{{ false }}">
+<div class="grid">
+<div class="card k" style="background: #E3F1EA; border-color: #BFE0CF"><p class="kl" style="color: #0E5C34">Prontos pra entrar</p><p class="kv" style="color: #0E5C34">{{prontos}}</p></div>
+<div class="card k"><p class="kl">Já existem (vamos juntar)</p><p class="kv">6</p></div>
+<div class="card k"><p class="kl">Precisam de atenção</p><p class="kv">{{problemas}}</p></div>
+</div>
+<h2 class="t2" style="margin-top: 18px">Precisam de atenção</h2>
+<div style="margin-top: 10px; border: 1px solid #E3E5E8; border-radius: 12px; overflow: hidden">
+<sc-for list="{{erros}}" as="r" hint-placeholder-count="3"><div class="row" style="padding: 12px 14px; border-top: 1px solid #EEF0EC; font-size: 14px"><span class="mut n" style="width: 70px">linha {{r.l}}</span><strong style="min-width: 160px">{{r.n}}</strong><span class="grow mut">{{r.p}}</span><sc-if value="{{r.aberto}}" hint-placeholder-val="{{ true }}"><button type="button" class="bs" onClick="{{r.fix}}">{{r.acao}}</button><button type="button" class="bg" onClick="{{r.pular}}">Pular</button></sc-if><sc-if value="{{r.feito}}" hint-placeholder-val="{{ false }}"><span class="{{r.cls}}">{{r.st}}</span></sc-if></div></sc-for>
+</div>
+<div class="row" style="margin-top: 14px"><span class="grow sm"><strong>Mandar mensagem de boas-vindas no WhatsApp</strong><span class="ajuda" style="display: block">Só pra quem já autorizou receber mensagens. Desligado é mais seguro na primeira importação.</span></span><button type="button" class="sw" aria-label="Boas-vindas"></button></div>
+</sc-if>
+
+<sc-if value="{{e4}}" hint-placeholder-val="{{ false }}">
+<div style="text-align: center; padding: 24px 10px">
+<span class="ok-ic"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width: 30px; height: 30px; stroke-width: 2.2"><path d="m5 12.5 4.5 4.5L19 7.5"></path></svg></span>
+<h2 style="margin: 16px 0 0; font-family: 'Space Grotesk', sans-serif; font-size: 24px">{{prontosFim}} clientes importados</h2>
+<p class="mut" style="margin: 8px auto 0; max-width: 520px; line-height: 1.5">6 juntados com fichas que já existiam. Encontramos 38 que não vêm há mais de 60 dias e 12 que fazem aniversário em dezembro.</p>
+<div class="row" style="justify-content: center; margin-top: 18px"><a href="Clientes.dc.html" class="bp">Ver clientes</a><a href="NovaCampanha.dc.html" class="bs">Chamar os sumidos</a><button type="button" class="bg">Desfazer importação</button></div>
+</div>
+</sc-if>
+
+<sc-if value="{{navegando}}" hint-placeholder-val="{{ false }}">
+<div class="row" style="margin-top: 22px; padding-top: 16px; border-top: 1px solid #EEF0EC"><button type="button" class="bg" onClick="{{voltar}}">Voltar</button><span class="grow"></span><button type="button" class="bp" onClick="{{avancar}}">{{avancarTxt}}</button></div>
+</sc-if>
+</section>
+@@script
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { e: 1, tipo: 0, r: {} }; }
+  renderVals() {
+    const s = this.state; const set = (o) => this.setState(o);
+    const nomes = ['Arquivo', 'Colunas', 'Revisão', 'Pronto'];
+    const E = [
+      { l: 37, n: 'Cláudia Reis', p: 'Celular com 8 dígitos: 9812-4410', acao: 'Pôr 11 e 9 na frente' },
+      { l: 112, n: 'Fernanda C.', p: 'Mesmo celular que Fernanda Castro', acao: 'Juntar as duas' },
+      { l: 290, n: '(sem nome)', p: 'Linha sem nome, só celular', acao: 'Usar "Cliente 290"' },
+    ];
+    const res = (i) => s.r[i];
+    const resolvidos = E.filter((e, i) => res(i) === 'fix').length;
+    return {
+      tipos: ['Clientes', 'Produtos', 'Serviços'].map((t, i) => ({ t, cls: 'chip' + (s.tipo === i ? ' on' : ''), pick: () => set({ tipo: i }) })),
+      tipoNome: ['clientes', 'produtos', 'serviços'][s.tipo],
+      passos: nomes.map((t, i) => ({ t, n: i + 1 < s.e ? '✓' : i + 1, cls: 'st' + (i + 1 === s.e ? ' on' : i + 1 < s.e ? ' done' : '') })),
+      e1: s.e === 1, e2: s.e === 2, e3: s.e === 3, e4: s.e === 4, navegando: s.e === 2 || s.e === 3,
+      enviar: () => set({ e: 2 }),
+      colunas: [
+        { col: 'Nome', ex: 'Paula Rocha', dest: 'Nome' },
+        { col: 'Cel', ex: '11998124410', dest: 'Celular (WhatsApp)' },
+        { col: 'Nasc', ex: '22/04/1990', dest: 'Aniversário' },
+        { col: 'Ult. visita', ex: '10/11/2026', dest: 'Última visita' },
+        { col: 'E-mail', ex: 'paula@gmail.com', dest: 'E-mail' },
+        { col: 'Obs', ex: 'pele sensível', dest: 'Anotações' },
+      ],
+      prontos: 409 + resolvidos, problemas: E.filter((e, i) => !res(i)).length,
+      erros: E.map((e, i) => ({ ...e, aberto: !res(i), feito: !!res(i), st: res(i) === 'fix' ? 'Resolvido' : 'Pulado', cls: 'pill ' + (res(i) === 'fix' ? 'ok' : 'neu'),
+        fix: () => set({ r: { ...s.r, [i]: 'fix' } }), pular: () => set({ r: { ...s.r, [i]: 'skip' } }) })),
+      prontosFim: 409 + resolvidos,
+      avancarTxt: s.e === 3 ? 'Importar ' + (409 + resolvidos) + ' clientes' : 'Continuar',
+      avancar: () => set({ e: s.e + 1 }), voltar: () => set({ e: Math.max(1, s.e - 1) }),
+    };
+  }
+}

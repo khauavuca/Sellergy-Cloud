@@ -1,0 +1,111 @@
+@@title Sellergy — pedidos
+@@nav Pedidos.dc.html
+@@h 1040
+@@css
+.col{flex:1 1 220px;min-width:0;background:#EEF0EC;border-radius:14px;padding:10px;display:flex;flex-direction:column;gap:8px}
+.ped{background:#fff;border:1px solid #E3E5E8;border-radius:12px;padding:12px;text-align:left;font:inherit;cursor:pointer;width:100%;color:#15171A}
+.ped.on{border-color:#136F4D;box-shadow:0 0 0 1px #136F4D inset}
+@@main
+<div class="row">
+<h1 class="t1 grow">Pedidos</h1>
+<span class="sm mut">Do catálogo online e das vendas pelo WhatsApp</span>
+<button type="button" class="bp" onClick="{{abrirNova}}"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"></path></svg>Vender pelo WhatsApp</button>
+</div>
+
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<div style="flex: 999 1 640px; min-width: 0; display: flex; gap: 10px; flex-wrap: wrap">
+<sc-for list="{{colunas}}" as="c" hint-placeholder-count="4">
+<section class="col" aria-label="{{c.t}}">
+<div class="row" style="padding: 2px 4px"><strong class="sm grow">{{c.t}}</strong><span class="pill neu">{{c.q}}</span></div>
+<sc-for list="{{c.itens}}" as="p" hint-placeholder-count="2">
+<button type="button" class="{{p.cls}}" onClick="{{p.pick}}">
+<span class="row" style="gap: 6px"><strong class="grow">#{{p.id}} · {{p.cli}}</strong><span class="sm mut n">{{p.h}}</span></span>
+<span class="sm mut" style="display: block; margin-top: 4px">{{p.resumo}}</span>
+<span class="row" style="margin-top: 8px; gap: 6px"><span class="n" style="font-weight: 700">{{p.total}}</span><span class="grow"></span><span class="{{p.origemCls}}">{{p.origem}}</span></span>
+</button>
+</sc-for>
+</section>
+</sc-for>
+</div>
+
+<aside class="card" style="flex: 1 1 340px; padding: 20px; box-sizing: border-box" aria-label="Pedido selecionado">
+<div class="row"><h2 class="t2 grow">Pedido #{{sel.id}}</h2><span class="{{sel.stCls}}">{{sel.st}}</span></div>
+<p class="sm mut" style="margin: 4px 0 0">{{sel.cli}} · {{sel.tel}} · {{sel.origemLonga}}</p>
+<div style="margin-top: 14px; border-top: 1px solid #EEF0EC">
+<sc-for list="{{sel.itens}}" as="i" hint-placeholder-count="2"><div class="row" style="padding: 9px 0; border-bottom: 1px solid #EEF0EC; font-size: 14px"><span class="grow">{{i.q}}× {{i.n}}</span><span class="n">{{i.v}}</span></div></sc-for>
+<div class="row" style="padding: 9px 0; font-size: 14px"><span class="grow mut">{{sel.entrega}}</span><span class="n">{{sel.frete}}</span></div>
+<div class="row" style="padding: 4px 0 0; font-weight: 700"><span class="grow">Total</span><span class="n">{{sel.total}}</span></div>
+</div>
+<div style="margin-top: 16px; padding: 12px; border-radius: 12px; background: #F6F7F5; font-size: 13px; line-height: 1.6">
+<sc-for list="{{sel.hist}}" as="h" hint-placeholder-count="2"><div><span class="n mut">{{h.h}}</span> · {{h.t}}</div></sc-for>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px; margin-top: 16px">
+<sc-if value="{{sel.podeAceitar}}" hint-placeholder-val="{{ true }}"><button type="button" class="bp" onClick="{{aceitar}}">Aceitar e mandar Pix no WhatsApp</button><button type="button" class="bg">Recusar pedido</button></sc-if>
+<sc-if value="{{sel.aguardando}}" hint-placeholder-val="{{ false }}"><button type="button" class="bs" onClick="{{pagar}}">Simular: cliente pagou</button><button type="button" class="bg">Reenviar cobrança</button></sc-if>
+<sc-if value="{{sel.separar}}" hint-placeholder-val="{{ false }}"><button type="button" class="bp" onClick="{{entregar}}">{{sel.entregarTxt}}</button><button type="button" class="bs">Imprimir etiqueta</button></sc-if>
+<sc-if value="{{sel.fim}}" hint-placeholder-val="{{ false }}"><p class="sm" style="margin: 0; padding: 10px 12px; border-radius: 10px; background: #E3F4EA; color: #0E5C34; font-weight: 600">Venda lançada no caixa, estoque baixado e nota emitida.</p><a href="NotasFiscais.dc.html" class="bs">Ver nota fiscal</a></sc-if>
+</div>
+</aside>
+</div>
+
+<sc-if value="{{nova}}" hint-placeholder-val="{{ false }}">
+<div class="ov" role="dialog" aria-modal="true" aria-labelledby="nv">
+<div class="modal">
+<div class="row"><h2 id="nv" style="margin: 0; font-size: 20px" class="grow">Vender pelo WhatsApp</h2><button type="button" class="bg" onClick="{{fecharNova}}" aria-label="Fechar">✕</button></div>
+<sc-if value="{{novaForm}}" hint-placeholder-val="{{ true }}">
+<div style="display: grid; gap: 12px; margin-top: 16px">
+<div class="f"><label for="nc">Cliente</label><input id="nc" type="text" value="Fernanda Castro · (11) 99503-1188"></div>
+<div class="f"><span class="lb">Produtos</span>
+<div style="border: 1px solid #E3E5E8; border-radius: 10px">
+<div class="row" style="padding: 10px 12px; font-size: 14px"><span class="grow">Sérum vitamina C 30 ml</span><span class="mut">×1</span><span class="n" style="width: 90px; text-align: right">R$ 142,50</span></div>
+<div class="row" style="padding: 10px 12px; font-size: 14px; border-top: 1px solid #EEF0EC"><span class="grow">Protetor solar FPS 50</span><span class="mut">×1</span><span class="n" style="width: 90px; text-align: right">R$ 89,90</span></div>
+</div></div>
+<div class="row"><button type="button" class="chip on">Retira na clínica</button><button type="button" class="chip">Motoboy R$ 12,00</button></div>
+<div class="row" style="font-weight: 700"><span class="grow">Total</span><span class="n">R$ 232,40</span></div>
+</div>
+<div style="margin-top: 14px; background: #EFE7DD; border-radius: 12px; padding: 12px">
+<div style="background: #fff; border-radius: 10px; padding: 10px 12px; font-size: 14px; line-height: 1.5">Oi, Fernanda! Separei pra você: Sérum vitamina C e Protetor FPS 50, total <strong>R$ 232,40</strong>. Paga por aqui: sellergycloud.com/p/8F2KQ (Pix ou cartão em até 3×).</div>
+</div>
+<button type="button" class="bp" style="width: 100%; margin-top: 16px" onClick="{{enviarNova}}">Enviar no WhatsApp da Fernanda</button>
+<p class="ajuda" style="margin: 8px 0 0; text-align: center">Quando ela pagar, o pedido anda sozinho e o estoque baixa.</p>
+</sc-if>
+<sc-if value="{{novaFeita}}" hint-placeholder-val="{{ false }}">
+<p style="margin: 16px 0 0; font-size: 15px; line-height: 1.5">Enviado. O pedido <strong>#2049</strong> entrou em <strong>Aguardando pagamento</strong>.</p>
+<button type="button" class="bp" style="width: 100%; margin-top: 16px" onClick="{{fecharNova}}">Ok</button>
+</sc-if>
+</div>
+</div>
+</sc-if>
+@@script
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { sel: 2045, st: { 2045: 0, 2046: 0, 2044: 1, 2043: 2, 2042: 3 }, nova: 0 }; }
+  renderVals() {
+    const s = this.state; const set = (o) => this.setState(o);
+    const P = {
+      2045: { cli: 'Camila Duarte', tel: '(11) 98877-2210', origem: 'Catálogo', h: '13:58', itens: [{ q: 2, n: 'Hidratante facial', v: 'R$ 99,80' }, { q: 1, n: 'Sabonete de argila', v: 'R$ 39,90' }], entrega: 'Motoboy · Pinheiros', frete: 'R$ 12,00', total: 'R$ 151,70', moto: true },
+      2046: { cli: 'Patrícia Gomes', tel: '(11) 97012-6644', origem: 'Catálogo', h: '14:20', itens: [{ q: 1, n: 'Kit rotina skincare', v: 'R$ 199,00' }], entrega: 'Retira na clínica', frete: 'R$ 0,00', total: 'R$ 199,00' },
+      2044: { cli: 'Bianca Ramos', tel: '(11) 99230-1180', origem: 'WhatsApp', h: '11:42', itens: [{ q: 1, n: 'Protetor solar FPS 50', v: 'R$ 89,90' }], entrega: 'Retira na clínica', frete: 'R$ 0,00', total: 'R$ 89,90' },
+      2043: { cli: 'Juliana Prado', tel: '(11) 98455-0012', origem: 'Catálogo', h: '10:15', itens: [{ q: 1, n: 'Sérum vitamina C 30 ml', v: 'R$ 142,50' }], entrega: 'Motoboy · Vila Madalena', frete: 'R$ 12,00', total: 'R$ 154,50', moto: true },
+      2042: { cli: 'Lívia Martins', tel: '(11) 96610-7788', origem: 'WhatsApp', h: '09:30', itens: [{ q: 3, n: 'Máscara de argila', v: 'R$ 104,70' }], entrega: 'Retira na clínica', frete: 'R$ 0,00', total: 'R$ 104,70' },
+    };
+    const nomes = ['Novos', 'Aguardando pagamento', 'Pago · separar', 'Entregue hoje'];
+    const stTxt = [['pill info', 'Novo'], ['pill wait', 'Aguardando pagamento'], ['pill ok', 'Pago'], ['pill neu', 'Entregue']];
+    const ids = Object.keys(P).map(Number).sort((a, b) => b - a);
+    const card = (id) => ({ id, ...P[id], resumo: P[id].itens.map((i) => i.q + '× ' + i.n).join(', '), origemCls: 'pill ' + (P[id].origem === 'Catálogo' ? 'info' : 'ok'), cls: 'ped' + (s.sel === id ? ' on' : ''), pick: () => set({ sel: id }) });
+    const colunas = nomes.map((t, c) => { const itens = ids.filter((id) => s.st[id] === c).map(card); return { t, q: itens.length, itens }; });
+    const p = P[s.sel]; const e = s.st[s.sel];
+    const hist = [{ h: p.h, t: p.origem === 'Catálogo' ? 'Pedido feito pelo catálogo' : 'Link enviado pelo WhatsApp' }];
+    if (e >= 1) hist.push({ h: e === 1 && s.sel !== 2044 ? 'agora' : '—', t: 'Pix enviado no WhatsApp' });
+    if (e >= 2) hist.push({ h: '—', t: 'Pago por Pix · estoque baixado' });
+    if (e >= 3) hist.push({ h: '—', t: p.moto ? 'Saiu com o motoboy' : 'Retirado na clínica' });
+    const mv = (n) => set({ st: { ...s.st, [s.sel]: n } });
+    return {
+      colunas,
+      sel: { id: s.sel, ...p, st: stTxt[e][1], stCls: stTxt[e][0], origemLonga: p.origem === 'Catálogo' ? 'pelo catálogo online' : 'venda pelo WhatsApp', hist,
+        podeAceitar: e === 0, aguardando: e === 1, separar: e === 2, fim: e === 3, entregarTxt: p.moto ? 'Chamar motoboy e avisar cliente' : 'Marcar como retirado' },
+      aceitar: () => mv(1), pagar: () => mv(2), entregar: () => mv(3),
+      nova: s.nova > 0, novaForm: s.nova === 1, novaFeita: s.nova === 2,
+      abrirNova: () => set({ nova: 1 }), enviarNova: () => set({ nova: 2 }), fecharNova: () => set({ nova: 0 }),
+    };
+  }
+}

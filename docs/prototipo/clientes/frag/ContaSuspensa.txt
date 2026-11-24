@@ -1,0 +1,81 @@
+@@title Sellergy — conta com pagamento atrasado
+@@nav Inicio.dc.html
+@@h 1040
+@@css
+.qr{width:170px;height:170px;margin:0 auto;border-radius:10px;background:repeating-conic-gradient(#15171A 0 25%,#fff 0 50%) 0 0/20px 20px;border:8px solid #fff;outline:1px solid #E3E5E8}
+.apag{opacity:.45;pointer-events:none;filter:grayscale(.4)}
+@@main
+<sc-if value="{{bloq}}" hint-placeholder-val="{{ true }}">
+<div class="row" style="padding: 14px 18px; border-radius: 14px; background: #FBE4E1; color: #8F1D12">
+<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 20h20z"></path><path d="M12 10v4M12 17h.01"></path></svg>
+<span class="grow" style="font-size: 14px; line-height: 1.5"><strong>Fatura de dezembro em aberto há 8 dias.</strong> Agenda, lembretes e consulta continuam funcionando. Vendas, campanhas e notas novas estão pausadas até o pagamento.</span>
+<button type="button" class="bp" onClick="{{abrir}}">Pagar R$ 119,00</button>
+</div>
+</sc-if>
+<sc-if value="{{liberado}}" hint-placeholder-val="{{ false }}">
+<div class="row" style="padding: 14px 18px; border-radius: 14px; background: #E3F4EA; color: #0E5C34"><span class="grow" style="font-size: 14px"><strong>Pagamento recebido. Tudo liberado de novo.</strong> O recibo foi pro seu WhatsApp e pro e-mail.</span><button type="button" class="bg" onClick="{{reiniciar}}">Ver de novo</button></div>
+</sc-if>
+
+<h1 class="t1">Boa tarde, Marina</h1>
+
+<div class="grid">
+<div class="card k"><p class="kl">Agendados hoje</p><p class="kv">14</p><p class="kx">11 confirmados</p></div>
+<div class="card k"><p class="kl">Lembretes</p><p class="kv">Ligados</p><p class="kx">Continuam saindo mesmo com atraso</p></div>
+<div class="card k"><p class="kl">Vendas</p><p class="kv">{{vendasSt}}</p><p class="kx">{{vendasX}}</p></div>
+</div>
+
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section class="card" style="flex: 1 1 420px; padding: 20px; box-sizing: border-box">
+<h2 class="t2">O que funciona durante o atraso</h2>
+<div style="margin-top: 12px; display: grid; gap: 8px; font-size: 14px">
+<div class="row"><span class="pill ok">Funciona</span><span>Agenda, lembretes e confirmação</span></div>
+<div class="row"><span class="pill ok">Funciona</span><span>Ver clientes, relatórios e exportar seus dados</span></div>
+<div class="row"><span class="{{pausaCls}}">{{pausaTxt}}</span><span>Vender no balcão e pelo WhatsApp</span></div>
+<div class="row"><span class="{{pausaCls}}">{{pausaTxt}}</span><span>Campanhas e emissão de nota</span></div>
+</div>
+<p class="ajuda" style="margin: 12px 0 0">Com 10 dias de atraso a conta fica só pra consulta (veja em Plano e cobrança). Seus dados nunca são apagados sem aviso.</p>
+</section>
+<section class="card" style="flex: 1 1 420px; padding: 20px; box-sizing: border-box">
+<h2 class="t2">Como chegamos aqui</h2>
+<div style="margin-top: 12px; font-size: 14px; line-height: 1.9">
+<div class="row"><span class="n mut" style="width: 56px">05/12</span><span>Fatura gerada, tentativa no cartão final 4412 recusada</span></div>
+<div class="row"><span class="n mut" style="width: 56px">06/12</span><span>Aviso no WhatsApp com Pix</span></div>
+<div class="row"><span class="n mut" style="width: 56px">09/12</span><span>Segundo aviso e nova tentativa no cartão</span></div>
+<div class="row"><span class="n mut" style="width: 56px">13/12</span><span>Vendas pausadas (hoje)</span></div>
+</div>
+</section>
+</div>
+
+<div class="{{pdvCls}}">
+<section class="card" style="padding: 20px">
+<div class="row"><h2 class="t2 grow">Nova venda</h2><a href="PDV.dc.html" class="bp">Abrir vendas</a></div>
+<p class="sm mut" style="margin: 6px 0 0">Atalho do balcão</p>
+</section>
+</div>
+
+<sc-if value="{{modal}}" hint-placeholder-val="{{ false }}">
+<div class="ov" role="dialog" aria-modal="true" aria-labelledby="pg"><div class="modal" style="text-align: center">
+<div class="row"><h2 id="pg" class="grow" style="margin: 0; font-size: 20px; text-align: left">Pagar fatura de dezembro</h2><button type="button" class="bg" onClick="{{fechar}}" aria-label="Fechar">✕</button></div>
+<p class="n" style="margin: 14px 0 0; font-size: 34px; font-weight: 700; font-family: 'Space Grotesk', sans-serif">R$ 119,00</p>
+<p class="sm mut" style="margin: 2px 0 16px">Plano Profissional · mensal</p>
+<div class="qr" role="img" aria-label="QR Code do Pix"></div>
+<button type="button" class="bp" style="width: 100%; margin-top: 18px" onClick="{{pagar}}">Copiar código Pix</button>
+<button type="button" class="bs" style="width: 100%; margin-top: 8px">Trocar o cartão e pagar</button>
+<p class="ajuda" style="margin: 10px 0 0">Libera na hora que o Pix cair. (Toque em Copiar pra simular.)</p>
+</div></div>
+</sc-if>
+@@script
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { pago: false, modal: false }; }
+  renderVals() {
+    const s = this.state; const set = (o) => this.setState(o);
+    return {
+      bloq: !s.pago, liberado: s.pago, modal: s.modal,
+      vendasSt: s.pago ? 'Liberadas' : 'Pausadas', vendasX: s.pago ? 'Pode vender normalmente' : 'Pague a fatura pra liberar',
+      pausaCls: 'pill ' + (s.pago ? 'ok' : 'bad'), pausaTxt: s.pago ? 'Funciona' : 'Pausado',
+      pdvCls: s.pago ? '' : 'apag',
+      abrir: () => set({ modal: true }), fechar: () => set({ modal: false }),
+      pagar: () => set({ modal: false, pago: true }), reiniciar: () => set({ pago: false }),
+    };
+  }
+}

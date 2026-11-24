@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Sellergy — estoque</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#136F4D}a:hover{color:#0C4F37}
+.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.nav{display:flex;align-items:center;gap:12px;padding:0 12px;min-height:42px;border-radius:9px;color:#3D434B;text-decoration:none;font-weight:500;font-size:14px}
+.nav:hover{background:#F1F2EF;color:#15171A}
+.nav.on{background:#E3F1EA;color:#0E5C34;font-weight:600}
+.bp,.bs,.bg{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:10px;font-weight:600;font-size:14px;text-decoration:none;cursor:pointer;font-family:inherit;box-sizing:border-box;white-space:nowrap}
+.bp{background:#136F4D;color:#fff;border:1px solid #136F4D}.bp:hover{background:#0F5C40;color:#fff}
+.bs{background:#fff;color:#15171A;border:1px solid #D5D8DC}.bs:hover{background:#F1F2EF;color:#15171A}
+.bg{background:transparent;color:#3D434B;border:1px solid transparent}.bg:hover{background:#F1F2EF}
+.chip{border:1px solid #D5D8DC;background:#fff;font:inherit;font-size:13px;font-weight:600;color:#3D434B;padding:0 12px;min-height:36px;border-radius:999px;cursor:pointer}
+.chip.on{background:#15171A;border-color:#15171A;color:#fff}
+.tabs button{border:0;background:none;font:inherit;font-weight:600;font-size:14px;color:#4A5059;padding:12px 2px;border-bottom:2px solid transparent;cursor:pointer;min-height:44px}
+.tabs button.on{color:#15171A;border-color:#15171A}
+td,th{padding:12px 16px;border-top:1px solid #EEF0EC;text-align:left;font-size:14px}
+th{font-size:13px;color:#5B616B;font-weight:600}
+.st{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;display:inline-flex;white-space:nowrap}
+.st.ok{background:#E3F4EA;color:#0E5C34}.st.baixo{background:#FDF0D9;color:#7A4A00}.st.zero{background:#FBE4E1;color:#8F1D12}
+.campo{display:flex;flex-direction:column;gap:6px}
+.campo label{font-size:14px;font-weight:600}
+.campo input,.campo select{font:inherit;font-size:15px;min-height:46px;padding:0 12px;border:1px solid #CDD1D6;border-radius:10px;background:#fff;box-sizing:border-box;width:100%}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #15171A; background: #F6F7F5; min-height: 1040px; display: flex; flex-wrap: wrap; position: relative">
+
+<aside style="flex: 1 1 232px; background: #fff; border-right: 1px solid #E3E5E8; padding: 18px 14px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px">
+<a href="Main.dc.html" style="display: flex; align-items: center; gap: 10px; text-decoration: none; color: #15171A; padding: 4px 8px"><span style="width: 30px; height: 30px; border-radius: 9px; background: #136F4D; color: #fff; display: grid; place-items: center; font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 17px">S</span><span style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 19px">Sellergy</span></a>
+<nav aria-label="Menu principal" style="display: flex; flex-direction: column; gap: 2px">
+<a href="Inicio.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"></path></svg>Início</a>
+<a href="Agenda.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2"></rect><path d="M3 9.5h18M8 2.5v4M16 2.5v4"></path></svg>Agenda</a>
+<a href="PDV.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14l-1 13H6z"></path><path d="M9 8V6a3 3 0 0 1 6 0v2"></path></svg>Vendas</a>
+<a href="Pedidos.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8v3H8z"></path><path d="M16 5.5h2.5V21h-13V5.5H8"></path><path d="M9 12h6M9 16h4"></path></svg>Pedidos</a>
+<a href="Clientes.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"></circle><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"></path><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.8c1.9.7 3.1 2.4 3.5 5.2"></path></svg>Clientes</a>
+<a href="Estoque.dc.html" class="nav on" aria-current="page"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"></path><path d="M3 7.5 12 12l9-4.5M12 12v9"></path></svg>Estoque</a>
+<a href="Caixa.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2"></rect><circle cx="12" cy="12" r="2.5"></circle></svg>Caixa</a>
+<a href="WhatsApp.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"></path></svg>WhatsApp</a>
+<a href="NotasFiscais.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"></path><path d="M9 8h6M9 12h6"></path></svg>Notas fiscais</a>
+<a href="Financeiro.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h15a3 3 0 0 1 3 3v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="M3 7l12-3v3M16 13.5h2"></path></svg>Financeiro</a>
+<a href="Relatorios.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"></path></svg>Relatórios</a>
+</nav>
+<div style="margin-top: auto; display: flex; flex-direction: column; gap: 10px">
+<a href="Configuracoes.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>Configurações</a>
+<div style="display: flex; gap: 10px; align-items: center; padding: 12px; border-radius: 12px; background: #F6F7F5"><span style="width: 34px; height: 34px; border-radius: 50%; background: #F2C46B; display: grid; place-items: center; font-weight: 700; font-size: 13px; color: #4A3000">ML</span><span style="font-size: 13px; line-height: 1.3; min-width: 0"><span style="display: block; font-weight: 600">Clínica Lumi Estética</span><span style="color: #5B616B">Marina · dona</span></span></div>
+</div>
+</aside>
+
+<main style="flex: 999 1 560px; min-width: 0; padding: 24px 28px 40px; box-sizing: border-box; display: flex; flex-direction: column; gap: 18px">
+<div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap">
+<h1 style="margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 28px; letter-spacing: -0.02em">Estoque</h1>
+<div style="flex: 1"></div>
+<button type="button" class="bs">Contagem de estoque</button>
+<button type="button" class="bs"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Novo produto</button>
+<button type="button" class="bp" onClick="{{abrirEntrada}}">Entrada de mercadoria</button>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 14px">
+<div style="background: #fff; border: 1px solid #E3E5E8; border-radius: 14px; padding: 16px"><p style="margin: 0; font-size: 13px; color: #5B616B">Valor parado em estoque (custo)</p><p style="margin: 6px 0 0; font-family: 'Space Grotesk', sans-serif; font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums">R$ 3.412,40</p></div>
+<div style="background: #fff; border: 1px solid #E3E5E8; border-radius: 14px; padding: 16px"><p style="margin: 0; font-size: 13px; color: #5B616B">Acabando</p><p style="margin: 6px 0 0; font-family: 'Space Grotesk', sans-serif; font-size: 26px; font-weight: 700">{{nBaixo}} produtos</p></div>
+<div style="background: #fff; border: 1px solid #E3E5E8; border-radius: 14px; padding: 16px"><p style="margin: 0; font-size: 13px; color: #5B616B">Sem venda há 60 dias</p><p style="margin: 6px 0 0; font-family: 'Space Grotesk', sans-serif; font-size: 26px; font-weight: 700">2 produtos</p></div>
+<div style="background: #fff; border: 1px solid #E3E5E8; border-radius: 14px; padding: 16px"><p style="margin: 0; font-size: 13px; color: #5B616B">Margem média</p><p style="margin: 6px 0 0; font-family: 'Space Grotesk', sans-serif; font-size: 26px; font-weight: 700">52%</p></div>
+</div>
+
+<section style="background: #fff; border: 1px solid #E3E5E8; border-radius: 16px; overflow: hidden">
+<div class="tabs" role="tablist" style="display: flex; gap: 24px; padding: 0 16px; border-bottom: 1px solid #E3E5E8">
+<button type="button" role="tab" class="{{tabProd}}" onClick="{{verProd}}">Produtos</button>
+<button type="button" role="tab" class="{{tabMov}}" onClick="{{verMov}}">Movimentações</button>
+</div>
+<sc-if value="{{emProd}}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; gap: 8px; flex-wrap: wrap; padding: 14px 16px" role="group" aria-label="Filtrar">
+<sc-for list="{{filtros}}" as="f" hint-placeholder-count="3"><button type="button" class="{{f.cls}}" aria-pressed="{{f.pressed}}" onClick="{{f.pick}}">{{f.nome}}</button></sc-for>
+</div>
+<div style="overflow-x: auto">
+<table style="width: 100%; border-collapse: collapse; min-width: 760px">
+<thead><tr><th>Produto</th><th>Código</th><th style="text-align: right">Em estoque</th><th style="text-align: right">Mínimo</th><th style="text-align: right">Custo</th><th style="text-align: right">Preço</th><th style="text-align: right">Margem</th><th>Situação</th></tr></thead>
+<tbody>
+<sc-for list="{{produtos}}" as="p" hint-placeholder-count="8">
+<tr><td style="font-weight: 600">{{p.nome}}</td><td style="color: #5B616B; font-variant-numeric: tabular-nums">{{p.cod}}</td><td style="text-align: right; font-weight: 700; font-variant-numeric: tabular-nums">{{p.qtd}}</td><td style="text-align: right; color: #5B616B">{{p.min}}</td><td style="text-align: right; font-variant-numeric: tabular-nums">{{p.custo}}</td><td style="text-align: right; font-variant-numeric: tabular-nums">{{p.preco}}</td><td style="text-align: right">{{p.margem}}</td><td><span class="{{p.stCls}}">{{p.st}}</span></td></tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+</sc-if>
+<sc-if value="{{emMov}}" hint-placeholder-val="{{ false }}">
+<div style="overflow-x: auto">
+<table style="width: 100%; border-collapse: collapse; min-width: 640px">
+<thead><tr><th>Quando</th><th>Produto</th><th>Tipo</th><th style="text-align: right">Qtd.</th><th>Por</th></tr></thead>
+<tbody>
+<sc-for list="{{movs}}" as="m" hint-placeholder-count="6">
+<tr><td style="color: #5B616B; font-variant-numeric: tabular-nums">{{m.q}}</td><td style="font-weight: 600">{{m.p}}</td><td>{{m.t}}</td><td style="text-align: right; font-weight: 700; font-variant-numeric: tabular-nums">{{m.n}}</td><td style="color: #5B616B">{{m.u}}</td></tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+</sc-if>
+</section>
+</main>
+
+<sc-if value="{{modal}}" hint-placeholder-val="{{ false }}">
+<div style="position: absolute; inset: 0; background: rgba(21,23,26,.45); display: flex; justify-content: center; align-items: flex-start; padding: 110px 16px; box-sizing: border-box">
+<div role="dialog" aria-modal="true" aria-labelledby="et" style="width: 100%; max-width: 480px; background: #fff; border-radius: 20px; padding: 26px; box-sizing: border-box; box-shadow: 0 24px 60px rgba(0,0,0,.2)">
+<div style="display: flex; justify-content: space-between; align-items: center"><h2 id="et" style="margin: 0; font-size: 20px">Entrada de mercadoria</h2><button type="button" class="bg" aria-label="Fechar" onClick="{{fechar}}" style="width: 40px; padding: 0"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg></button></div>
+<p style="margin: 6px 0 0; font-size: 14px; color: #5B616B">Ou importe o XML da nota do fornecedor e tudo entra de uma vez.</p>
+<div class="campo" style="margin-top: 18px"><label for="ep">Produto</label><select id="ep"><option>Sérum vitamina C 30 ml</option><option>Esfoliante corporal</option><option>Água micelar 200 ml</option></select></div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px">
+<div class="campo"><label for="eq">Quantidade</label><input id="eq" type="number" value="12"></div>
+<div class="campo"><label for="ec">Custo por unidade</label><input id="ec" type="text" value="R$ 41,50"></div>
+</div>
+<div class="campo" style="margin-top: 12px"><label for="ef">Fornecedor</label><input id="ef" type="text" value="Dermo Distribuidora"></div>
+<div style="display: flex; gap: 10px; margin-top: 20px"><button type="button" class="bs" style="flex: 1">Importar XML</button><button type="button" class="bp" style="flex: 1" onClick="{{lancar}}">Lançar entrada</button></div>
+</div>
+</div>
+</sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1040}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { tab: 'prod', filtro: 'todos', modal: false, entrou: false }; }
+  renderVals() {
+    const s = this.state;
+    const brl = (v) => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const P = [
+      { nome: 'Sérum vitamina C 30 ml', cod: '7891234560011', qtd: s.entrou ? 15 : 3, min: 6, custo: 41.5, preco: 89.9 },
+      { nome: 'Protetor solar FPS 50', cod: '7891234560028', qtd: 18, min: 8, custo: 29.9, preco: 64.9 },
+      { nome: 'Hidratante facial', cod: '7891234560035', qtd: 22, min: 6, custo: 21, preco: 49.9 },
+      { nome: 'Água micelar 200 ml', cod: '7891234560042', qtd: 9, min: 6, custo: 15.9, preco: 34.9 },
+      { nome: 'Óleo corporal de amêndoas', cod: '7891234560059', qtd: 12, min: 4, custo: 24, preco: 54.9 },
+      { nome: 'Esfoliante corporal', cod: '7891234560066', qtd: 4, min: 5, custo: 19.5, preco: 44.9 },
+      { nome: 'Kit rotina skincare', cod: '7891234560073', qtd: 6, min: 2, custo: 98, preco: 199 },
+      { nome: 'Máscara de argila verde', cod: '7891234560080', qtd: 0, min: 3, custo: 17, preco: 39.9 },
+    ];
+    const situ = (p) => (p.qtd === 0 ? 'zero' : p.qtd <= p.min ? 'baixo' : 'ok');
+    const nomeSt = { ok: 'Em dia', baixo: 'Acabando', zero: 'Sem estoque' };
+    const lista = P.filter((p) => s.filtro === 'todos' || (s.filtro === 'baixo' && situ(p) !== 'ok') || (s.filtro === 'zero' && situ(p) === 'zero'));
+    const movs = [
+      { q: 'Hoje, 09:14', p: 'Protetor solar FPS 50', t: 'Venda 1041', n: '−1', u: 'Marina' },
+      { q: 'Hoje, 08:02', p: 'Hidratante facial', t: 'Venda 1038', n: '−2', u: 'Recepção' },
+      { q: 'Ontem, 17:40', p: 'Esfoliante corporal', t: 'Venda 1035', n: '−1', u: 'Recepção' },
+      { q: '20/11, 10:00', p: 'Protetor solar FPS 50', t: 'Entrada · Dermo Distribuidora', n: '+12', u: 'Marina' },
+      { q: '18/11, 16:22', p: 'Máscara de argila verde', t: 'Ajuste · vencido', n: '−2', u: 'Marina' },
+    ];
+    if (s.entrou) movs.unshift({ q: 'Agora', p: 'Sérum vitamina C 30 ml', t: 'Entrada · Dermo Distribuidora', n: '+12', u: 'Marina' });
+    return {
+      nBaixo: P.filter((p) => situ(p) !== 'ok').length,
+      tabProd: s.tab === 'prod' ? 'on' : '', tabMov: s.tab === 'mov' ? 'on' : '',
+      verProd: () => this.setState({ tab: 'prod' }), verMov: () => this.setState({ tab: 'mov' }),
+      emProd: s.tab === 'prod', emMov: s.tab === 'mov',
+      filtros: [{ id: 'todos', nome: 'Todos' }, { id: 'baixo', nome: 'Acabando' }, { id: 'zero', nome: 'Sem estoque' }].map((f) => ({ ...f, cls: f.id === s.filtro ? 'chip on' : 'chip', pressed: f.id === s.filtro ? 'true' : 'false', pick: () => this.setState({ filtro: f.id }) })),
+      produtos: lista.map((p) => ({ ...p, custo: brl(p.custo), preco: brl(p.preco), margem: Math.round((1 - p.custo / p.preco) * 100) + '%', st: nomeSt[situ(p)], stCls: 'st ' + situ(p) })),
+      movs,
+      modal: s.modal,
+      abrirEntrada: () => this.setState({ modal: true }),
+      fechar: () => this.setState({ modal: false }),
+      lancar: () => this.setState({ modal: false, entrou: true }),
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+@@title Sellergy — início da loja
+@@nav Inicio.dc.html
+@@loja 1
+@@h 1040
+@@css
+.pb{height:8px;border-radius:99px;background:#EEF0EC;overflow:hidden}.pb div{height:100%;background:#136F4D;border-radius:99px}
+.w0{width:4%}.w1{width:20%}.w2{width:40%}.w3{width:60%}.w4{width:80%}.w5{width:100%}
+.passo{display:flex;gap:14px;align-items:flex-start;padding:16px 18px;border-top:1px solid #EEF0EC}
+.bol{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:13px;flex-shrink:0;background:#EEF0EC;color:#5B616B}
+.bol.ok{background:#136F4D;color:#fff}
+@@main
+<div style="padding: 12px 16px; border-radius: 12px; background: #FFFBF2; border: 1px solid #F2C46B; font-size: 14px" class="row"><span class="grow">Teste grátis do plano Profissional: faltam <strong>13 dias</strong>.</span><a href="Planos.dc.html" class="bs">Ver planos</a></div>
+<div class="row"><div class="grow"><h1 class="t1">Boa tarde, Rafaela</h1><p class="mut" style="margin: 4px 0 0">Ária Moda Feminina · loja · Rua Augusta, 1.208</p></div></div>
+
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section class="card" style="flex: 999 1 560px; min-width: 0; overflow: hidden">
+<div style="padding: 18px">
+<div class="row"><h2 class="t2 grow">Deixe a loja pronta pra vender</h2><span class="sm mut">{{feitos}} de 5</span></div>
+<div class="pb" style="margin-top: 10px"><div class="{{w}}"></div></div>
+</div>
+<sc-for list="{{passos}}" as="p" hint-placeholder-count="5">
+<div class="passo">
+<span class="{{p.bol}}">{{p.n}}</span>
+<div class="grow" style="min-width: 0">
+<strong>{{p.t}}</strong>
+<p class="sm mut" style="margin: 3px 0 0; line-height: 1.5">{{p.d}}</p>
+</div>
+<sc-if value="{{p.aberto}}" hint-placeholder-val="{{ true }}"><a href="{{p.link}}" class="bs">{{p.btn}}</a><button type="button" class="bg" onClick="{{p.marcar}}">Já fiz</button></sc-if>
+</div>
+</sc-for>
+</section>
+
+<aside style="flex: 1 1 320px; display: flex; flex-direction: column; gap: 14px">
+<div class="card" style="padding: 18px">
+<h2 class="t2">Hoje</h2>
+<div style="margin-top: 12px; display: grid; gap: 10px">
+<div class="row"><span class="grow mut sm">Vendeu</span><strong class="n">R$ 0,00</strong></div>
+<div class="row"><span class="grow mut sm">A receber</span><strong class="n">R$ 0,00</strong></div>
+<div class="row"><span class="grow mut sm">Saldo da conta</span><strong class="n">R$ 0,00</strong></div>
+</div>
+<p class="ajuda" style="margin: 12px 0 0">Quando vender, esses 3 números aparecem aqui. O resto fica em Relatórios.</p>
+</div>
+<div class="card" style="padding: 18px; font-size: 14px; line-height: 1.6">
+<strong>Não precisa abrir caixa</strong>
+<p class="mut" style="margin: 4px 0 0">O caixa abre sozinho na primeira venda do dia, com o troco que você deixou no fechamento.</p>
+</div>
+<div class="card" style="padding: 18px; font-size: 14px; line-height: 1.6">
+<strong>Quer ajuda pra começar?</strong>
+<p class="mut" style="margin: 4px 0 0">Chame no WhatsApp. Alguém da Sellergy cadastra os produtos com você em 20 minutos, sem custo.</p>
+<button type="button" class="bs" style="width: 100%; margin-top: 10px">Falar com a Sellergy</button>
+</div>
+</aside>
+</div>
+@@script
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { ok: [true] }; }
+  renderVals() {
+    const s = this.state;
+    const P = [
+      { t: 'Cadastrar os produtos', d: '186 produtos importados da planilha, com tamanho e cor.', link: 'Importar.dc.html', btn: 'Importar planilha' },
+      { t: 'Ativar o Pix e o cartão', d: 'Conta de recebimento da Sellergy. Sem maquininha, o pagamento confirma sozinho.', link: 'Recebimentos.dc.html', btn: 'Ativar' },
+      { t: 'Fazer a primeira venda', d: 'Leia o código de barras ou toque no produto. 3 toques até o Pix aparecer na tela.', link: 'PDV.dc.html', btn: 'Abrir vendas' },
+      { t: 'Ligar o catálogo online', d: 'Link pro Instagram. A cliente monta a sacola e o pedido cai aqui em Pedidos.', link: 'Catalogo.dc.html', btn: 'Ver catálogo' },
+      { t: 'Conectar o WhatsApp', d: 'Pra mandar link de pagamento, aviso de pedido e campanha de novidade.', link: 'ConectarWhatsApp.dc.html', btn: 'Conectar' },
+    ];
+    const feitos = P.filter((p, i) => s.ok[i]).length;
+    return {
+      feitos, w: 'w' + feitos,
+      passos: P.map((p, i) => ({ ...p, n: s.ok[i] ? '✓' : i + 1, bol: 'bol' + (s.ok[i] ? ' ok' : ''), aberto: !s.ok[i], d: s.ok[i] && i === 0 ? p.d : (i === 0 ? p.d : p.d),
+        marcar: () => { const a = [...s.ok]; a[i] = true; this.setState({ ok: a }); } })),
+    };
+  }
+}

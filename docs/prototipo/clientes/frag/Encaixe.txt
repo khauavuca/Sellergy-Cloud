@@ -1,0 +1,86 @@
+@@title Sellergy — fila de encaixe
+@@nav Agenda.dc.html
+@@h 1040
+@@main
+<div class="row">
+<a href="Agenda.dc.html" class="bg"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"></path></svg>Agenda</a>
+<h1 class="t1 grow">Fila de encaixe</h1>
+<button type="button" class="bs"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Pôr cliente na fila</button>
+</div>
+
+<sc-if value="{{alerta}}" hint-placeholder-val="{{ true }}">
+<div class="card" style="padding: 18px 20px; border-color: #F2C46B; background: #FFFBF2; display: flex; gap: 16px; align-items: center; flex-wrap: wrap">
+<span style="width: 44px; height: 44px; border-radius: 12px; background: #FDF0D9; color: #7A4A00; display: grid; place-items: center"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2"></rect><path d="M3 9.5h18M8 2.5v4M16 2.5v4"></path></svg></span>
+<div class="grow" style="min-width: 260px"><strong>Vagou hoje às 16:00 com Carla (1 h)</strong><p class="sm mut" style="margin: 2px 0 0">Beatriz Nogueira tocou em Remarcar no lembrete de 2 h, às 14:02. 3 pessoas da fila servem pra esse horário.</p></div>
+<button type="button" class="bp" onClick="{{oferecer}}">Oferecer pra fila</button>
+</div>
+</sc-if>
+
+<sc-if value="{{enviando}}" hint-placeholder-val="{{ false }}">
+<div class="card" style="padding: 18px 20px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap">
+<span class="pill wait">Esperando resposta</span>
+<div class="grow"><strong>Oferta enviada pra 3 pessoas às 14:05</strong><p class="sm mut" style="margin: 2px 0 0">Quem tocar em "Quero" primeiro fica com o horário. A oferta vence em 30 min.</p></div>
+<button type="button" class="bs" onClick="{{aceitar}}">Simular: Renata aceitou</button>
+</div>
+</sc-if>
+
+<sc-if value="{{preenchido}}" hint-placeholder-val="{{ false }}">
+<div class="card" style="padding: 18px 20px; border-color: #A9D8BD; background: #F3FAF6; display: flex; gap: 16px; align-items: center; flex-wrap: wrap">
+<span class="pill ok">Horário preenchido</span>
+<div class="grow"><strong>Renata Campos ficou com 16:00, peeling com Carla</strong><p class="sm mut" style="margin: 2px 0 0">Aceitou às 14:09 e já está confirmada na agenda. As outras duas receberam "esse horário já foi preenchido, você continua na fila".</p></div>
+<a href="Agenda.dc.html" class="bp">Ver na agenda</a>
+<button type="button" class="bg" onClick="{{reiniciar}}">Ver de novo</button>
+</div>
+</sc-if>
+
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section class="card" style="flex: 999 1 560px; min-width: 0; overflow: hidden">
+<div class="row" style="padding: 16px 18px"><h2 class="t2 grow">Na fila ({{total}})</h2><span class="sm mut">Ordem: quem entrou primeiro</span></div>
+<sc-for list="{{fila}}" as="f" hint-placeholder-count="6">
+<div class="li"><span class="av">{{f.ini}}</span><div class="grow" style="min-width: 0"><strong>{{f.nome}}</strong><span class="sm mut" style="display: block">{{f.quer}}</span></div><span class="sm mut" style="min-width: 150px">{{f.quando}}</span><span class="{{f.cls}}">{{f.st}}</span></div>
+</sc-for>
+</section>
+<aside class="card" style="flex: 1 1 300px; padding: 20px; box-sizing: border-box">
+<h2 class="t2">Como a fila funciona</h2>
+<ol style="margin: 12px 0 0; padding-left: 18px; font-size: 14px; color: #3D434B; line-height: 1.7">
+<li>Cliente pede um horário que está cheio, pela recepção ou pelo link</li>
+<li>Entra na fila com o serviço e os dias que pode</li>
+<li>Quando alguém remarca ou cancela, o sistema avisa você e acha quem serve</li>
+<li>Um toque manda a oferta no WhatsApp; o primeiro que aceitar fica</li>
+</ol>
+<div class="row" style="margin-top: 16px; padding-top: 14px; border-top: 1px solid #EEF0EC"><div class="grow"><strong class="sm">Oferecer sozinho, sem me perguntar</strong><p class="ajuda" style="margin: 2px 0 0">Só para vagas com mais de 2 h de antecedência</p></div><button type="button" class="{{swAuto}}" onClick="{{toggleAuto}}" aria-label="Oferta automática"></button></div>
+<div style="margin-top: 16px; padding: 12px; border-radius: 12px; background: #F6F7F5; font-size: 13px; line-height: 1.5"><strong>Este mês</strong><br>9 horários vagos, 7 preenchidos pela fila. R$ 1.430,00 que seriam perdidos.</div>
+<a href="EncaixeWhats.dc.html" class="bs" style="margin-top: 14px; width: 100%">Ver a oferta no celular da cliente</a>
+</aside>
+</div>
+@@script
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { t: 'alerta', auto: false }; }
+  renderVals() {
+    const t = this.state.t;
+    const serve = t === 'alerta' ? ['pill info', 'Serve pra 16:00'] : t === 'enviando' ? ['pill wait', 'Oferta enviada'] : null;
+    const fila = [
+      { ini: 'RC', nome: 'Renata Campos', quer: 'Peeling químico · Carla', quando: 'Hoje ou amanhã, à tarde', s: 1 },
+      { ini: 'LM', nome: 'Larissa Mendes', quer: 'Peeling químico · qualquer profissional', quando: 'Qualquer dia', s: 1 },
+      { ini: 'DS', nome: 'Daniela Souza', quer: 'Peeling químico · Carla', quando: 'Ter a qui, depois das 14h', s: 1 },
+      { ini: 'TV', nome: 'Thiago Vieira', quer: 'Massagem relaxante · Bruno', quando: 'Sábado de manhã', s: 0 },
+      { ini: 'GA', nome: 'Gabriela Alves', quer: 'Limpeza de pele · Ana', quando: 'Sexta, 27/11', s: 0 },
+      { ini: 'MF', nome: 'Mônica Freitas', quer: 'Drenagem linfática · Bruno', quando: 'Semana que vem', s: 0 },
+    ];
+    const lista = fila.filter((f, i) => !(t === 'feito' && i === 0)).map((f, i) => {
+      let cls = 'pill neu', st = 'Aguardando vaga';
+      if (f.s && serve) { cls = serve[0]; st = serve[1]; }
+      if (f.s && t === 'feito') { cls = 'pill neu'; st = 'Avisada: preenchido'; }
+      return { ...f, cls, st };
+    });
+    return {
+      alerta: t === 'alerta', enviando: t === 'enviando', preenchido: t === 'feito',
+      fila: lista, total: lista.length,
+      swAuto: 'sw' + (this.state.auto ? ' on' : ''),
+      toggleAuto: () => this.setState({ auto: !this.state.auto }),
+      oferecer: () => this.setState({ t: 'enviando' }),
+      aceitar: () => this.setState({ t: 'feito' }),
+      reiniciar: () => this.setState({ t: 'alerta' }),
+    };
+  }
+}

@@ -1,0 +1,114 @@
+@@title Sellergy — conectar WhatsApp
+@@nav Configuracoes.dc.html
+@@h 1040
+@@css
+.fb{background:#1877F2;color:#fff;border:1px solid #1877F2}
+.qrb{width:200px;height:200px;margin:0 auto;border-radius:12px;background:repeating-conic-gradient(#15171A 0 25%,#fff 0 50%) 0 0/22px 22px;border:10px solid #fff;outline:1px solid #E3E5E8}
+@@main
+<div class="row">
+<a href="Configuracoes.dc.html" class="bg"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"></path></svg>Configurações</a>
+<h1 class="t1 grow">Conectar o WhatsApp</h1>
+</div>
+
+<sc-if value="{{escolha}}" hint-placeholder-val="{{ true }}">
+<p class="mut" style="margin: 0; max-width: 720px; line-height: 1.5">São dois jeitos. O oficial é o que a gente recomenda: lembretes, campanhas e botões funcionam e o número não corre risco de bloqueio.</p>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 16px">
+<div class="card" style="padding: 22px; border-color: #136F4D; box-shadow: 0 0 0 1px #136F4D inset">
+<div class="row"><h2 class="t2 grow">WhatsApp oficial</h2><span class="pill ok">Recomendado</span></div>
+<ul style="margin: 12px 0 0; padding-left: 18px; font-size: 14px; line-height: 1.8; color: #3D434B">
+<li>Lembretes com botões Confirmar e Remarcar</li>
+<li>Campanhas e recompra sem risco de bloqueio</li>
+<li>Selo de conta comercial e nome da clínica</li>
+<li>Funciona com o celular desligado</li>
+</ul>
+<p class="sm mut" style="margin: 12px 0 0">Precisa de uma conta no Facebook. Leva uns 5 minutos.</p>
+<button type="button" class="bp" style="width: 100%; margin-top: 16px" onClick="{{irOficial}}">Conectar o oficial</button>
+</div>
+<div class="card" style="padding: 22px">
+<div class="row"><h2 class="t2 grow">Pelo QR Code</h2><span class="pill neu">Só conversas</span></div>
+<ul style="margin: 12px 0 0; padding-left: 18px; font-size: 14px; line-height: 1.8; color: #3D434B">
+<li>Conecta em 1 minuto, igual WhatsApp Web</li>
+<li>Bom pra responder clientes pelo Sellergy</li>
+<li>Lembretes saem sem botões, só texto</li>
+<li><strong>Campanhas ficam bloqueadas</strong>: o WhatsApp pode banir o número</li>
+</ul>
+<p class="sm mut" style="margin: 12px 0 0">Limite de 200 mensagens automáticas por dia.</p>
+<button type="button" class="bs" style="width: 100%; margin-top: 16px" onClick="{{irQr}}">Usar QR Code</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{oficial}}" hint-placeholder-val="{{ false }}">
+<div class="card" style="padding: 24px; display: flex; gap: 28px; flex-wrap: wrap">
+<div style="flex: 999 1 460px; min-width: 0">
+<div class="steps"><sc-for list="{{passos}}" as="p" hint-placeholder-count="4"><span class="{{p.cls}}"><b>{{p.n}}</b>{{p.t}}</span></sc-for></div>
+<sc-if value="{{o1}}" hint-placeholder-val="{{ true }}">
+<h2 class="t2" style="margin-top: 22px">Entre com o Facebook da clínica</h2>
+<p class="sm mut" style="margin: 6px 0 0; line-height: 1.5">Abre uma janela do Facebook. Lá você escolhe (ou cria) o Gerenciador de Negócios e aceita. Nada é postado no seu perfil.</p>
+<button type="button" class="bp fb" style="margin-top: 16px" onClick="{{prox}}">Continuar com o Facebook</button>
+</sc-if>
+<sc-if value="{{o2}}" hint-placeholder-val="{{ false }}">
+<h2 class="t2" style="margin-top: 22px">Qual número vai usar?</h2>
+<div class="f" style="margin-top: 14px; max-width: 360px"><label for="tn">Número da clínica</label><input id="tn" type="text" value="(11) 98765-4321"></div>
+<p class="sm" style="margin: 12px 0 0; padding: 12px; border-radius: 10px; background: #FDF0D9; color: #7A4A00; line-height: 1.5">Esse número hoje está no app WhatsApp Business do celular. Ao conectar, o histórico de conversas fica no celular e as novas passam a chegar no Sellergy (e no app, se você ativar a coexistência).</p>
+<div class="row" style="margin-top: 12px"><span class="grow sm"><strong>Manter também no app do celular</strong> (coexistência)</span><button type="button" class="sw on" aria-label="Coexistência"></button></div>
+</sc-if>
+<sc-if value="{{o3}}" hint-placeholder-val="{{ false }}">
+<h2 class="t2" style="margin-top: 22px">Digite o código que chegou por SMS</h2>
+<div class="row" style="margin-top: 14px; gap: 8px"><sc-for list="{{digitos}}" as="d" hint-placeholder-count="6"><input aria-label="Dígito" value="{{d}}" style="width: 48px; height: 56px; text-align: center; font: inherit; font-size: 22px; font-weight: 700; border: 1px solid #CDD1D6; border-radius: 10px"></sc-for></div>
+<p class="sm mut" style="margin: 10px 0 0">Enviado pro (11) 98765-4321. <a href="#">Ligar em vez de SMS</a></p>
+</sc-if>
+<sc-if value="{{o4}}" hint-placeholder-val="{{ false }}">
+<div style="margin-top: 22px; display: flex; gap: 14px; align-items: flex-start">
+<span class="ok-ic" style="flex-shrink: 0"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width: 28px; height: 28px; stroke-width: 2.2"><path d="m5 12.5 4.5 4.5L19 7.5"></path></svg></span>
+<div><h2 style="margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 22px">WhatsApp oficial conectado</h2>
+<p class="mut" style="margin: 6px 0 0; line-height: 1.5">Clínica Lumi Estética · (11) 98765-4321. Já criamos e mandamos pra aprovação os modelos de lembrete, confirmação, sinal e encaixe. Costumam ser aprovados em minutos.</p></div>
+</div>
+<div style="margin-top: 16px; border: 1px solid #E3E5E8; border-radius: 12px; overflow: hidden">
+<sc-for list="{{modelos}}" as="m" hint-placeholder-count="4"><div class="row" style="padding: 10px 14px; border-top: 1px solid #EEF0EC; font-size: 14px"><span class="grow">{{m.t}}</span><span class="{{m.cls}}">{{m.st}}</span></div></sc-for>
+</div>
+<div class="row" style="margin-top: 16px"><a href="Inicio.dc.html" class="bp">Voltar pro início</a><a href="NovaCampanha.dc.html" class="bs">Criar campanha</a></div>
+</sc-if>
+<sc-if value="{{navOf}}" hint-placeholder-val="{{ false }}"><div class="row" style="margin-top: 22px"><button type="button" class="bg" onClick="{{voltar}}">Voltar</button><button type="button" class="bp" onClick="{{prox}}">Continuar</button></div></sc-if>
+</div>
+<aside style="flex: 1 1 260px; background: #F6F7F5; border-radius: 14px; padding: 18px; font-size: 14px; line-height: 1.6; align-self: flex-start">
+<strong>Quanto custa</strong>
+<p style="margin: 6px 0 0; color: #3D434B">Conversa que a cliente começa: grátis. Lembrete e confirmação: cerca de R$ 0,04 cada. Campanha: cerca de R$ 0,35 cada.</p>
+<p style="margin: 10px 0 0; color: #3D434B">Seu plano já inclui 1.000 lembretes e 500 mensagens de campanha por mês.</p>
+</aside>
+</div>
+</sc-if>
+
+<sc-if value="{{qr}}" hint-placeholder-val="{{ false }}">
+<div class="card" style="padding: 24px; display: flex; gap: 32px; flex-wrap: wrap; align-items: center">
+<div style="flex: 0 0 auto"><div class="qrb" role="img" aria-label="QR Code para conectar"></div></div>
+<div style="flex: 1 1 320px">
+<h2 class="t2">Escaneie com o celular da clínica</h2>
+<ol style="margin: 12px 0 0; padding-left: 18px; font-size: 14px; line-height: 1.9; color: #3D434B"><li>Abra o WhatsApp</li><li>Toque em <strong>Aparelhos conectados</strong></li><li>Toque em <strong>Conectar um aparelho</strong> e aponte pra tela</li></ol>
+<p class="sm" style="margin: 14px 0 0; padding: 10px 12px; border-radius: 10px; background: #FBE4E1; color: #8F1D12">Com QR Code as campanhas ficam desligadas. Dá pra trocar pro oficial quando quiser.</p>
+<div class="row" style="margin-top: 14px"><button type="button" class="bs" onClick="{{voltarEscolha}}">Prefiro o oficial</button><a href="Inicio.dc.html" class="bg">Já escaneei</a></div>
+</div>
+</div>
+</sc-if>
+@@script
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { modo: 'escolha', e: 1 }; }
+  renderVals() {
+    const s = this.state; const set = (o) => this.setState(o);
+    const nomes = ['Facebook', 'Número', 'Código', 'Pronto'];
+    return {
+      escolha: s.modo === 'escolha', oficial: s.modo === 'oficial', qr: s.modo === 'qr',
+      o1: s.e === 1, o2: s.e === 2, o3: s.e === 3, o4: s.e === 4, navOf: s.e === 2 || s.e === 3,
+      passos: nomes.map((t, i) => ({ t, n: i + 1 < s.e ? '✓' : i + 1, cls: 'st' + (i + 1 === s.e ? ' on' : i + 1 < s.e ? ' done' : '') })),
+      digitos: ['4', '8', '2', '0', '1', '7'],
+      modelos: [
+        { t: 'Lembrete 24 h com Confirmar e Remarcar', st: 'Aprovado', cls: 'pill ok' },
+        { t: 'Lembrete 2 h', st: 'Aprovado', cls: 'pill ok' },
+        { t: 'Cobrança de sinal por Pix', st: 'Em análise', cls: 'pill wait' },
+        { t: 'Oferta de encaixe', st: 'Em análise', cls: 'pill wait' },
+      ],
+      irOficial: () => set({ modo: 'oficial', e: 1 }), irQr: () => set({ modo: 'qr' }), voltarEscolha: () => set({ modo: 'oficial', e: 1 }),
+      prox: () => set({ e: Math.min(4, s.e + 1) }), voltar: () => set({ e: Math.max(1, s.e - 1) }),
+    };
+  }
+}

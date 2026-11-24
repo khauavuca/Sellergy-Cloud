@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Agendar horário online</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#136F4D}a:hover{color:#0C4F37}
+.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.bp,.bs{display:flex;align-items:center;justify-content:center;gap:8px;min-height:52px;padding:0 20px;border-radius:12px;font-weight:600;font-size:16px;text-decoration:none;cursor:pointer;font-family:inherit;box-sizing:border-box;width:100%}
+.bp{background:#136F4D;color:#fff;border:1px solid #136F4D}.bp:hover{background:#0F5C40;color:#fff}
+.bp:disabled{background:#C7CCD1;border-color:#C7CCD1;color:#fff;cursor:default}
+.bs{background:#fff;color:#15171A;border:1px solid #D5D8DC}.bs:hover{background:#F1F2EF;color:#15171A}
+.opt{width:100%;display:flex;align-items:center;gap:12px;text-align:left;padding:14px 16px;border-radius:14px;border:1px solid #DADDD8;background:#fff;font:inherit;color:#15171A;cursor:pointer;min-height:64px}
+.opt.on{border:2px solid #136F4D;background:#EEF6F1;padding:13px 15px}
+.dia{flex:0 0 62px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 0;border-radius:12px;border:1px solid #DADDD8;background:#fff;font:inherit;color:#15171A;cursor:pointer}
+.dia.on{background:#15171A;border-color:#15171A;color:#fff}
+.hora{min-height:46px;border-radius:10px;border:1px solid #DADDD8;background:#fff;font:inherit;font-weight:600;font-size:15px;color:#15171A;cursor:pointer;font-variant-numeric:tabular-nums}
+.hora.on{background:#136F4D;border-color:#136F4D;color:#fff}
+.campo{display:flex;flex-direction:column;gap:6px}
+.campo label{font-size:14px;font-weight:600}
+.campo input{font:inherit;font-size:16px;min-height:50px;padding:0 14px;border:1px solid #CDD1D6;border-radius:12px;background:#fff;color:#15171A;box-sizing:border-box;width:100%}
+.voltar{width:44px;height:44px;border:0;background:transparent;border-radius:10px;display:grid;place-items:center;cursor:pointer;color:#15171A}
+.voltar:hover{background:#ECEEEA}
+.pg{height:4px;flex:1;border-radius:4px;background:#DADDD8}.pg.on{background:#136F4D}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; font-family: Inter, system-ui, sans-serif; color: #15171A; background: #F6F7F5; display: flex; flex-direction: column; overflow: hidden">
+
+<header style="padding: 16px 16px 12px; background: #fff; border-bottom: 1px solid #E3E5E8">
+<div style="display: flex; align-items: center; gap: 8px">
+<sc-if value="{{podeVoltar}}" hint-placeholder-val="{{ false }}"><button type="button" class="voltar" aria-label="Voltar" onClick="{{voltar}}"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"></path></svg></button></sc-if>
+<span style="width: 40px; height: 40px; border-radius: 12px; background: #F2C46B; color: #4A3000; display: grid; place-items: center; font-weight: 700; font-size: 14px; flex-shrink: 0">CL</span>
+<span style="line-height: 1.3; min-width: 0"><span style="display: block; font-weight: 600">Clínica Lumi Estética</span><span style="font-size: 13px; color: #5B616B">Agendamento online</span></span>
+</div>
+<sc-if value="{{mostraProgresso}}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; gap: 6px; margin-top: 14px" aria-hidden="true">
+<span class="{{pg1}}"></span><span class="{{pg2}}"></span><span class="{{pg3}}"></span><span class="{{pg4}}"></span>
+</div>
+</sc-if>
+</header>
+
+<div style="flex: 1; overflow-y: auto; padding: 20px 16px">
+
+<sc-if value="{{e1}}" hint-placeholder-val="{{ true }}">
+<h1 style="margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 24px; letter-spacing: -0.01em">O que você quer fazer?</h1>
+<div style="display: flex; flex-direction: column; gap: 10px; margin-top: 16px">
+<sc-for list="{{servicos}}" as="s" hint-placeholder-count="6">
+<button type="button" class="{{s.cls}}" onClick="{{s.pick}}" aria-pressed="{{s.pressed}}">
+<span style="flex: 1"><span style="display: block; font-weight: 600; font-size: 16px">{{s.nome}}</span><span style="font-size: 14px; color: #5B616B">{{s.dur}}</span></span>
+<span style="font-weight: 600; font-variant-numeric: tabular-nums">{{s.preco}}</span>
+</button>
+</sc-for>
+</div>
+</sc-if>
+
+<sc-if value="{{e2}}" hint-placeholder-val="{{ false }}">
+<h1 style="margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 24px; letter-spacing: -0.01em">Com quem?</h1>
+<p style="margin: 6px 0 0; color: #5B616B; font-size: 15px">{{servNome}}</p>
+<div style="display: flex; flex-direction: column; gap: 10px; margin-top: 16px">
+<sc-for list="{{profs}}" as="p" hint-placeholder-count="2">
+<button type="button" class="{{p.cls}}" onClick="{{p.pick}}" aria-pressed="{{p.pressed}}">
+<span style="width: 44px; height: 44px; border-radius: 50%; background: #EEF0EC; display: grid; place-items: center; font-weight: 700; font-size: 14px; flex-shrink: 0">{{p.ini}}</span>
+<span style="flex: 1"><span style="display: block; font-weight: 600; font-size: 16px">{{p.nome}}</span><span style="font-size: 14px; color: #5B616B">{{p.cargo}}</span></span>
+</button>
+</sc-for>
+</div>
+</sc-if>
+
+<sc-if value="{{e3}}" hint-placeholder-val="{{ false }}">
+<h1 style="margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 24px; letter-spacing: -0.01em">Escolha dia e horário</h1>
+<p style="margin: 6px 0 0; color: #5B616B; font-size: 15px">{{servNome}} · {{profNome}}</p>
+<div style="display: flex; gap: 8px; overflow-x: auto; margin: 16px -16px 0; padding: 0 16px 4px" role="group" aria-label="Dia">
+<sc-for list="{{dias}}" as="d" hint-placeholder-count="6">
+<button type="button" class="{{d.cls}}" onClick="{{d.pick}}" aria-pressed="{{d.pressed}}"><span style="font-size: 12px; font-weight: 600; text-transform: uppercase">{{d.sem}}</span><span style="font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums">{{d.n}}</span><span style="font-size: 11px">{{d.livres}}</span></button>
+</sc-for>
+</div>
+<p style="margin: 20px 0 10px; font-size: 14px; font-weight: 600">{{diaLongo}}</p>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px" role="group" aria-label="Horário">
+<sc-for list="{{horas}}" as="h" hint-placeholder-count="8">
+<button type="button" class="{{h.cls}}" onClick="{{h.pick}}" aria-pressed="{{h.pressed}}">{{h.h}}</button>
+</sc-for>
+</div>
+<p style="margin: 14px 0 0; font-size: 13px; color: #5B616B; line-height: 1.45">Só aparecem horários livres de verdade, já contando o tempo do serviço.</p>
+</sc-if>
+
+<sc-if value="{{e4}}" hint-placeholder-val="{{ false }}">
+<h1 style="margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 24px; letter-spacing: -0.01em">Seus dados</h1>
+<div style="margin-top: 14px; background: #fff; border: 1px solid #E3E5E8; border-radius: 14px; padding: 14px 16px; font-size: 15px; line-height: 1.5">
+<strong>{{servNome}}</strong><br>{{diaLongo}} às {{horaSel}} · {{profNome}}
+</div>
+<div class="campo" style="margin-top: 18px"><label for="nm">Seu nome</label><input id="nm" type="text" autocomplete="name" value="Juliana Costa"></div>
+<div class="campo" style="margin-top: 14px"><label for="tl">WhatsApp com DDD</label><input id="tl" type="tel" autocomplete="tel" value="(11) 98877-5544"></div>
+<p style="margin: 14px 0 0; font-size: 13px; color: #5B616B; line-height: 1.5; display: flex; gap: 8px"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="color: #136F4D; width: 16px; height: 16px; margin-top: 2px"><path d="M4 5h16v11H9l-5 4z"></path></svg>A gente manda a confirmação e um lembrete por este número. Sem cadastro, sem senha.</p>
+</sc-if>
+
+<sc-if value="{{e5}}" hint-placeholder-val="{{ false }}">
+<div style="text-align: center; padding-top: 24px">
+<span style="width: 72px; height: 72px; border-radius: 50%; background: #E3F4EA; color: #136F4D; display: inline-grid; place-items: center"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width: 34px; height: 34px; stroke-width: 2.2"><path d="m5 12.5 4.5 4.5L19 7.5"></path></svg></span>
+<h1 style="margin: 18px 0 0; font-family: 'Space Grotesk', sans-serif; font-size: 28px; letter-spacing: -0.02em">Horário marcado</h1>
+<p style="margin: 8px 0 0; color: #4A5059; font-size: 16px">Até lá, Juliana!</p>
+</div>
+<div style="margin-top: 24px; background: #fff; border: 1px solid #E3E5E8; border-radius: 16px; padding: 18px">
+<dl style="margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 10px 16px; font-size: 15px">
+<dt style="color: #5B616B">Quando</dt><dd style="margin: 0; font-weight: 600">{{diaLongo}}, {{horaSel}}</dd>
+<dt style="color: #5B616B">Serviço</dt><dd style="margin: 0; font-weight: 600">{{servNome}}</dd>
+<dt style="color: #5B616B">Com</dt><dd style="margin: 0; font-weight: 600">{{profNome}}</dd>
+<dt style="color: #5B616B">Valor</dt><dd style="margin: 0; font-weight: 600">{{servPreco}}, pago na clínica</dd>
+</dl>
+</div>
+<div style="margin-top: 14px; display: flex; gap: 10px; padding: 14px; border-radius: 14px; background: #EEF0EC; font-size: 14px; line-height: 1.5; color: #3D434B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="color: #136F4D; margin-top: 2px"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"></path><path d="M10 21h4"></path></svg><span>Um dia antes você recebe um lembrete no WhatsApp com os botões <strong>Confirmar</strong> e <strong>Remarcar</strong>.</span></div>
+</sc-if>
+</div>
+
+<div style="padding: 12px 16px 16px; background: #fff; border-top: 1px solid #E3E5E8; display: flex; flex-direction: column; gap: 8px">
+<sc-if value="{{temResumo}}" hint-placeholder-val="{{ false }}"><p style="margin: 0; font-size: 13px; color: #5B616B; text-align: center">{{resumo}}</p></sc-if>
+<sc-if value="{{e5}}" hint-placeholder-val="{{ false }}">
+<a href="#" class="bp">Salvar na agenda do celular</a>
+<button type="button" class="bs" onClick="{{reiniciar}}">Marcar outro horário</button>
+</sc-if>
+<sc-if value="{{naoE5}}" hint-placeholder-val="{{ true }}"><button type="button" class="bp" disabled="{{bloqueado}}" onClick="{{avancar}}">{{botao}}</button></sc-if>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { e: 1, serv: null, prof: null, dia: 0, hora: null };
+  }
+  renderVals() {
+    const s = this.state;
+    const SERV = [
+      { id: 'limpeza', nome: 'Limpeza de pele', dur: '1 h', preco: 'R$ 180,00', profs: ['ana'] },
+      { id: 'peeling', nome: 'Peeling químico', dur: '1 h', preco: 'R$ 350,00', profs: ['carla'] },
+      { id: 'drenagem', nome: 'Drenagem linfática', dur: '1 h', preco: 'R$ 150,00', profs: ['bruno'] },
+      { id: 'massagem', nome: 'Massagem relaxante', dur: '1 h', preco: 'R$ 160,00', profs: ['bruno'] },
+      { id: 'revit', nome: 'Revitalização facial', dur: '1 h', preco: 'R$ 220,00', profs: ['ana', 'carla'] },
+      { id: 'avaliacao', nome: 'Avaliação', dur: '30 min', preco: 'Grátis', profs: ['ana', 'carla'] },
+    ];
+    const PROF = {
+      ana: { id: 'ana', nome: 'Ana Ribeiro', ini: 'AR', cargo: 'Esteticista' },
+      bruno: { id: 'bruno', nome: 'Bruno Teles', ini: 'BT', cargo: 'Massoterapeuta' },
+      carla: { id: 'carla', nome: 'Carla Nunes', ini: 'CN', cargo: 'Biomédica' },
+      todos: { id: 'todos', nome: 'Qualquer profissional', ini: '+', cargo: 'Mais horários livres' },
+    };
+    const DIAS = [
+      { sem: 'Qua', n: 25, longo: 'Quarta, 25 de novembro', horas: ['09:00', '10:00', '11:30', '14:00', '15:30', '16:30'] },
+      { sem: 'Qui', n: 26, longo: 'Quinta, 26 de novembro', horas: ['08:30', '09:30', '13:00', '14:30', '17:00'] },
+      { sem: 'Sex', n: 27, longo: 'Sexta, 27 de novembro', horas: ['10:00', '11:00', '15:00'] },
+      { sem: 'Sáb', n: 28, longo: 'Sábado, 28 de novembro', horas: ['08:00', '09:00', '10:00', '11:00'] },
+      { sem: 'Seg', n: 30, longo: 'Segunda, 30 de novembro', horas: ['09:00', '10:30', '11:30', '13:30', '14:30', '15:30', '16:30', '17:00'] },
+      { sem: 'Ter', n: 1, longo: 'Terça, 1º de dezembro', horas: ['09:00', '14:30', '16:00'] },
+    ];
+    const serv = SERV.find((x) => x.id === s.serv);
+    const profIds = serv ? (serv.profs.length > 1 ? serv.profs.concat(['todos']) : serv.profs) : [];
+    const prof = s.prof ? PROF[s.prof] : null;
+    const dia = DIAS[s.dia];
+    const pg = (n) => (s.e >= n ? 'pg on' : 'pg');
+    const bloqueado = (s.e === 1 && !s.serv) || (s.e === 2 && !s.prof) || (s.e === 3 && !s.hora);
+    const botoes = { 1: 'Continuar', 2: 'Ver horários', 3: 'Continuar', 4: 'Confirmar agendamento' };
+    const resumo = s.e === 3 && s.hora ? dia.longo + ' às ' + s.hora : (s.e === 2 && serv ? serv.nome + ' · ' + serv.preco : '');
+    return {
+      e1: s.e === 1, e2: s.e === 2, e3: s.e === 3, e4: s.e === 4, e5: s.e === 5, naoE5: s.e !== 5,
+      mostraProgresso: s.e < 5,
+      podeVoltar: s.e > 1 && s.e < 5,
+      pg1: pg(1), pg2: pg(2), pg3: pg(3), pg4: pg(4),
+      servicos: SERV.map((x) => ({ ...x, cls: x.id === s.serv ? 'opt on' : 'opt', pressed: x.id === s.serv ? 'true' : 'false', pick: () => this.setState({ serv: x.id, prof: x.profs.length === 1 ? x.profs[0] : null, hora: null }) })),
+      profs: profIds.map((id) => ({ ...PROF[id], cls: id === s.prof ? 'opt on' : 'opt', pressed: id === s.prof ? 'true' : 'false', pick: () => this.setState({ prof: id, hora: null }) })),
+      dias: DIAS.map((d, i) => ({ ...d, livres: d.horas.length + ' livres', cls: i === s.dia ? 'dia on' : 'dia', pressed: i === s.dia ? 'true' : 'false', pick: () => this.setState({ dia: i, hora: null }) })),
+      horas: dia.horas.map((h) => ({ h, cls: h === s.hora ? 'hora on' : 'hora', pressed: h === s.hora ? 'true' : 'false', pick: () => this.setState({ hora: h }) })),
+      diaLongo: dia.longo,
+      horaSel: s.hora || '',
+      servNome: serv ? serv.nome : '',
+      servPreco: serv ? serv.preco : '',
+      profNome: prof ? (prof.id === 'todos' ? 'Ana Ribeiro' : prof.nome) : '',
+      temResumo: !!resumo,
+      resumo,
+      bloqueado,
+      botao: botoes[s.e] || '',
+      avancar: () => this.setState({ e: s.e === 1 && serv && serv.profs.length === 1 ? 3 : s.e + 1 }),
+      voltar: () => this.setState({ e: s.e === 3 && serv && serv.profs.length === 1 ? 1 : s.e - 1 }),
+      reiniciar: () => this.setState({ e: 1, serv: null, prof: null, dia: 0, hora: null }),
+    };
+  }
+}
+</script>
+</body>
+</html>

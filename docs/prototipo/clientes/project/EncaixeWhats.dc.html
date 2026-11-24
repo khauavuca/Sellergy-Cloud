@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Oferta de encaixe</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#136F4D}
+.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.bp,.bs,.bg{display:flex;align-items:center;justify-content:center;gap:8px;min-height:52px;padding:0 20px;border-radius:12px;font-weight:600;font-size:16px;text-decoration:none;cursor:pointer;font-family:inherit;box-sizing:border-box;width:100%}
+.bp{background:#136F4D;color:#fff;border:1px solid #136F4D}
+.bs{background:#fff;color:#15171A;border:1px solid #D5D8DC}
+.bg{background:transparent;color:#3D434B;border:0;min-height:44px;font-size:15px}
+.cd{background:#fff;border:1px solid #E3E5E8;border-radius:18px}
+.mut{color:#5B616B}.n{font-variant-numeric:tabular-nums}
+.pill{display:inline-flex;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px}
+.ok{background:#E3F4EA;color:#0E5C34}.wait{background:#FDF0D9;color:#7A4A00}.bad{background:#FBE4E1;color:#8F1D12}
+.f{display:flex;flex-direction:column;gap:6px}.f label{font-size:14px;font-weight:600}
+.f input{font:inherit;font-size:16px;min-height:50px;padding:0 14px;border:1px solid #CDD1D6;border-radius:12px;box-sizing:border-box;width:100%}
+.ok-ic{width:72px;height:72px;border-radius:50%;background:#E3F4EA;color:#136F4D;display:inline-grid;place-items:center}
+.h{margin:0;font-family:'Space Grotesk',sans-serif;font-size:26px;letter-spacing:-0.02em}
+.wa{background:#EFE7DD;flex:1;display:flex;flex-direction:column;gap:8px;padding:14px 12px;overflow:hidden}
+.msg{max-width:84%;background:#fff;border-radius:10px;padding:9px 11px;font-size:14px;line-height:1.45;box-shadow:0 1px 0 rgba(0,0,0,.08)}
+.msg.me{align-self:flex-end;background:#D9FDD3}
+.msg small{display:block;text-align:right;font-size:11px;color:#667}
+.wb{display:block;width:100%;min-height:44px;border:0;border-top:1px solid #E8E8E8;background:#fff;color:#0A7CFF;font:inherit;font-size:15px;font-weight:600;cursor:pointer}
+.tb{display:flex;border-top:1px solid #E3E5E8;background:#fff}
+.tb a{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 0 12px;font-size:11px;font-weight:600;color:#6B717A;text-decoration:none;min-height:44px;justify-content:center}
+.tb a.on{color:#136F4D}
+
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; font-family: Inter, system-ui, sans-serif; color: #15171A; background: #F6F7F5; display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden; position: relative">
+<div style="background: #075E54; color: #fff; padding: 14px 16px; display: flex; align-items: center; gap: 12px">
+<span style="width: 38px; height: 38px; border-radius: 50%; background: #F2C46B; color: #4A3000; display: grid; place-items: center; font-weight: 700; font-size: 14px">CL</span>
+<span style="line-height: 1.25"><strong style="display: block; font-size: 15px">Clínica Lumi Estética</strong><span style="font-size: 12px; opacity: .8">Conta comercial</span></span>
+</div>
+<div class="wa">
+<div class="msg">Oi, Renata! Você está na nossa fila pro <strong>peeling químico com a Carla</strong>.<br><br>Vagou um horário <strong>hoje às 16:00</strong>. Quer ficar com ele? Vale pra quem responder primeiro, até 14:35.<small>14:05</small>
+<sc-if value="{{pergunta}}" hint-placeholder-val="{{ true }}">
+<button type="button" class="wb" onClick="{{quero}}">Quero esse horário</button>
+<button type="button" class="wb" onClick="{{nao}}">Não posso, continuo na fila</button>
+</sc-if>
+</div>
+<sc-if value="{{aceitou}}" hint-placeholder-val="{{ false }}">
+<div class="msg me">Quero esse horário<small>14:09 ✓✓</small></div>
+<div class="msg">Pronto, é seu! <strong>Hoje, 16:00, peeling químico com Carla.</strong><br>Rua Harmonia, 412. Chegue 10 min antes, por favor.<small>14:09</small></div>
+</sc-if>
+<sc-if value="{{recusou}}" hint-placeholder-val="{{ false }}">
+<div class="msg me">Não posso, continuo na fila<small>14:08 ✓✓</small></div>
+<div class="msg">Tudo bem! Você continua na fila e avisamos no próximo horário que vagar.<small>14:08</small></div>
+</sc-if>
+<sc-if value="{{respondeu}}" hint-placeholder-val="{{ false }}">
+<button type="button" class="bg" onClick="{{reiniciar}}" style="margin-top: auto; background: rgba(255,255,255,.7); border-radius: 10px">Ver de novo</button>
+</sc-if>
+</div>
+<div style="background: #F0F0F0; padding: 10px 12px; display: flex; gap: 8px; align-items: center"><span style="flex: 1; min-height: 44px; border-radius: 22px; background: #fff; display: flex; align-items: center; padding: 0 16px; color: #8A9099; font-size: 15px">Mensagem</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { r: '' }; }
+  renderVals() {
+    const r = this.state.r;
+    return {
+      pergunta: !r, aceitou: r === 'sim', recusou: r === 'nao', respondeu: !!r,
+      quero: () => this.setState({ r: 'sim' }),
+      nao: () => this.setState({ r: 'nao' }),
+      reiniciar: () => this.setState({ r: '' }),
+    };
+  }
+}
+</script>
+</body>
+</html>

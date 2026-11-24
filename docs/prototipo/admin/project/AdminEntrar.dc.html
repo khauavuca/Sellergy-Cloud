@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Sellergy Admin — entrar</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#7FD1A8}
+.f{display:flex;flex-direction:column;gap:6px}
+.f label{font-size:13px;font-weight:600;color:#C9CDD3}
+.f input{font:inherit;font-size:15px;min-height:46px;padding:0 14px;border:1px solid #3A3F46;border-radius:10px;background:#1E2227;color:#fff;box-sizing:border-box;width:100%}
+.bp{display:flex;align-items:center;justify-content:center;min-height:48px;border-radius:10px;background:#136F4D;border:1px solid #136F4D;color:#fff;font:inherit;font-weight:600;font-size:15px;cursor:pointer;width:100%;text-decoration:none}
+.bg{background:none;border:0;color:#C9CDD3;font:inherit;font-size:14px;cursor:pointer;min-height:44px}
+.dig{width:46px;height:56px;text-align:center;font:inherit;font-size:22px;font-weight:700;border:1px solid #3A3F46;border-radius:10px;background:#1E2227;color:#fff}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; background: #15171A; color: #fff; min-height: 900px; display: grid; place-items: center; padding: 24px; box-sizing: border-box">
+<div style="width: min(400px, 100%)">
+<div style="display: flex; align-items: center; gap: 10px; justify-content: center"><span style="width: 36px; height: 36px; border-radius: 10px; background: #136F4D; display: grid; place-items: center; font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 20px">S</span><span style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 22px">Sellergy</span><span style="font-size: 11px; font-weight: 700; background: #F2C46B; color: #4A3000; padding: 2px 8px; border-radius: 999px">ADMIN</span></div>
+<p style="margin: 10px 0 0; text-align: center; color: #9AA0A8; font-size: 14px">admin.sellergycloud.com · só pra equipe Sellergy</p>
+
+<div style="margin-top: 28px; background: #1A1D21; border: 1px solid #2C3138; border-radius: 18px; padding: 24px">
+<sc-if value="{{e1}}" hint-placeholder-val="{{ true }}">
+<h1 style="margin: 0; font-size: 20px">Entrar</h1>
+<div class="f" style="margin-top: 18px"><label for="em">E-mail</label><input id="em" type="email" value="dono@sellergycloud.com"></div>
+<div class="f" style="margin-top: 14px"><label for="se">Senha</label><input id="se" type="password" value="••••••••••••"></div>
+<button type="button" class="bp" style="margin-top: 20px" onClick="{{prox}}">Continuar</button>
+</sc-if>
+<sc-if value="{{e2}}" hint-placeholder-val="{{ false }}">
+<h1 style="margin: 0; font-size: 20px">Código do autenticador</h1>
+<p style="margin: 8px 0 0; color: #9AA0A8; font-size: 14px; line-height: 1.5">Abra o Google Authenticator ou o 1Password e digite os 6 números da Sellergy Admin.</p>
+<div style="display: flex; gap: 8px; margin-top: 18px; justify-content: center"><input class="dig" aria-label="Dígito 1" value="3"><input class="dig" aria-label="Dígito 2" value="9"><input class="dig" aria-label="Dígito 3" value="1"><input class="dig" aria-label="Dígito 4" value="0"><input class="dig" aria-label="Dígito 5" value="4"><input class="dig" aria-label="Dígito 6" value="7"></div>
+<a href="AdminGeral.dc.html" class="bp" style="margin-top: 20px">Entrar no painel</a>
+<button type="button" class="bg" style="width: 100%; margin-top: 6px" onClick="{{voltar}}">Voltar</button>
+</sc-if>
+</div>
+<p style="margin: 18px 0 0; text-align: center; color: #6B717A; font-size: 12px; line-height: 1.5">Acesso só de IPs liberados. Sessão expira em 8 h. Todo acesso fica na auditoria.</p>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { e: 1 }; }
+  renderVals() {
+    return {
+      e1: this.state.e === 1, e2: this.state.e === 2,
+      prox: () => this.setState({ e: 2 }), voltar: () => this.setState({ e: 1 }),
+    };
+  }
+}
+</script>
+</body>
+</html>
