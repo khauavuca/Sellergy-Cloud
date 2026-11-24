@@ -59,7 +59,9 @@ function validarCadastro(corpo = {}) {
   if (nomeResponsavel.length < 2 || nomeResponsavel.length > 80) campos.push('nomeResponsavel');
   if (!EMAIL_RE.test(email) || email.length > 120) campos.push('email');
   if (senha.length < SENHA_MINIMA || senha.length > 128) campos.push('senha');
-  if (telefone && (telefone.length < 10 || telefone.length > 13)) campos.push('telefone');
+  // Letra no campo (ex.: o navegador preencheu com o e-mail) nao e telefone.
+  const telefoneTemLetra = typeof corpo.telefone === 'string' && /[a-z@]/i.test(corpo.telefone);
+  if (telefoneTemLetra || (telefone && (telefone.length < 10 || telefone.length > 13))) campos.push('telefone');
   if (!SEGMENTOS_VALIDOS.includes(segmento)) campos.push('segmento');
   if (!aceitouTermos(corpo)) campos.push('aceiteTermos');
 

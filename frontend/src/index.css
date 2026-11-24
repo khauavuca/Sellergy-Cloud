@@ -27,14 +27,14 @@
   --text-main:        #0A0A0A;   /* near-black, titulos */
   --text-secondary:   #525252;   /* corpo de texto */
   --text-muted:       #8A8A85;   /* labels, helpers */
-  --text-on-primary:  #FFFFFF;   /* texto sobre primario preto */
+  --text-on-primary:  #FFFFFF;   /* texto sobre o verde da marca */
   --text-on-accent:   #FFFFFF;   /* texto sobre accent terracota */
 
-  /* ── Primary (acoes principais) ──────────────────────────── */
-  --primary:         #0A0A0A;
-  --primary-hover:   #1F1F1F;
-  --primary-active:  #2A2A2A;
-  --primary-soft:    #F0F0EC;
+  /* ── Primary (acoes principais): verde da marca, igual ao prototipo ── */
+  --primary:         #136F4D;
+  --primary-hover:   #0F5C40;
+  --primary-active:  #0B4A33;
+  --primary-soft:    #E3F1EA;
 
   /* ── Accent (terracota) ──────────────────────────────────── */
   --accent:          #C4704A;
@@ -95,13 +95,13 @@
   --text-main:        #FAFAF7;
   --text-secondary:   #B4B4B0;
   --text-muted:       #707070;
-  --text-on-primary:  #0A0A0A;
+  --text-on-primary:  #04140D;   /* verde claro pede texto escuro */
   --text-on-accent:   #FFFFFF;
 
-  --primary:         #FAFAF7;
-  --primary-hover:   #E8E8E5;
-  --primary-active:  #D4D4D0;
-  --primary-soft:    #1C1C1C;
+  --primary:         #3DBE8B;
+  --primary-hover:   #55CB9B;
+  --primary-active:  #2FA97A;
+  --primary-soft:    #14281F;
 
   --accent:          #D4845C;
   --accent-hover:    #C4704A;

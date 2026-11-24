@@ -74,3 +74,11 @@ test('cadastro sem aceitar os Termos e recusado', () => {
   assert.deepEqual(campos, ['aceiteTermos']);
   assert.match(erro, /Termos de uso/);
 });
+
+test('cadastro recusa e-mail no campo de WhatsApp', () => {
+  for (const telefone of ['khaua@exemplo.com', 'fulano']) {
+    const r = validarCadastro({ ...valido, telefone });
+    assert.ok(r.campos?.includes('telefone'), telefone);
+  }
+  assert.equal(validarCadastro({ ...valido, telefone: '' }).dados.telefone, null);
+});

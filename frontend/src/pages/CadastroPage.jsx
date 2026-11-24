@@ -35,6 +35,15 @@ export default function CadastroPage() {
     e.preventDefault();
     setErro(null);
     setCamposComErro([]);
+    // WhatsApp e opcional, mas se vier tem que ser numero com DDD
+    // (o navegador as vezes preenche esse campo com o e-mail).
+    const tel = form.telefone.trim();
+    const digitos = tel.replace(/\D/g, '');
+    if (tel && (/[a-z@]/i.test(tel) || digitos.length < 10 || digitos.length > 13)) {
+      setCamposComErro(['telefone']);
+      setErro('Confira o WhatsApp: use só o número com DDD, ou deixe em branco.');
+      return;
+    }
     const r = await cadastrar(form);
     if (r.ok) {
       navigate('/app/dashboard', { replace: true });
@@ -115,7 +124,7 @@ export default function CadastroPage() {
             <Input label="Nome do negócio" value={form.nomeNegocio} onChange={set('nomeNegocio')} error={temErro('nomeNegocio') ? 'Informe o nome do negócio' : undefined} required />
             <Input label="Seu nome" value={form.nomeResponsavel} onChange={set('nomeResponsavel')} autoComplete="name" error={temErro('nomeResponsavel') ? 'Informe seu nome' : undefined} required />
             <Input label="E-mail" type="email" icon={Mail} value={form.email} onChange={set('email')} autoComplete="email" error={temErro('email') ? 'Confira o e-mail' : undefined} required />
-            <Input label="WhatsApp (opcional)" type="tel" placeholder="(11) 98888-7777" value={form.telefone} onChange={set('telefone')} autoComplete="tel" error={temErro('telefone') ? 'Confira o número com DDD' : undefined} />
+            <Input label="WhatsApp (opcional)" type="tel" placeholder="(11) 98888-7777" value={form.telefone} onChange={set('telefone')} autoComplete="tel-national" inputMode="tel" error={temErro('telefone') ? 'Confira o número com DDD' : undefined} />
             <Input label="Crie uma senha" type="password" value={form.senha} onChange={set('senha')} autoComplete="new-password" error={temErro('senha') ? 'Use pelo menos 8 caracteres' : undefined} required />
 
             <AceiteTermos
