@@ -15,7 +15,16 @@ const NAV = [
 
 export default function LandingHeader({ aoEscolherSegmento }) {
   const [aberto, setAberto] = useState(false);
+  const [rolou, setRolou] = useState(false);
   const idMenu = useId();
+
+  // Vidro com sombra depois que a pagina rola um pouco.
+  useEffect(() => {
+    const aoRolar = () => setRolou(window.scrollY > 8);
+    aoRolar();
+    window.addEventListener('scroll', aoRolar, { passive: true });
+    return () => window.removeEventListener('scroll', aoRolar);
+  }, []);
 
   useEffect(() => {
     if (!aberto) return undefined;
@@ -41,7 +50,13 @@ export default function LandingHeader({ aoEscolherSegmento }) {
   ));
 
   return (
-    <header className="border-b border-[#E3E5E8] bg-[#F6F7F5]">
+    <header
+      className={`sticky top-0 z-40 border-b transition-[background-color,border-color,box-shadow] duration-300 ${
+        rolou || aberto
+          ? 'bg-[#F6F7F5]/80 backdrop-blur-xl border-[#E3E5E8] shadow-[0_8px_30px_rgba(21,23,26,0.06)]'
+          : 'bg-transparent border-transparent'
+      }`}
+    >
       <div className="max-w-[1200px] mx-auto px-6 py-3.5 flex items-center gap-5">
         <Marca />
 
@@ -52,7 +67,7 @@ export default function LandingHeader({ aoEscolherSegmento }) {
           <Link to={ROTA_LOGIN} className={linkNav}>Entrar</Link>
         </div>
         <div className="hidden sm:block ml-auto lg:ml-0">
-          <Link to={ROTA_CADASTRO} className={botaoPrimario}>Testar grátis</Link>
+          <Link to={ROTA_CADASTRO} className={`${botaoPrimario} ld-brilho`}>Testar grátis</Link>
         </div>
 
         <button

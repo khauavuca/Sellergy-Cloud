@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../services/api';
 import { IconeCheck } from './Icones';
+import Revelar from './Revelar';
 import {
   DESCONTO_ANUAL, DIAS_DE_TESTE_PADRAO, PLANO_RECOMENDADO, PLANOS_RESERVA, ROTA_CADASTRO, ROTULO_RECURSO, TEXTO_PLANO,
 } from './conteudo';
@@ -73,9 +74,10 @@ export default function Precos() {
 
   return (
     <section id="precos" aria-labelledby="titulo-precos" className="bg-[#EEF0EC]">
-      <div className={`${container} py-16 sm:py-20`}>
-        <div className="flex flex-wrap justify-between items-end gap-6">
+      <div className={`${container} py-20 sm:py-28`}>
+        <Revelar className="flex flex-wrap justify-between items-end gap-6">
           <div>
+            <p className="m-0 mb-3 text-[13px] font-semibold text-[#136F4D] uppercase tracking-[0.08em]">Preços</p>
             <h2 id="titulo-precos" className={`${tituloSecao} m-0`}>Preço fixo por negócio</h2>
             <p className="mt-2.5 mb-0 text-[#4A5059] text-[17px]">Sem fidelidade. Troque de plano quando quiser.</p>
           </div>
@@ -95,7 +97,7 @@ export default function Precos() {
               </button>
             ))}
           </div>
-        </div>
+        </Revelar>
 
         <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,310px),1fr))] gap-5 mt-10 items-start">
           {planos.map((p, i) => {
@@ -112,11 +114,15 @@ export default function Precos() {
             const idTitulo = `plano-${p.codigo || i}`;
 
             return (
-              <article
+              <Revelar
                 key={p.codigo || p.nome}
+                atraso={i * 120}
+                className={destaque ? 'ld-borda-viva rounded-[20px] p-[2px] shadow-[0_24px_60px_rgba(19,111,77,0.22)]' : ''}
+              >
+              <article
                 aria-labelledby={idTitulo}
-                className={`relative bg-white rounded-[18px] p-7 flex flex-col gap-[18px] ${
-                  destaque ? 'border-2 border-[#136F4D] shadow-[0_18px_40px_rgba(19,111,77,0.12)]' : 'border border-[#E3E5E8]'
+                className={`relative bg-white rounded-[18px] p-7 flex flex-col gap-[18px] transition-[translate,box-shadow] duration-300 ${
+                  destaque ? '' : 'border border-[#E3E5E8] hover:-translate-y-1 hover:shadow-[0_24px_50px_rgba(21,23,26,0.08)]'
                 }`}
               >
                 {destaque && (
@@ -131,7 +137,7 @@ export default function Precos() {
                 <div>
                   <p className="m-0 flex items-baseline gap-1.5">
                     <span className="text-[16px] font-semibold">R$</span>
-                    <span className={`${titulo} text-[48px] leading-[normal] font-bold tracking-[-0.03em] tabular-nums`}>{brl(valor)}</span>
+                    <span key={valor} className={`${titulo} ld-trocar text-[48px] leading-[normal] font-bold tracking-[-0.03em] tabular-nums`}>{brl(valor)}</span>
                     <span className="sr-only">por mês</span>
                   </p>
                   <p className="mt-0.5 mb-0 text-[#5B616B] text-[13px]">
@@ -140,7 +146,7 @@ export default function Precos() {
                       : 'por mês, cobrado todo mês'}
                   </p>
                 </div>
-                <Link to={ROTA_CADASTRO} className={destaque ? botaoPrimario : botaoSecundario}>
+                <Link to={ROTA_CADASTRO} className={destaque ? `${botaoPrimario} ld-brilho` : botaoSecundario}>
                   Testar o {p.nome} grátis
                 </Link>
                 {(limites || lembretes) && (
@@ -158,6 +164,7 @@ export default function Precos() {
                   ))}
                 </ul>
               </article>
+              </Revelar>
             );
           })}
         </div>
