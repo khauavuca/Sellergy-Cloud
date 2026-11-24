@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:painel": "vite build --mode painel --outDir dist-painel",
     "lint": "eslint .",
     "preview": "vite preview"
   },

@@ -8,6 +8,7 @@ const { SEGREDO_JWT } = require('../middlewares/auth.middleware');
 const { definirSessao, garantirCsrf, limparSessao } = require('../utils/sessaoCookie');
 const { validarCadastro, criarContaComTeste } = require('../onboarding/cadastro');
 const totp = require('../seguranca/totp');
+const acessoAdmin = require('../seguranca/acessoAdmin');
 
 const roteador = express.Router();
 
@@ -146,13 +147,28 @@ roteador.post('/login', limitadorLogin, async (req, res) => {
     }
 
     const usuario = await prisma.usuario.findUnique({ where: { email } });
+    const ehAdmin = usuario?.perfil === 'ADMIN';
+
+    if (ehAdmin) {
+      const resta = await acessoAdmin.segundosBloqueado(usuario.id);
+      if (resta) return res.status(429).json({ erro: acessoAdmin.mensagemBloqueio(resta) });
+    }
 
     // Mantem tempo de resposta similar entre "usuario inexistente" e "senha errada"
     // para nao expor enumeracao de usuarios via timing.
     const hashComparacao = usuario?.senha || '$2a$12$invalidplaceholderhashinvalidplaceholderhashinvalida';
     const senhaValida = await bcrypt.compare(senha, hashComparacao);
 
-    if (!usuario || !senhaValida) {
+    // Conta ADMIN fora do site do painel recebe a mesma resposta de senha
+    // errada e conta como erro: quem tenta pelo site do cliente nao descobre nada.
+    const origemRecusada = ehAdmin && !acessoAdmin.origemLiberada(req.get('origin'));
+    if (!usuario || !senhaValida || origemRecusada) {
+      if (ehAdmin) {
+        const travou = await acessoAdmin.registrarFalha(usuario.id);
+        acessoAdmin.auditar(req, usuario, travou ? 'ADMIN_LOGIN_BLOQUEADO' : 'ADMIN_LOGIN_FALHOU', {
+          motivo: !senhaValida ? 'senha' : 'origem',
+        });
+      }
       return res.status(401).json({ erro: 'E-mail ou senha incorretos' });
     }
 
@@ -163,6 +179,10 @@ roteador.post('/login', limitadorLogin, async (req, res) => {
       return res.json({ precisa2fa: true, desafio });
     }
 
+    if (ehAdmin) {
+      await acessoAdmin.limparFalhas(usuario.id);
+      acessoAdmin.auditar(req, usuario, 'ADMIN_LOGIN', { mfa: false });
+    }
     await responderSessao(res, usuario, { mfa: false });
   } catch (erro) {
     console.error('[auth/login]', erro);
@@ -185,7 +205,24 @@ roteador.post('/login/2fa', limitadorLogin, async (req, res) => {
     const usuario = await prisma.usuario.findUnique({ where: { id: dados.id } });
     if (!usuario?.totpAtivo || !usuario.totpSegredoCifrado) return res.status(401).json({ erro: 'Desafio invalido.' });
 
-    if (!(await conferirCodigoTotp(usuario, codigo))) return res.status(401).json({ erro: 'Código incorreto.' });
+    const ehAdmin = usuario.perfil === 'ADMIN';
+    if (ehAdmin) {
+      const resta = await acessoAdmin.segundosBloqueado(usuario.id);
+      if (resta) return res.status(429).json({ erro: acessoAdmin.mensagemBloqueio(resta) });
+      if (!acessoAdmin.origemLiberada(req.get('origin'))) return res.status(401).json({ erro: 'Desafio invalido.' });
+    }
+
+    if (!(await conferirCodigoTotp(usuario, codigo))) {
+      if (ehAdmin) {
+        const travou = await acessoAdmin.registrarFalha(usuario.id);
+        acessoAdmin.auditar(req, usuario, travou ? 'ADMIN_LOGIN_BLOQUEADO' : 'ADMIN_LOGIN_FALHOU', { motivo: 'codigo' });
+      }
+      return res.status(401).json({ erro: 'Código incorreto.' });
+    }
+    if (ehAdmin) {
+      await acessoAdmin.limparFalhas(usuario.id);
+      acessoAdmin.auditar(req, usuario, 'ADMIN_LOGIN', { mfa: true });
+    }
     await responderSessao(res, usuario, { mfa: true });
   } catch (erro) {
     console.error('[auth/login/2fa]', erro);

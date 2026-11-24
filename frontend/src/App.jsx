@@ -88,6 +88,15 @@ function CarregandoPagina() {
   );
 }
 
+// Painel admin num endereco proprio (VITE_HOST_PAINEL, ex.: crm.sellergycloud.com).
+// Nos outros enderecos as telas /admin nem existem: caem no login do cliente.
+// Sem a variavel (dev em localhost) o admin abre em qualquer lugar.
+const HOST_PAINEL = String(import.meta.env.VITE_HOST_PAINEL || '').trim().toLowerCase();
+const NO_PAINEL = Boolean(HOST_PAINEL) && window.location.hostname.toLowerCase() === HOST_PAINEL;
+const ADMIN_NESTE_SITE = !HOST_PAINEL || NO_PAINEL;
+
+const SoNoPainel = ({ children }) => (ADMIN_NESTE_SITE ? children : <Navigate to="/app/login" replace />);
+
 const ProtectedRoute = ({ children }) => {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   // Sem sessao vai sempre pro login do cliente: o do admin nao aparece pra
@@ -163,8 +172,8 @@ export default function App() {
         <Suspense fallback={<CarregandoPagina />}>
         <Routes>
           {/* Publicas */}
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/admin/login" element={<LoginPage isAdmin />} />
+          <Route path="/" element={NO_PAINEL ? <Navigate to="/admin/login" replace /> : <LandingPage />} />
+          <Route path="/admin/login" element={<SoNoPainel><LoginPage isAdmin /></SoNoPainel>} />
           <Route path="/app/login" element={<ClientLoginPage />} />
           <Route path="/cadastro" element={<CadastroPage />} />
           {/* Publicas, sem login: agendamento pelo link e confirmacao do lembrete */}
@@ -191,6 +200,7 @@ export default function App() {
           {/* ECOSSISTEMA ADMIN */}
           <Route
             element={
+              <SoNoPainel>
               <ProtectedRoute>
                 <TrocaSenhaGate>
                   <AdminOnly>
@@ -200,6 +210,7 @@ export default function App() {
                   </AdminOnly>
                 </TrocaSenhaGate>
               </ProtectedRoute>
+              </SoNoPainel>
             }
           >
             <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />

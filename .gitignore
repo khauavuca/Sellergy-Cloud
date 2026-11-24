@@ -1,6 +1,7 @@
 node_modules/
 .env
 dist/
+dist-painel/
 build/
 .DS_Store
 *.log
