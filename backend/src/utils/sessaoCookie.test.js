@@ -134,3 +134,15 @@ test('painel (crm.) e site usam cookies separados; localhost usa o comum', () =>
     process.env.ADMIN_ORIGENS = antes;
   }
 });
+
+test('na API do painel (API_PAINEL_HOSTS) o cookie e do painel mesmo sem Origin', () => {
+  const { nomeSessao } = require('./sessaoCookie');
+  const antes = process.env.API_PAINEL_HOSTS;
+  process.env.API_PAINEL_HOSTS = 'api-crm.sellergycloud.com';
+  try {
+    assert.strictEqual(nomeSessao({ hostname: 'api-crm.sellergycloud.com', headers: {} }), 'sellergy_sessao_painel');
+    assert.strictEqual(nomeSessao({ hostname: 'api.sellergycloud.com', headers: {} }), 'sellergy_sessao');
+  } finally {
+    if (antes === undefined) delete process.env.API_PAINEL_HOSTS; else process.env.API_PAINEL_HOSTS = antes;
+  }
+});

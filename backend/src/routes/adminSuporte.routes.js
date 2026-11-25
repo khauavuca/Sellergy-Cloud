@@ -27,6 +27,9 @@ const { definirSessao } = require('../utils/sessaoCookie');
 const { criarNotificacao } = require('../utils/notificacoes');
 const { avisarNoWhatsapp } = require('../assinatura/avisos');
 const { obterPlano } = require('../planos/catalogo');
+const { aceitarUmaImagem } = require('../middlewares/upload.middleware');
+const { uploadSeguro } = require('../seguranca/uploadSeguro');
+const anexos = require('../suporte/anexos');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -173,7 +176,8 @@ async function carregarChamadoCompleto(id) {
     usuarioId: chamado.usuarioId,
     abertoPor: usuario?.nome || null,
     cliente: cliente ? { ...cliente, planoNome: obterPlano(cliente.plano).nome } : null,
-    mensagens: chamado.mensagens.map((m) => ({ id: m.id, autor: m.autor, autorNome: m.autorNome, texto: m.texto, criadoEm: m.criadoEm })),
+    resolvidoEm: chamado.resolvidoEm, conversaApagadaEm: chamado.conversaApagadaEm, diasGuarda: anexos.DIAS_GUARDA_CONVERSA,
+    mensagens: chamado.mensagens.map((m) => anexos.formatarMensagem(m, `/admin/suporte/chamados/${chamado.id}/fotos`)),
   };
 }
 
@@ -235,6 +239,44 @@ roteador.post('/chamados/:id/nota', requerPapelAdmin('suporte.responder'), async
   }
 });
 
+roteador.post('/chamados/:id/fotos', requerPapelAdmin('suporte.responder'), aceitarUmaImagem('imagem'), uploadSeguro('imagem'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(422).json({ erro: 'Escolha uma foto.', campos: ['imagem'] });
+    const texto = textoValido(req.body?.texto, 1, 4000) || '';
+    const chamado = await prisma.chamado.findUnique({ where: { id: req.params.id }, select: { id: true, clienteId: true, usuarioId: true, assunto: true, status: true, primeiraRespostaEm: true, responsavelId: true, conversaApagadaEm: true } });
+    if (!chamado) return res.status(404).json({ erro: 'Chamado não encontrado.' });
+    if (chamado.conversaApagadaEm) return res.status(409).json({ erro: 'A conversa deste chamado já foi apagada.' });
+    if (chamado.status === 'RESOLVIDO') await anexos.aoReabrir(chamado.id);
+    await anexos.criarMensagemComFoto({ chamado, arquivo: req.file, autor: 'SUPORTE', autorNome: req.usuario.nome || 'Suporte Sellergy', texto });
+    await prisma.chamado.update({
+      where: { id: chamado.id },
+      data: {
+        status: 'RESPONDIDO', lidoSuporteEm: new Date(),
+        ...(chamado.primeiraRespostaEm ? {} : { primeiraRespostaEm: new Date() }),
+        ...(chamado.responsavelId ? {} : { responsavelId: req.usuario.id }),
+      },
+    });
+    await criarNotificacao(prisma, {
+      clienteId: chamado.clienteId, usuarioId: chamado.usuarioId || null, tipo: 'GENERICA',
+      titulo: 'O suporte respondeu seu chamado', mensagem: `${chamado.assunto}: enviou uma foto`,
+      link: `/app/dashboard?ajuda=${chamado.id}`, dados: { chamadoId: chamado.id },
+    }).catch((e) => console.error('[admin/suporte] notificacao', e?.message));
+    await registrarAuditoria(req, { acao: 'CHAMADO_FOTO', alvoTipo: 'CLIENTE', alvoId: chamado.clienteId, detalhes: { chamadoId: chamado.id } });
+    res.status(201).json(await carregarChamadoCompleto(chamado.id));
+  } catch (e) {
+    console.error('[admin/suporte/foto]', e);
+    res.status(500).json({ erro: 'Erro ao enviar a foto.' });
+  }
+});
+
+roteador.get('/chamados/:id/fotos/:mensagemId', requerPapelAdmin('suporte.ver'), async (req, res) => {
+  const mensagem = await prisma.chamadoMensagem.findFirst({
+    where: { id: req.params.mensagemId, chamadoId: req.params.id },
+    select: { anexoChave: true, anexoTipo: true },
+  }).catch(() => null);
+  return anexos.enviarFoto(res, mensagem);
+});
+
 roteador.post('/chamados/:id/responder', requerPapelAdmin('suporte.responder'), async (req, res) => {
   try {
     const texto = textoValido(req.body?.texto, 1, 4000);
@@ -256,6 +298,8 @@ roteador.post('/chamados/:id/responder', requerPapelAdmin('suporte.responder'), 
         },
       }),
     ]);
+
+    if (resolver) await anexos.aoResolver(chamado.id);
 
     // Aviso pro cliente: no sistema (abre a conversa no botao de ajuda) e no
     // WhatsApp do Sellergy. Best-effort: a resposta ja esta salva.
@@ -290,6 +334,8 @@ roteador.post('/chamados/:id/:acao(resolver|reabrir)', requerPapelAdmin('suporte
     if (!chamado) return res.status(404).json({ erro: 'Chamado não encontrado.' });
     const resolver = req.params.acao === 'resolver';
     await prisma.chamado.update({ where: { id: chamado.id }, data: { status: resolver ? 'RESOLVIDO' : 'ABERTO' } });
+    // Resolver apaga as fotos na hora; reabrir tira o prazo de apagar a conversa.
+    if (resolver) await anexos.aoResolver(chamado.id); else await anexos.aoReabrir(chamado.id);
     await registrarAuditoria(req, {
       acao: resolver ? 'CHAMADO_RESOLVER' : 'CHAMADO_REABRIR',
       alvoTipo: 'CLIENTE', alvoId: chamado.clienteId, detalhes: { chamadoId: chamado.id, assunto: chamado.assunto },

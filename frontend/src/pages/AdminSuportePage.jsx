@@ -2,7 +2,7 @@
 // direita. Responder, nota interna (so a equipe ve), responsavel, prioridade,
 // categoria, respostas prontas, resolver e "ver como o cliente".
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, CheckCircle2, Eye, LifeBuoy, MessageSquare, Pencil, Plus, RotateCcw, Search, Send, Star, Trash2 } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Eye, ImagePlus, LifeBuoy, MessageSquare, Pencil, Plus, RotateCcw, Search, Send, Star, Trash2, X, Zap } from 'lucide-react';
 import clsx from 'clsx';
 import api from '../services/api';
 import { Button, EmptyState, Input, Textarea, useToast } from '../components/ui';
@@ -19,7 +19,7 @@ const STATUS = {
 };
 
 const ABAS = [
-  { valor: 'ABERTO', rotulo: 'Esperando você' },
+  { valor: 'ABERTO', rotulo: 'Para responder' },
   { valor: 'MEUS', rotulo: 'Meus' },
   { valor: 'CLIENTE', rotulo: 'Esperando cliente' },
   { valor: 'RESOLVIDO', rotulo: 'Resolvidos' },
@@ -116,17 +116,29 @@ function EditorRespostas({ isOpen, onClose, respostas, onSalvo }) {
   );
 }
 
-// Seletor "sem borda" da faixa de detalhes do chamado.
+// Etiqueta clicavel (select sem cara de formulario) da linha de detalhes.
 function CampoFaixa({ rotulo, valor, opcoes, onChange, disabled, classeValor }) {
   return (
-    <label className="flex items-center gap-1.5 text-[13px] text-[var(--text-muted)]">
-      {rotulo}
-      <select value={valor} disabled={disabled} onChange={(e) => onChange(e.target.value)}
-        className={clsx('min-h-9 bg-transparent font-semibold rounded-md px-1 cursor-pointer disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]', classeValor || 'text-[var(--text-main)]')}>
+    <label className={clsx('inline-flex items-center gap-1 min-h-8 pl-2.5 pr-1 rounded-full border border-[var(--border-main)] bg-[var(--bg-card)] text-xs font-semibold has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--primary)]', classeValor || 'text-[var(--text-secondary)]')}>
+      <span className="sr-only">{rotulo}</span>
+      <select value={valor} disabled={disabled} onChange={(e) => onChange(e.target.value)} title={rotulo}
+        className="bg-transparent pr-1 cursor-pointer disabled:cursor-default focus:outline-none">
         {opcoes.map(([v, r]) => <option key={v} value={v}>{r}</option>)}
       </select>
     </label>
   );
+}
+
+const TIPOS_FOTO = 'image/jpeg,image/png,image/webp';
+const urlApi = (caminho) => `${api.defaults.baseURL}${caminho}`;
+const horaCurta = (v) => new Date(v).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+function diaCurto(v) {
+  const d = new Date(v);
+  const hoje = new Date();
+  const ontem = new Date(); ontem.setDate(hoje.getDate() - 1);
+  if (d.toDateString() === hoje.toDateString()) return 'Hoje';
+  if (d.toDateString() === ontem.toDateString()) return 'Ontem';
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
 }
 
 function Conversa({ chamadoId, respostas, equipe, podeResponder, podeEntrar, onMudou, onVoltar }) {
@@ -134,11 +146,14 @@ function Conversa({ chamadoId, respostas, equipe, podeResponder, podeEntrar, onM
   const [chamado, setChamado] = useState(null);
   const [erro, setErro] = useState('');
   const [texto, setTexto] = useState('');
+  const [foto, setFoto] = useState(null);
   const [modo, setModo] = useState('resposta'); // resposta | nota
   const [enviando, setEnviando] = useState(false);
   const [confirmarEntrar, setConfirmarEntrar] = useState(false);
   const [mostrarProntas, setMostrarProntas] = useState(false);
   const fimRef = useRef(null);
+  const campoRef = useRef(null);
+  const arquivoRef = useRef(null);
 
   const carregar = useCallback(() => api.get(`/admin/suporte/chamados/${chamadoId}`)
     .then((r) => { setChamado(r.data); setErro(''); onMudou({ silencioso: true }); })
@@ -146,23 +161,46 @@ function Conversa({ chamadoId, respostas, equipe, podeResponder, podeEntrar, onM
 
   useEffect(() => { carregar(); }, [carregar]);
   useEffect(() => { fimRef.current?.scrollIntoView({ block: 'end' }); }, [chamado?.mensagens?.length]);
+  // Campo de uma linha que cresce ate ~6 linhas.
+  useEffect(() => {
+    const el = campoRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [texto]);
+
+  const nota = modo === 'nota';
+
+  const escolherFoto = (arquivo) => {
+    if (!arquivo) return;
+    if (!TIPOS_FOTO.split(',').includes(arquivo.type)) { toast.error('Mande uma foto em JPG, PNG ou WEBP.'); return; }
+    if (arquivo.size > 5 * 1024 * 1024) { toast.error('A foto passa de 5 MB.'); return; }
+    setFoto((f) => { if (f) URL.revokeObjectURL(f.previa); return { arquivo, previa: URL.createObjectURL(arquivo) }; });
+  };
+  const tirarFoto = () => setFoto((f) => { if (f) URL.revokeObjectURL(f.previa); return null; });
 
   const enviar = async (resolver = false) => {
-    if (!texto.trim()) { toast.error(modo === 'nota' ? 'Escreva a nota.' : 'Escreva a resposta.'); return; }
+    if (enviando) return;
+    if (!texto.trim() && !foto) { toast.error(nota ? 'Escreva a nota.' : 'Escreva a resposta.'); return; }
     setEnviando(true);
     try {
-      if (modo === 'nota') {
+      if (nota) {
         const r = await api.post(`/admin/suporte/chamados/${chamadoId}/nota`, { texto });
         setChamado(r.data);
-        toast.success('Nota salva. Só a equipe vê.');
+      } else if (foto) {
+        const f = new FormData();
+        f.append('imagem', foto.arquivo);
+        if (texto.trim()) f.append('texto', texto.trim());
+        const r = await api.post(`/admin/suporte/chamados/${chamadoId}/fotos`, f);
+        setChamado(r.data);
+        if (resolver) { const r2 = await api.post(`/admin/suporte/chamados/${chamadoId}/resolver`); setChamado(r2.data); }
       } else {
         const r = await api.post(`/admin/suporte/chamados/${chamadoId}/responder`, { texto, resolver });
         setChamado(r.data.chamado);
-        toast.success(r.data.whatsapp === 'enviado'
-          ? 'Resposta enviada. O cliente foi avisado no sistema e no WhatsApp.'
-          : 'Resposta enviada. O cliente foi avisado no sistema.');
       }
+      toast.success(nota ? 'Nota salva. Só a equipe vê.' : resolver ? 'Enviado e resolvido. As fotos do chamado foram apagadas.' : 'Enviado. O cliente foi avisado.');
       setTexto('');
+      tirarFoto();
       onMudou();
     } catch (e) {
       toast.error(erroDaApi(e, 'Não foi possível enviar.'));
@@ -175,7 +213,7 @@ function Conversa({ chamadoId, respostas, equipe, podeResponder, podeEntrar, onM
     try {
       const r = await api.post(`/admin/suporte/chamados/${chamadoId}/${acao}`);
       setChamado(r.data);
-      toast.success(acao === 'resolver' ? 'Chamado resolvido.' : 'Chamado reaberto.');
+      toast.success(acao === 'resolver' ? 'Chamado resolvido. As fotos foram apagadas.' : 'Chamado reaberto.');
       onMudou();
     } catch (e) {
       toast.error(erroDaApi(e, 'Não foi possível atualizar o chamado.'));
@@ -192,86 +230,137 @@ function Conversa({ chamadoId, respostas, equipe, podeResponder, podeEntrar, onM
     }
   };
 
+  // Mensagens agrupadas por dia.
+  const grupos = useMemo(() => {
+    const lista = [];
+    for (const m of chamado?.mensagens || []) {
+      const d = diaCurto(m.criadoEm);
+      if (!lista.length || lista[lista.length - 1].dia !== d) lista.push({ dia: d, itens: [] });
+      lista[lista.length - 1].itens.push(m);
+    }
+    return lista;
+  }, [chamado]);
+
   if (erro) return <div className="p-6"><ErroCarregar texto={erro} onTentar={carregar} /></div>;
   if (!chamado) return <div className="p-6"><Carregando linhas={5} /></div>;
 
   const st = STATUS[chamado.status] || { rotulo: chamado.status, classe: '' };
   const sa = STATUS_ASSINATURA[chamado.cliente?.statusAssinatura];
-  const nota = modo === 'nota';
-  const opcoesEquipe = [['', 'Ninguém'], ...equipe.map((u) => [u.id, u.nome])];
+  const opcoesEquipe = [['', 'Sem responsável'], ...equipe.map((u) => [u.id, u.nome])];
+  const resolvido = chamado.status === 'RESOLVIDO';
+  const apagada = Boolean(chamado.conversaApagadaEm);
+  const guardaAte = chamado.resolvidoEm
+    ? new Date(new Date(chamado.resolvidoEm).getTime() + (chamado.diasGuarda || 7) * 864e5).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+    : null;
 
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* cabecalho */}
-      <div className="px-4 sm:px-6 py-3.5 border-b border-[var(--border-main)] flex flex-wrap items-center gap-3">
+      <div className="px-4 sm:px-5 py-3 border-b border-[var(--border-main)] flex items-center gap-3">
         <button type="button" onClick={onVoltar} aria-label="Voltar para a fila"
-          className="lg:hidden w-10 h-10 rounded-lg flex items-center justify-center hover:bg-[var(--bg-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
+          className="lg:hidden w-9 h-9 rounded-lg grid place-items-center hover:bg-[var(--bg-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
           <ArrowLeft size={18} />
         </button>
-        <div className="flex-1 min-w-[220px]">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-semibold text-[var(--text-main)] break-words">{chamado.assunto}</h2>
-            <span className={clsx('px-2 py-0.5 rounded-full text-[11px] font-bold', st.classe)}>{st.rotulo}</span>
+        <Avatar nome={chamado.abertoPor || chamado.cliente?.nome} tamanho="w-10 h-10" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <h2 className="text-[15px] font-semibold text-[var(--text-main)] truncate">{chamado.assunto}</h2>
+            <span className={clsx('px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap', st.classe)}>{st.rotulo}</span>
           </div>
-          <p className="text-[13px] text-[var(--text-muted)] mt-0.5">
-            {chamado.cliente?.nome || 'Negócio removido'}
-            {chamado.abertoPor ? ` · ${chamado.abertoPor}` : ''}
-            {chamado.cliente ? ` · plano ${chamado.cliente.planoNome}` : ''}
-            {sa ? ` · ${sa.rotulo.toLowerCase()}` : ''}
+          <p className="text-xs text-[var(--text-muted)] mt-0.5 truncate">
+            {chamado.abertoPor ? `${chamado.abertoPor} · ` : ''}{chamado.cliente?.nome || 'Negócio removido'}
+            {chamado.cliente ? ` · plano ${chamado.cliente.planoNome}` : ''}{sa ? `, ${sa.rotulo.toLowerCase()}` : ''}
             {chamado.cliente?.telefone ? ` · ${chamado.cliente.telefone}` : ''}
           </p>
         </div>
         {podeEntrar && chamado.cliente && (
-          <Button variant="secondary" className="min-h-10" icon={Eye} onClick={() => setConfirmarEntrar(true)}>Ver como o cliente</Button>
+          <button type="button" onClick={() => setConfirmarEntrar(true)} aria-label="Ver como o cliente" title="Ver como o cliente"
+            className="w-9 h-9 rounded-lg grid place-items-center text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
+            <Eye size={18} />
+          </button>
         )}
-        {podeResponder && (chamado.status === 'RESOLVIDO'
-          ? <Button variant="secondary" className="min-h-10" icon={RotateCcw} onClick={() => mudarStatus('reabrir')}>Reabrir</Button>
-          : <Button className="min-h-10" icon={CheckCircle2} onClick={() => mudarStatus('resolver')}>Resolver</Button>)}
+        {podeResponder && !apagada && (resolvido
+          ? <Button variant="secondary" className="min-h-9" icon={RotateCcw} onClick={() => mudarStatus('reabrir')}>Reabrir</Button>
+          : <Button className="min-h-9" icon={CheckCircle2} onClick={() => mudarStatus('resolver')}>Resolver</Button>)}
       </div>
 
-      {/* faixa de detalhes */}
-      <div className="px-4 sm:px-6 py-1 border-b border-[var(--border-main)] bg-[var(--bg-subtle)] flex flex-wrap items-center gap-x-5 gap-y-1">
+      {/* detalhes */}
+      <div className="px-4 sm:px-5 py-2 border-b border-[var(--border-main)] flex flex-wrap items-center gap-2">
         <CampoFaixa rotulo="Responsável" valor={chamado.responsavel?.id || ''} opcoes={opcoesEquipe} disabled={!podeResponder}
           onChange={(v) => editar('responsavelId', v)} />
-        <CampoFaixa rotulo="Prioridade" valor={chamado.prioridade} opcoes={Object.entries(PRIORIDADES)} disabled={!podeResponder}
+        <CampoFaixa rotulo="Prioridade" valor={chamado.prioridade} opcoes={Object.entries(PRIORIDADES).map(([v, r]) => [v, `Prioridade ${r.toLowerCase()}`])} disabled={!podeResponder}
           onChange={(v) => editar('prioridade', v)} classeValor={COR_PRIORIDADE[chamado.prioridade]} />
         <CampoFaixa rotulo="Categoria" valor={chamado.categoria} opcoes={Object.entries(CATEGORIAS)} disabled={!podeResponder}
           onChange={(v) => editar('categoria', v)} />
-        <span className="text-[13px] text-[var(--text-muted)]">
+        <span className="ml-auto text-xs text-[var(--text-muted)]">
           aberto {dataHora(chamado.criadoEm)} pelo {chamado.canal === 'WHATSAPP' ? 'WhatsApp' : 'sistema'}
-          {chamado.avaliacao ? <> · avaliação <b className="text-[var(--text-main)]">{chamado.avaliacao}/5</b></> : null}
+          {chamado.avaliacao ? <> · nota <b className="text-[var(--text-main)]">{chamado.avaliacao}/5</b></> : null}
         </span>
       </div>
 
       {/* mensagens */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-6">
-        <ol className="max-w-[720px] mx-auto space-y-5" aria-label="Mensagens do chamado">
-          {chamado.mensagens.map((m) => {
-            const interno = m.autor === 'INTERNO';
-            const suporte = m.autor === 'SUPORTE';
-            return (
-              <li key={m.id} className={clsx('flex gap-3', interno && 'rounded-xl border border-[var(--warning-soft)] bg-[var(--warning-soft)]/50 px-3.5 py-3')}>
-                <Avatar nome={m.autorNome} tom={interno ? 'interno' : suporte ? 'suporte' : 'cliente'} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px]">
-                    <b className="text-[var(--text-main)]">{m.autorNome}</b>{' '}
-                    <span className="text-[var(--text-muted)]">{interno ? 'nota interna, só a equipe vê' : suporte ? 'Sellergy' : 'cliente'} · {dataHora(m.criadoEm)}</span>
-                  </p>
-                  <p className="text-[15px] leading-relaxed text-[var(--text-main)] whitespace-pre-wrap break-words mt-0.5">{m.texto}</p>
-                </div>
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-4 bg-[var(--bg-app)]">
+        {apagada ? (
+          <p className="text-center text-sm text-[var(--text-muted)] mt-10">A conversa deste chamado foi apagada {chamado.diasGuarda || 7} dias depois de resolvido. Fica só o resumo.</p>
+        ) : (
+          <ol className="max-w-[820px] mx-auto" aria-label="Mensagens do chamado">
+            {grupos.map((g) => (
+              <li key={g.dia}>
+                <p className="mx-auto my-3 w-fit px-2.5 py-1 rounded-full bg-[var(--bg-subtle)] text-[11px] font-semibold text-[var(--text-muted)]">{g.dia}</p>
+                <ol className="space-y-3">
+                  {g.itens.map((m) => {
+                    if (m.autor === 'INTERNO') {
+                      return (
+                        <li key={m.id} className="mx-auto max-w-[78%] px-3.5 py-2.5 rounded-xl border border-dashed border-[var(--warning)] bg-[var(--warning-soft)] text-[13px] text-[var(--warning-text)]">
+                          <b>Nota interna · {m.autorNome}</b> <span className="opacity-80">· {horaCurta(m.criadoEm)}</span>
+                          <p className="mt-0.5 whitespace-pre-wrap break-words">{m.texto}</p>
+                        </li>
+                      );
+                    }
+                    const nosso = m.autor === 'SUPORTE';
+                    return (
+                      <li key={m.id} className={clsx('flex gap-2', nosso ? 'justify-end' : 'items-end')}>
+                        {!nosso && <Avatar nome={m.autorNome} tamanho="w-8 h-8" />}
+                        <div className={clsx('max-w-[66%] flex flex-col gap-1', nosso ? 'items-end' : 'items-start')}>
+                          <span className="text-[11px] text-[var(--text-muted)] px-1">{nosso ? `${m.autorNome} (Sellergy)` : m.autorNome} · {horaCurta(m.criadoEm)}</span>
+                          {m.anexo?.caminho && (
+                            <a href={urlApi(m.anexo.caminho)} target="_blank" rel="noopener noreferrer" className="block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
+                              <img src={urlApi(m.anexo.caminho)} alt={nosso ? 'Foto enviada pela equipe' : 'Foto enviada pelo cliente'} loading="lazy"
+                                className="max-h-64 max-w-full rounded-2xl border border-[var(--border-main)] object-cover" />
+                            </a>
+                          )}
+                          {m.anexo?.apagado && (
+                            <span className="px-3 py-2 rounded-2xl border border-dashed border-[var(--border-strong)] text-xs text-[var(--text-muted)]">Foto apagada ao resolver o chamado</span>
+                          )}
+                          {m.texto && (
+                            <p className={clsx('px-3.5 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap break-words',
+                              nosso ? 'bg-[var(--primary)] text-[var(--text-on-primary)] rounded-[16px_16px_4px_16px]' : 'bg-[var(--bg-card)] border border-[var(--border-main)] text-[var(--text-main)] rounded-[16px_16px_16px_4px]')}>
+                              {m.texto}
+                            </p>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
               </li>
-            );
-          })}
-          {chamado.avaliacaoComentario && (
-            <li className="flex gap-3 text-[13px] text-[var(--text-muted)]">
-              <Star size={16} className="mt-0.5 text-[var(--accent)]" aria-hidden="true" />
-              <span>O cliente avaliou com {chamado.avaliacao}/5: “{chamado.avaliacaoComentario}”</span>
-            </li>
-          )}
-        </ol>
+            ))}
+            {resolvido && (
+              <li className="mt-4 text-center text-xs text-[var(--text-muted)]">
+                Resolvido. Fotos apagadas{guardaAte ? `; a conversa fica guardada até ${guardaAte}` : ''}.
+              </li>
+            )}
+            {chamado.avaliacaoComentario && (
+              <li className="mt-3 flex justify-center gap-2 text-[13px] text-[var(--text-muted)]">
+                <Star size={16} className="text-[var(--accent)]" aria-hidden="true" />
+                <span>Avaliação {chamado.avaliacao}/5: “{chamado.avaliacaoComentario}”</span>
+              </li>
+            )}
+          </ol>
+        )}
         <div ref={fimRef} />
         {chamado.anteriores?.length > 0 && (
-          <div className="max-w-[720px] mx-auto mt-8 pt-4 border-t border-[var(--border-main)]">
+          <div className="max-w-[820px] mx-auto mt-8 pt-4 border-t border-[var(--border-main)]">
             <p className="text-xs font-bold tracking-wide text-[var(--text-muted)] mb-2">CHAMADOS ANTERIORES DESTE NEGÓCIO</p>
             <ul className="space-y-1 text-[13px]">
               {chamado.anteriores.map((a) => (
@@ -284,53 +373,80 @@ function Conversa({ chamadoId, respostas, equipe, podeResponder, podeEntrar, onM
         )}
       </div>
 
-      {/* resposta */}
-      {podeResponder ? (
-        <div className="px-4 sm:px-6 pb-4">
-          <div className={clsx('max-w-[720px] mx-auto rounded-2xl border overflow-hidden',
-            nota ? 'border-[var(--warning)] bg-[var(--warning-soft)]/40' : 'border-[var(--border-strong)] bg-[var(--bg-card)]')}>
-            <div className="flex gap-1 px-2 pt-2" role="tablist" aria-label="Tipo de mensagem">
-              {[['resposta', 'Responder'], ['nota', 'Nota interna']].map(([v, r]) => (
-                <button key={v} type="button" role="tab" aria-selected={modo === v} onClick={() => setModo(v)}
-                  className={clsx('min-h-9 px-3 rounded-lg text-[13px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]',
-                    modo === v ? (v === 'nota' ? 'bg-[var(--warning-soft)] text-[var(--warning-text)]' : 'bg-[var(--bg-subtle)] text-[var(--text-main)]') : 'text-[var(--text-muted)] hover:text-[var(--text-main)]')}>
-                  {r}
+      {/* campo compacto */}
+      {podeResponder && !apagada ? (
+        <div className="px-4 sm:px-5 pt-2.5 pb-3 border-t border-[var(--border-main)]">
+          {mostrarProntas && respostas.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2" role="group" aria-label="Respostas prontas">
+              {respostas.map((r, i) => (
+                <button key={i} type="button" onClick={() => { setTexto((t) => (t ? `${t}\n\n${r.texto}` : r.texto)); setMostrarProntas(false); campoRef.current?.focus(); }}
+                  className="min-h-8 px-3 rounded-full border border-dashed border-[var(--border-strong)] text-xs text-[var(--text-secondary)] hover:text-[var(--text-main)] hover:border-[var(--primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
+                  {r.titulo}
                 </button>
               ))}
             </div>
+          )}
+          <div className={clsx('rounded-2xl border focus-within:border-[var(--primary)]',
+            nota ? 'border-[var(--warning)] bg-[var(--warning-soft)]/50' : 'border-[var(--border-strong)] bg-[var(--bg-card)]')}>
+            {foto && !nota && (
+              <div className="px-3 pt-3 relative w-fit">
+                <img src={foto.previa} alt="Foto escolhida" className="h-16 w-16 object-cover rounded-lg border border-[var(--border-main)]" />
+                <button type="button" onClick={tirarFoto} aria-label="Tirar a foto"
+                  className="absolute top-1.5 -right-1.5 w-5 h-5 rounded-full bg-[var(--text-main)] text-[var(--bg-card)] grid place-items-center"><X size={12} /></button>
+              </div>
+            )}
             <label className="sr-only" htmlFor="resposta-suporte">{nota ? 'Nota interna' : 'Resposta para o cliente'}</label>
-            <textarea id="resposta-suporte" rows={3} value={texto} maxLength={4000}
+            <textarea id="resposta-suporte" ref={campoRef} rows={1} value={texto} maxLength={4000}
               onChange={(e) => setTexto(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) enviar(false); }}
-              placeholder={nota ? 'Só a equipe vê esta nota' : 'Escreva a resposta pro cliente'}
-              className="block w-full bg-transparent px-3.5 py-2.5 text-[15px] text-[var(--text-main)] placeholder:text-[var(--text-muted)] resize-none focus:outline-none" />
-            {mostrarProntas && respostas.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 px-3 pb-2" role="group" aria-label="Respostas prontas">
-                {respostas.map((r, i) => (
-                  <button key={i} type="button" onClick={() => { setTexto((t) => (t ? `${t}\n\n${r.texto}` : r.texto)); setMostrarProntas(false); }}
-                    className="min-h-9 px-3 rounded-full border border-dashed border-[var(--border-strong)] text-[13px] text-[var(--text-secondary)] hover:text-[var(--text-main)] hover:border-[var(--primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
-                    {r.titulo}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviar(false); }
+                if (e.key === '/' && !texto) { e.preventDefault(); setMostrarProntas(true); }
+              }}
+              placeholder={nota ? 'Nota só pra equipe, o cliente não vê' : `Responder ${chamado.abertoPor?.split(' ')[0] || 'o cliente'}...`}
+              className="block w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-[14px] leading-snug text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none" />
+            <div className="flex items-center gap-0.5 px-1.5 pb-1.5 pt-1">
+              <div role="tablist" aria-label="Tipo de mensagem" className="flex p-0.5 rounded-lg bg-[var(--bg-subtle)] mr-1.5">
+                {[['resposta', 'Resposta'], ['nota', 'Nota interna']].map(([v, r]) => (
+                  <button key={v} type="button" role="tab" aria-selected={modo === v} onClick={() => setModo(v)}
+                    className={clsx('min-h-7 px-2.5 rounded-md text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]',
+                      modo === v ? (v === 'nota' ? 'bg-[var(--warning-soft)] text-[var(--warning-text)]' : 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm') : 'text-[var(--text-muted)]')}>
+                    {r}
                   </button>
                 ))}
               </div>
-            )}
-            <div className="flex flex-wrap items-center gap-2 px-2 py-2 border-t border-[var(--border-subtle)]">
-              <button type="button" onClick={() => setMostrarProntas((v) => !v)} aria-expanded={mostrarProntas}
-                className="min-h-9 px-2.5 rounded-lg text-[13px] text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
-                Respostas prontas
-              </button>
-              <span className="flex-1" />
-              <span className="hidden sm:inline text-xs text-[var(--text-muted)]">{nota ? 'O cliente não vê' : 'Vai pro sistema e pro WhatsApp do cliente'} · Ctrl+Enter envia</span>
-              {!nota && chamado.status !== 'RESOLVIDO' && (
-                <Button variant="secondary" className="min-h-9" loading={enviando} onClick={() => enviar(true)}>Enviar e resolver</Button>
+              {!nota && (
+                <button type="button" onClick={() => arquivoRef.current?.click()} aria-label="Anexar foto" title="Anexar foto"
+                  className="w-8 h-8 rounded-lg grid place-items-center text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
+                  <ImagePlus size={17} />
+                </button>
               )}
-              <Button className="min-h-9" icon={Send} loading={enviando} onClick={() => enviar(false)}>{nota ? 'Salvar nota' : 'Enviar'}</Button>
+              <input ref={arquivoRef} type="file" accept={TIPOS_FOTO} className="hidden" tabIndex={-1}
+                onChange={(e) => { escolherFoto(e.target.files?.[0]); e.target.value = ''; }} />
+              <button type="button" onClick={() => setMostrarProntas((v) => !v)} aria-expanded={mostrarProntas} aria-label="Respostas prontas" title="Respostas prontas ( / )"
+                className="w-8 h-8 rounded-lg grid place-items-center text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
+                <Zap size={17} />
+              </button>
+              <span className="flex-1 hidden md:block text-[11px] text-[var(--text-muted)] pl-2 truncate">
+                {nota ? 'O cliente não vê' : 'Enter envia · Shift+Enter quebra linha'}
+              </span>
+              <span className="flex-1 md:hidden" />
+              {!nota && !resolvido && (
+                <button type="button" onClick={() => enviar(true)} disabled={enviando}
+                  className="min-h-8 px-2.5 rounded-lg border border-[var(--border-main)] text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-main)] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
+                  Enviar e resolver
+                </button>
+              )}
+              <button type="button" onClick={() => enviar(false)} disabled={enviando}
+                className={clsx('ml-1.5 min-h-8 px-3 rounded-lg inline-flex items-center gap-1.5 text-[13px] font-semibold text-white disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[var(--primary)]',
+                  nota ? 'bg-[var(--warning)]' : 'bg-[var(--primary)] hover:bg-[var(--primary-hover)]')}>
+                <Send size={14} />{nota ? 'Salvar nota' : 'Enviar'}
+              </button>
             </div>
           </div>
         </div>
-      ) : (
+      ) : !podeResponder ? (
         <p className="px-6 py-4 border-t border-[var(--border-main)] text-sm text-[var(--text-muted)]">Seu papel na equipe só permite ver os chamados.</p>
-      )}
+      ) : null}
 
       <ConfirmarAcao
         isOpen={confirmarEntrar}
@@ -419,13 +535,14 @@ export default function AdminSuportePage() {
               <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por assunto ou negócio"
                 className="flex-1 min-w-0 bg-transparent text-sm text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none" />
             </label>
-            <div role="tablist" aria-label="Filas" className="flex gap-4 border-b border-[var(--border-main)] overflow-x-auto">
+            <div role="tablist" aria-label="Filas" className="grid grid-cols-2 gap-1.5">
               {ABAS.map((a) => (
                 <button key={a.valor} type="button" role="tab" aria-selected={aba === a.valor}
                   onClick={() => { setCarregando(true); setAba(a.valor); }}
-                  className={clsx('min-h-10 whitespace-nowrap text-[13px] font-semibold border-b-2 -mb-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]',
-                    aba === a.valor ? 'border-[var(--primary)] text-[var(--text-main)]' : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-main)]')}>
-                  {a.rotulo} <span className="font-medium text-[var(--text-muted)]">{contagem[a.valor] ?? ''}</span>
+                  className={clsx('min-h-9 px-2.5 rounded-lg border flex items-center justify-between gap-1 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]',
+                    aba === a.valor ? 'bg-[var(--text-main)] text-[var(--bg-card)] border-[var(--text-main)]' : 'bg-[var(--bg-card)] text-[var(--text-secondary)] border-[var(--border-main)] hover:text-[var(--text-main)]')}>
+                  <span className="truncate">{a.rotulo}</span>
+                  <span className={clsx('min-w-5 px-1.5 rounded-full text-[11px] leading-[18px] text-center', aba === a.valor ? 'bg-white/20' : 'bg-[var(--bg-subtle)]')}>{contagem[a.valor] ?? 0}</span>
                 </button>
               ))}
             </div>

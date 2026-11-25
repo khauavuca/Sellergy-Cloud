@@ -2058,6 +2058,8 @@ model Chamado {
   lidoSuporteEm      DateTime? // quando a equipe abriu a conversa pela ultima vez (nao lido)
   avaliacao    Int? // 1 a 5, dada pelo cliente depois de resolvido
   avaliacaoComentario String?
+  resolvidoEm  DateTime? // fotos apagadas aqui; a conversa some 7 dias depois
+  conversaApagadaEm DateTime? // mensagens apagadas (fica so o resumo do chamado)
   criadoEm     DateTime @default(now())
   atualizadoEm DateTime @updatedAt
 
@@ -2066,6 +2068,7 @@ model Chamado {
   @@index([status, atualizadoEm])
   @@index([clienteId])
   @@index([responsavelId])
+  @@index([status, resolvidoEm])
   @@map("chamados")
 }
 
@@ -2075,6 +2078,11 @@ model ChamadoMensagem {
   autor     String   // CLIENTE | SUPORTE | INTERNO (nota so da equipe)
   autorNome String
   texto     String
+  // Foto temporaria (MinIO, privada). Apagada quando o chamado e resolvido.
+  anexoChave     String?
+  anexoTipo      String?
+  anexoNome      String?
+  anexoApagadoEm DateTime?
   criadoEm  DateTime @default(now())
 
   chamado Chamado @relation(fields: [chamadoId], references: [id], onDelete: Cascade)

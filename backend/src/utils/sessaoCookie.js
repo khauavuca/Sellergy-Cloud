@@ -25,6 +25,11 @@ const NOME_CSRF = 'sellergy_csrf';
 // continua com o nome comum.
 const SUFIXO_PAINEL = '_painel';
 function ehOrigemPainel(req) {
+  // A API do painel num endereco proprio (API_PAINEL_HOSTS) e sempre painel,
+  // mesmo sem Origin (ex.: <img> buscando a foto de um chamado).
+  const host = String(req?.hostname || req?.headers?.['x-forwarded-host'] || req?.headers?.host || '').split(',')[0].trim().replace(/:\d+$/, '').toLowerCase();
+  const hostsPainel = String(process.env.API_PAINEL_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+  if (host && hostsPainel.includes(host)) return true;
   const origem = String(req?.headers?.origin || '').trim().replace(/\/$/, '').toLowerCase();
   if (!origem || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origem)) return false;
   const lista = String(process.env.ADMIN_ORIGENS || '').split(',').map((o) => o.trim().replace(/\/$/, '').toLowerCase()).filter(Boolean);

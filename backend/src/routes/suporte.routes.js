@@ -5,6 +5,8 @@
 //   GET  /suporte/chamados/:id             -> conversa
 //   POST /suporte/chamados                 -> { assunto, texto, categoria? } abre chamado
 //   POST /suporte/chamados/:id/avaliar     -> { nota 1-5, comentario? } depois de resolvido
+//   POST /suporte/chamados/:id/fotos       -> multipart { imagem, texto? } foto temporaria
+//   GET  /suporte/chamados/:id/fotos/:msg  -> a foto (some quando o chamado e resolvido)
 //   POST /suporte/chamados/:id/mensagens   -> { texto } responde (reabre se estava resolvido)
 //   POST /suporte/sessao/encerrar          -> sai da sessao de suporte (so leitura) do admin
 //
@@ -18,6 +20,9 @@ const middlewareAutenticacao = require('../middlewares/auth.middleware');
 const { requerTenant, ehAdmin } = require('../middlewares/permissoes.middleware');
 const { limparSessao } = require('../utils/sessaoCookie');
 const { registrarAuditoria } = require('../seguranca/auditoria');
+const { aceitarUmaImagem } = require('../middlewares/upload.middleware');
+const { uploadSeguro } = require('../seguranca/uploadSeguro');
+const anexos = require('../suporte/anexos');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -89,7 +94,8 @@ roteador.get('/chamados/:id', async (req, res) => {
     if (!chamado) return res.status(404).json({ erro: 'Chamado não encontrado.' });
     res.json({
       ...formatarChamado(chamado),
-      mensagens: chamado.mensagens.map((m) => ({ id: m.id, autor: m.autor, autorNome: m.autorNome, texto: m.texto, criadoEm: m.criadoEm })),
+      resolvidoEm: chamado.resolvidoEm, conversaApagadaEm: chamado.conversaApagadaEm, diasGuarda: anexos.DIAS_GUARDA_CONVERSA,
+      mensagens: chamado.mensagens.map((m) => anexos.formatarMensagem(m, `/suporte/chamados/${chamado.id}/fotos`)),
     });
   } catch (e) {
     console.error('[suporte/chamado]', e);
@@ -142,8 +148,10 @@ roteador.post('/chamados/:id/mensagens', async (req, res) => {
   try {
     const texto = textoValido(req.body?.texto, 1, 4000);
     if (!texto) return res.status(422).json({ erro: 'Escreva a mensagem.', campos: ['texto'] });
-    const chamado = await prisma.chamado.findFirst({ where: { id: req.params.id, clienteId: req.usuario.clienteId }, select: { id: true } });
+    const chamado = await prisma.chamado.findFirst({ where: { id: req.params.id, clienteId: req.usuario.clienteId }, select: { id: true, status: true, conversaApagadaEm: true } });
     if (!chamado) return res.status(404).json({ erro: 'Chamado não encontrado.' });
+    if (chamado.conversaApagadaEm) return res.status(409).json({ erro: 'Essa conversa já foi encerrada. Abra um chamado novo.' });
+    if (chamado.status === 'RESOLVIDO') await anexos.aoReabrir(chamado.id);
     const autorNome = await nomeDoUsuario(req.usuario.id);
     const [mensagem] = await prisma.$transaction([
       prisma.chamadoMensagem.create({ data: { chamadoId: chamado.id, autor: 'CLIENTE', autorNome, texto } }),
@@ -154,6 +162,32 @@ roteador.post('/chamados/:id/mensagens', async (req, res) => {
     console.error('[suporte/mensagem]', e);
     res.status(500).json({ erro: 'Erro ao enviar a mensagem.' });
   }
+});
+
+roteador.post('/chamados/:id/fotos', aceitarUmaImagem('imagem'), uploadSeguro('imagem'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(422).json({ erro: 'Escolha uma foto.', campos: ['imagem'] });
+    const texto = textoValido(req.body?.texto, 1, 4000) || '';
+    const chamado = await prisma.chamado.findFirst({ where: { id: req.params.id, clienteId: req.usuario.clienteId }, select: { id: true, clienteId: true, status: true, conversaApagadaEm: true } });
+    if (!chamado) return res.status(404).json({ erro: 'Chamado não encontrado.' });
+    if (chamado.conversaApagadaEm) return res.status(409).json({ erro: 'Essa conversa já foi encerrada. Abra um chamado novo.' });
+    if (chamado.status === 'RESOLVIDO') await anexos.aoReabrir(chamado.id);
+    const autorNome = await nomeDoUsuario(req.usuario.id);
+    const mensagem = await anexos.criarMensagemComFoto({ chamado, arquivo: req.file, autor: 'CLIENTE', autorNome, texto });
+    await prisma.chamado.update({ where: { id: chamado.id }, data: { status: 'ABERTO', ultimaDoClienteEm: new Date() } });
+    res.status(201).json(anexos.formatarMensagem(mensagem, `/suporte/chamados/${chamado.id}/fotos`));
+  } catch (e) {
+    console.error('[suporte/foto]', e);
+    res.status(500).json({ erro: 'Erro ao enviar a foto.' });
+  }
+});
+
+roteador.get('/chamados/:id/fotos/:mensagemId', async (req, res) => {
+  const mensagem = await prisma.chamadoMensagem.findFirst({
+    where: { id: req.params.mensagemId, chamadoId: req.params.id, autor: { not: 'INTERNO' }, chamado: { clienteId: req.usuario.clienteId } },
+    select: { anexoChave: true, anexoTipo: true },
+  }).catch(() => null);
+  return anexos.enviarFoto(res, mensagem);
 });
 
 roteador.post('/chamados/:id/avaliar', async (req, res) => {

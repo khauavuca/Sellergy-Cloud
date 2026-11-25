@@ -72,6 +72,12 @@ async function upload({ key, body, contentType, cacheControl = 'public, max-age=
   return urlPublica(key);
 }
 
+/** Le um objeto (stream) pra repassar pelo backend, sem expor o MinIO. */
+async function baixar(key) {
+  const r = await cliente.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
+  return { corpo: r.Body, tipo: r.ContentType, tamanho: r.ContentLength };
+}
+
 async function remover(key) {
   if (!key) return;
   await cliente.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
@@ -250,6 +256,7 @@ async function garantirBucket() {
 module.exports = {
   cliente,
   upload,
+  baixar,
   remover,
   urlPublica,
   chaveDeUrl,

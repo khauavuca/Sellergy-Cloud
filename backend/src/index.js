@@ -312,6 +312,14 @@ servidor.listen(PORTA, async () => {
   } catch (e) {
     console.error('[boot] Falha ao inicializar cron de devoluções:', e?.message);
   }
+
+  // Suporte: apaga a conversa dos chamados resolvidos ha mais de 7 dias
+  // (as fotos ja somem ao resolver). Ver suporte/anexos.js.
+  try {
+    require('./jobs/cronLimpezaSuporte').iniciar();
+  } catch (e) {
+    console.error('[boot] Falha ao inicializar limpeza do suporte:', e?.message);
+  }
 });
 
 const { fecharFilas } = require('./filas');
