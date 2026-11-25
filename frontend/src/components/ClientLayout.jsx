@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
+import { linkAjuda } from '../utils/ajuda';
 import AssinaturaBanner from './conta/AssinaturaBanner';
 import FaixaSuporte from './suporte/FaixaSuporte';
 import FaixaComunicado from './suporte/FaixaComunicado';
@@ -214,6 +215,7 @@ export default function ClientLayout() {
           onToggleMenu={alternarMenu}
           atalhos={atalhos}
           actions={acaoTopo}
+          ajuda={linkAjuda(location.pathname)}
         />
         <main className="flex-1 min-w-0 px-4 sm:px-6 py-5">
           {/* Full-width: o conteudo ocupa toda a largura disponivel. Paginas

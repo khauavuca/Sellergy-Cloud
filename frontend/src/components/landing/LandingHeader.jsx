@@ -4,6 +4,7 @@ import { Menu, X } from 'lucide-react';
 import { ROTA_CADASTRO, ROTA_LOGIN } from './conteudo';
 import { botaoPrimario, foco, linkNav } from './estilo';
 import Marca from './Marca';
+import { URL_AJUDA } from '../../utils/ajuda';
 
 // "Para lojas" / "Para clinicas" levam a #negocios ja com a aba certa aberta.
 const NAV = [
@@ -11,6 +12,7 @@ const NAV = [
   { href: '#negocios', rotulo: 'Para clínicas', segmento: 'clinicas' },
   { href: '#precos', rotulo: 'Preços' },
   { href: '#duvidas', rotulo: 'Dúvidas' },
+  { href: URL_AJUDA, rotulo: 'Central de ajuda', externo: true },
 ];
 
 export default function LandingHeader({ aoEscolherSegmento }) {
@@ -44,7 +46,8 @@ export default function LandingHeader({ aoEscolherSegmento }) {
   };
 
   const links = NAV.map((item) => (
-    <a key={item.rotulo} href={item.href} className={linkNav} onClick={() => aoClicar(item)}>
+    <a key={item.rotulo} href={item.href} className={linkNav} onClick={() => aoClicar(item)}
+      {...(item.externo ? { target: '_blank', rel: 'noopener noreferrer' } : {})}>
       {item.rotulo}
     </a>
   ));

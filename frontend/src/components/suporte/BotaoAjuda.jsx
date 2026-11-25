@@ -3,8 +3,9 @@
 // responde, a notificacao leva pra ?ajuda=<chamadoId> e este painel abre na
 // conversa. Na sessao de suporte (so leitura) da pra ver, nao escrever.
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { ArrowLeft, HelpCircle, LifeBuoy, Plus, Send } from 'lucide-react';
+import { useLocation, useSearchParams } from 'react-router-dom';
+import { linkAjuda } from '../../utils/ajuda';
+import { ArrowLeft, BookOpen, HelpCircle, LifeBuoy, Plus, Send } from 'lucide-react';
 import clsx from 'clsx';
 import api from '../../services/api';
 import { useAuthStore } from '../../store/auth.store';
@@ -241,6 +242,7 @@ function Conversa({ chamadoId, onVoltar, somenteLeitura }) {
 
 export default function BotaoAjuda() {
   const somenteLeitura = useAuthStore((s) => Boolean(s.user?.suporte));
+  const location = useLocation();
   const [params, setParams] = useSearchParams();
   const chamadoDaUrl = params.get('ajuda');
   const [aberto, setAberto] = useState(false);
@@ -295,6 +297,12 @@ export default function BotaoAjuda() {
         ) : telaAtual.tipo === 'conversa' ? (
           <Conversa key={telaAtual.id} chamadoId={telaAtual.id} onVoltar={voltarLista} somenteLeitura={somenteLeitura} />
         ) : (
+          <>
+          <a href={linkAjuda(location.pathname)} target="_blank" rel="noopener noreferrer"
+            className="mb-4 flex items-center gap-3 min-h-11 rounded-xl border border-[var(--border-main)] px-4 py-3 text-sm text-[var(--text-main)] no-underline hover:border-[var(--primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
+            <BookOpen size={18} className="text-[var(--primary)] shrink-0" aria-hidden="true" />
+            <span className="flex-1"><b>Passo a passo desta tela</b><br /><span className="text-[var(--text-muted)]">Na Central de Ajuda. Muitas dúvidas se resolvem lá.</span></span>
+          </a>
           <Lista
             chamados={chamados}
             erro={erro}
@@ -304,6 +312,7 @@ export default function BotaoAjuda() {
             onNovo={() => setTela({ tipo: 'novo' })}
             onTentar={() => { setCarregando(true); carregar(); }}
           />
+          </>
         )}
       </Drawer>
     </>

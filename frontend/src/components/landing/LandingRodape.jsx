@@ -4,6 +4,7 @@ import { LINKS_LEGAIS, ROTA_CADASTRO, linkWhatsapp } from './conteudo';
 import { focoEscuro, titulo } from './estilo';
 import Revelar from './Revelar';
 import { IconeSeta } from './Icones';
+import { URL_AJUDA } from '../../utils/ajuda';
 
 const linkRodape = `inline-flex items-center min-h-11 rounded text-[#B9BEC6] no-underline hover:text-white hover:underline ${focoEscuro}`;
 
@@ -37,6 +38,8 @@ export default function LandingRodape() {
         <span className="py-3">Sellergy Cloud · sellergycloud.com</span>
         <nav aria-label="Informações legais e contato">
           <ul className="list-none p-0 m-0 flex flex-wrap items-center gap-x-1.5">
+            <li><a href={URL_AJUDA} target="_blank" rel="noopener noreferrer" className={linkRodape}>Central de ajuda</a></li>
+            <li aria-hidden="true">·</li>
             {LINKS_LEGAIS.map((l, i) => (
               <Fragment key={l.to}>
                 {i > 0 && <li aria-hidden="true">·</li>}

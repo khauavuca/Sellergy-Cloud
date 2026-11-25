@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Menu, Search, CornerDownLeft } from 'lucide-react';
+import { Menu, Search, CornerDownLeft, HelpCircle } from 'lucide-react';
 import clsx from 'clsx';
 import UserMenu from './UserMenu';
 import NotificacoesDropdown from './NotificacoesDropdown';
@@ -109,7 +109,7 @@ function BuscaTelas({ atalhos }) {
  * Topo das telas internas. O botao de menu abre a gaveta no celular e
  * abre/recolhe o menu lateral no computador.
  */
-export default function Topbar({ titulo, breadcrumb, actions, onMenuClick, onToggleMenu, atalhos = [] }) {
+export default function Topbar({ titulo, breadcrumb, actions, onMenuClick, onToggleMenu, atalhos = [], ajuda }) {
   const aoClicarMenu = () => {
     if (window.matchMedia?.('(min-width: 1024px)').matches) onToggleMenu?.();
     else onMenuClick?.();
@@ -143,6 +143,19 @@ export default function Topbar({ titulo, breadcrumb, actions, onMenuClick, onTog
 
         <div className="ml-auto flex items-center gap-2 flex-shrink-0">
           {actions}
+          {ajuda && (
+            <a
+              href={ajuda}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Passo a passo desta tela na Central de Ajuda"
+              className="inline-flex items-center gap-1.5 h-10 px-2.5 rounded-lg text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-main)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] transition-colors"
+            >
+              <HelpCircle size={18} aria-hidden="true" />
+              <span className="hidden md:inline">Ajuda</span>
+              <span className="sr-only">: passo a passo desta tela (abre em nova aba)</span>
+            </a>
+          )}
           <NotificacoesDropdown />
           <div className="w-px h-6 bg-[var(--border-main)] mx-0.5 hidden sm:block" />
           <UserMenu />
