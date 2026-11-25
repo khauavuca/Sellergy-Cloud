@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { NOME_SESSAO, NOME_CSRF, lerCookie } = require('../utils/sessaoCookie');
+const { nomeSessao, nomeCsrf, lerCookie } = require('../utils/sessaoCookie');
 
 // Defesa contra CSRF (falsificacao de requisicao entre sites).
 //
@@ -50,9 +50,9 @@ const middlewareCsrf = (req, res, next) => {
   // Sem cookie de sessao nao ha o que ser falsificado: a requisicao tera de se
   // autenticar por Authorization, cabecalho que o navegador jamais anexa
   // sozinho em requisicao originada de outro site.
-  if (!lerCookie(req, NOME_SESSAO)) return next();
+  if (!lerCookie(req, nomeSessao(req))) return next();
 
-  const doCookie = lerCookie(req, NOME_CSRF);
+  const doCookie = lerCookie(req, nomeCsrf(req));
   const doCabecalho = req.get('x-csrf-token');
 
   if (!doCookie || !doCabecalho || !segredosConferem(doCookie, doCabecalho)) {

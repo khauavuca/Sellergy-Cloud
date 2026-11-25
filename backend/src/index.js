@@ -50,7 +50,7 @@ const middlewareAutenticacao = require('./middlewares/auth.middleware');
 const { SEGREDO_JWT } = require('./middlewares/auth.middleware');
 const { limitadorApi } = require('./middlewares/rateLimit.middleware');
 const middlewareCsrf = require('./middlewares/csrf.middleware');
-const { NOME_SESSAO, lerCookie } = require('./utils/sessaoCookie');
+const { nomeSessao, lerCookie } = require('./utils/sessaoCookie');
 const { ehAdmin } = require('./middlewares/permissoes.middleware');
 const prisma = require('./prisma');
 
@@ -85,7 +85,7 @@ const io = new Server(servidor, {
 io.use((socket, next) => {
   // Mesma ordem do middleware HTTP: cookie httpOnly primeiro (navegador),
   // depois as formas explicitas usadas por clientes fora do navegador.
-  const token = lerCookie(socket.handshake, NOME_SESSAO)
+  const token = lerCookie(socket.handshake, nomeSessao(socket.handshake))
     || socket.handshake?.auth?.token
     || socket.handshake?.headers?.authorization?.replace(/^Bearer\s+/i, '');
 

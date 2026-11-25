@@ -118,3 +118,19 @@ test('limparSessao apaga os dois cookies com os mesmos atributos', () => {
     assert.strictEqual(apagado.opcoes.secure, true);
   }
 });
+
+test('painel (crm.) e site usam cookies separados; localhost usa o comum', () => {
+  const { nomeSessao, nomeCsrf } = require('./sessaoCookie');
+  const antes = process.env.ADMIN_ORIGENS;
+  process.env.ADMIN_ORIGENS = 'https://crm.sellergycloud.com,http://localhost:5173';
+  try {
+    const r = (origin) => ({ headers: origin ? { origin } : {} });
+    assert.strictEqual(nomeSessao(r('https://crm.sellergycloud.com')), 'sellergy_sessao_painel');
+    assert.strictEqual(nomeCsrf(r('https://crm.sellergycloud.com/')), 'sellergy_csrf_painel');
+    assert.strictEqual(nomeSessao(r('https://sellergycloud.com')), 'sellergy_sessao');
+    assert.strictEqual(nomeSessao(r('http://localhost:5173')), 'sellergy_sessao');
+    assert.strictEqual(nomeSessao(r()), 'sellergy_sessao');
+  } finally {
+    process.env.ADMIN_ORIGENS = antes;
+  }
+});

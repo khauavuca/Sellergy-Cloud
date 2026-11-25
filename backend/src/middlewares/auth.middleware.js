@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { NOME_SESSAO, lerCookie } = require('../utils/sessaoCookie');
+const { nomeSessao, lerCookie } = require('../utils/sessaoCookie');
 const { requisicaoPermitidaEmSuporte } = require('../seguranca/sessaoSuporte');
 const { papelDe, escritaLiberadaPara, DESATIVADO } = require('../seguranca/papeis');
 const { camadaRecusada } = require('../seguranca/acessoAdmin');
@@ -68,7 +68,7 @@ const middlewareAutenticacao = (req, res, next) => {
   // Navegador: o token vem no cookie httpOnly, fora do alcance do JavaScript
   // (um XSS nao consegue le-lo). Clientes fora do navegador — scripts,
   // integracoes servidor-a-servidor — continuam usando Authorization: Bearer.
-  const tokenCookie = lerCookie(req, NOME_SESSAO);
+  const tokenCookie = lerCookie(req, nomeSessao(req));
   let token = tokenCookie;
 
   if (!token) {
