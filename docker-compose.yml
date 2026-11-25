@@ -162,6 +162,20 @@ services:
       - ./frontend/dist-painel:/usr/share/nginx/html:ro
       - ./frontend/nginx-painel.conf:/etc/nginx/conf.d/default.conf:ro
 
+  # Central de Ajuda (ajuda.sellergycloud.com), publica. O tunel do Cloudflare
+  # leva ajuda.sellergycloud.com -> http://localhost:8089.
+  # Gere antes com `npm run build` dentro de ajuda/. So sobe com --profile ajuda.
+  ajuda:
+    image: nginx:1.27-alpine
+    container_name: sellergy_cloud-ajuda
+    restart: unless-stopped
+    profiles: ["ajuda"]
+    ports:
+      - "127.0.0.1:8089:80"
+    volumes:
+      - ./ajuda/.vitepress/dist:/usr/share/nginx/html:ro
+      - ./ajuda/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
   ngrok:
     image: ngrok/ngrok:latest
     container_name: sellergy_cloud-ngrok
