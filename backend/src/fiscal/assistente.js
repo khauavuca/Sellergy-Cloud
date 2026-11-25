@@ -70,9 +70,14 @@ function validarConfiguracao(corpo = {}, { tipos = ['NFSE', 'NFCE'] } = {}) {
   if (!Number.isInteger(proximo) || proximo < 1 || proximo > 999999999) campos.push('proximoNumero');
   const csc = texto(corpo.csc).slice(0, 60);
   if (tipos.includes('NFCE') && csc.length < 16) campos.push('csc');
+  // ID do CSC (Identificador do token): a SEFAZ mostra junto com o CSC, ex. 000001.
+  const cscId = soDigitos(corpo.cscId).slice(0, 6);
+  if (tipos.includes('NFCE') && !cscId) campos.push('cscId');
   if (campos.length) {
     return {
-      erro: campos.includes('csc') ? 'O CSC (código da SEFAZ para NFC-e) tem pelo menos 16 caracteres.' : 'Confira os campos destacados.',
+      erro: campos.includes('csc')
+        ? 'O CSC (código da SEFAZ para NFC-e) tem pelo menos 16 caracteres.'
+        : campos.includes('cscId') ? 'Informe o ID do CSC (o número que a SEFAZ mostra junto com o código, ex.: 000001).' : 'Confira os campos destacados.',
       campos,
     };
   }
@@ -81,6 +86,7 @@ function validarConfiguracao(corpo = {}, { tipos = ['NFSE', 'NFCE'] } = {}) {
       serie: String(Number(serie)),
       proximoNumero: proximo,
       csc: csc || null,
+      cscId: cscId ? cscId.padStart(6, '0') : null,
       emitirAutomatico: corpo.emitirAutomatico === true,
     },
   };
@@ -112,10 +118,10 @@ function pendencias(config, {
   if (!c.serie) configuracao.push('série');
   if (!c.proximoNumero) configuracao.push('próximo número');
   if (tipos.includes('NFCE') && !c.csc) configuracao.push('CSC da NFC-e');
+  if (tipos.includes('NFCE') && c.csc && !c.cscId) configuracao.push('ID do CSC');
 
   const emissor = [];
-  if (!c.provedor) emissor.push('emissor fiscal');
-  if (!temCredencial) emissor.push('integração com o emissor (chave de acesso)');
+  if (!temCredencial) emissor.push('emissor de notas liberado pela Sellergy');
 
   return {
     empresa,

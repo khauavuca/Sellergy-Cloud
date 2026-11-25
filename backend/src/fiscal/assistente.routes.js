@@ -22,6 +22,7 @@ const {
 
 const emissaoRealLigada = () => String(process.env.FISCAL_LIVE || '').toLowerCase() === 'true';
 const { credencialValida, emitirNotaDeTeste } = require('./emissao');
+const revenda = require('./revenda');
 
 const roteador = express.Router();
 
@@ -33,7 +34,7 @@ const CAMPOS = {
   razaoSocial: true, nomeFantasia: true, cnae: true, emailEmitente: true, telefoneEmitente: true,
   logradouro: true, numero: true, complemento: true, bairro: true, municipio: true, uf: true, cep: true,
   certificadoRef: true, certificadoValidoAte: true, certificadoTitular: true,
-  csc: true, serie: true, proximoNumero: true, emitirAutomatico: true, ambiente: true, ativo: true,
+  csc: true, cscId: true, serie: true, proximoNumero: true, emitirAutomatico: true, ambiente: true, ativo: true,
 };
 
 /**
@@ -65,11 +66,22 @@ async function contexto(clienteId) {
     }),
   ]);
   const tipos = assistente.tiposPorSegmento(cliente?.segmento);
-  const temCredencial = config ? Boolean(await credencialValida(clienteId, config)) : false;
-  return { config, cliente, credenciais, tipos, temCredencial };
+  // Emissor: conta da Sellergy (revenda) ou chave propria do cliente.
+  const fiscais = await revenda.credenciaisFiscais(clienteId);
+  const temChaveRevenda = Boolean(await revenda.chaveRevenda());
+  const usandoRevenda = Boolean(fiscais.revenda && config?.credencialId === fiscais.revenda.id);
+  const emissorModo = revenda.modoEmissor({
+    credencialPropria: !usandoRevenda && fiscais.proprias.length > 0,
+    credencialRevenda: usandoRevenda ? fiscais.revenda : null,
+    temChaveRevenda,
+  });
+  const temCredencial = (config ? Boolean(await credencialValida(clienteId, config)) : false)
+    || (emissorModo === 'SELLERGY' && temChaveRevenda);
+  const proprias = credenciais.filter((cr) => fiscais.proprias.some((p) => p.id === cr.id));
+  return { config, cliente, credenciais: proprias, tipos, temCredencial, emissorModo, temRevenda: Boolean(fiscais.revenda) };
 }
 
-function respostaEstado({ config, cliente, credenciais, tipos, temCredencial }) {
+function respostaEstado({ config, cliente, credenciais, tipos, temCredencial, emissorModo }) {
   const c = config || null;
   const pend = assistente.pendencias(c, { temCredencial, tipos, emissaoReal: emissaoRealLigada() });
   return {
@@ -87,6 +99,8 @@ function respostaEstado({ config, cliente, credenciais, tipos, temCredencial }) 
       precisaReenviar: emissaoRealLigada() && ehRefSimulada(c.certificadoRef),
     } : null,
     pendencias: pend,
+    // SELLERGY: a nota sai pela conta da Sellergy, o cliente nao configura emissor.
+    emissorModo,
     ativo: Boolean(c?.ativo && c?.ambiente === 'PRODUCAO'),
     emissaoReal: emissaoRealLigada(),
   };
@@ -117,7 +131,8 @@ roteador.put('/empresa', async (req, res) => {
     }
     if (!credencialId) {
       const primeira = await prisma.credencial.findFirst({
-        where: { clienteId, tipo: { in: Object.values(TIPO_CREDENCIAL_POR_PROVEDOR) } }, select: { id: true, tipo: true }, orderBy: { criadoEm: 'asc' },
+        where: { clienteId, tipo: { in: Object.values(TIPO_CREDENCIAL_POR_PROVEDOR) }, OR: [{ descricao: null }, { descricao: { not: revenda.MARCA_REVENDA } }] },
+        select: { id: true, tipo: true }, orderBy: { criadoEm: 'asc' },
       });
       if (primeira) { provedor = PROVEDOR_POR_TIPO[primeira.tipo]; credencialId = primeira.id; }
     }
@@ -129,14 +144,20 @@ roteador.put('/empresa', async (req, res) => {
       ...v.dados, provedor, credencialId: credencialId || null,
       ...(trocouCnpj ? { certificadoRef: null, certificadoValidoAte: null, certificadoTitular: null } : {}),
     };
-    await prisma.configuracaoFiscal.upsert({
+    const salva = await prisma.configuracaoFiscal.upsert({
       where: { clienteId },
       // Nasce em homologacao e inativa: so emite de verdade depois do "Ativar".
       create: { clienteId, ...dados, ambiente: 'HOMOLOGACAO', ativo: false },
       update: dados,
     });
+    // Empresa ja cadastrada na conta da Sellergy: leva os dados novos pro emissor.
+    const ctx = await contexto(clienteId);
+    if (ctx.emissorModo === 'SELLERGY' && ctx.temRevenda && !trocouCnpj) {
+      await revenda.sincronizarEmpresa({ clienteId, config: salva, tipos: ctx.tipos });
+    }
     return res.json(respostaEstado(await contexto(clienteId)));
   } catch (e) {
+    if (e.status) return res.status(e.status).json({ erro: e.message, codigo: e.codigo });
     console.error('[fiscal/assistente/empresa]', e);
     return res.status(500).json({ erro: 'Não foi possível salvar os dados da empresa.' });
   }
@@ -170,6 +191,21 @@ roteador.post('/certificado', receberCertificado, async (req, res) => {
     const info = lerCertificadoA1(buffer, senha);
     const recusa = conferirCnpjCertificado(info.cnpj, config.cnpj);
     if (recusa) return res.status(422).json({ erro: recusa.erro, codigo: recusa.codigo, campos: ['certificado'] });
+
+    // Conta da Sellergy: cadastra a empresa com o certificado no emissor.
+    const ctxAntes = await contexto(clienteId);
+    if (ctxAntes.emissorModo === 'SELLERGY') {
+      const { simulado } = await revenda.sincronizarEmpresa({
+        clienteId, config, tipos: ctxAntes.tipos, certificado: { base64: buffer.toString('base64'), senha },
+      });
+      const ref = `FOCUS_NFE:empresa:${String(config.cnpj).replace(/\D/g, '')}`;
+      await prisma.configuracaoFiscal.update({
+        where: { clienteId },
+        data: { certificadoRef: simulado ? `simulado:${ref}` : ref, certificadoValidoAte: info.validoAte, certificadoTitular: info.titular },
+      });
+      return res.json({ ...respostaEstado(await contexto(clienteId)), envioSimulado: simulado });
+    }
+
     const credencial = config.credencialId
       ? await carregarCredencialDecifrada({ credencialId: config.credencialId, clienteId }).catch(() => null)
       : null;
@@ -206,9 +242,14 @@ roteador.put('/configuracao', async (req, res) => {
     }
     const v = assistente.validarConfiguracao(corpo, { tipos: ctx.tipos });
     if (v.erro) return res.status(422).json({ erro: v.erro, campos: v.campos });
-    await prisma.configuracaoFiscal.update({ where: { clienteId }, data: v.dados });
+    const salva = await prisma.configuracaoFiscal.update({ where: { clienteId }, data: v.dados });
+    // Conta da Sellergy: o CSC da NFC-e fica no cadastro da empresa no emissor.
+    if (ctx.emissorModo === 'SELLERGY' && ctx.temRevenda) {
+      await revenda.sincronizarEmpresa({ clienteId, config: salva, tipos: ctx.tipos });
+    }
     return res.json(respostaEstado(await contexto(clienteId)));
   } catch (e) {
+    if (e.status) return res.status(e.status).json({ erro: e.message, codigo: e.codigo });
     console.error('[fiscal/assistente/configuracao]', e);
     return res.status(500).json({ erro: 'Não foi possível salvar a configuração.' });
   }

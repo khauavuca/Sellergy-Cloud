@@ -6,6 +6,11 @@ const assert = require('node:assert');
 const crypto = require('crypto');
 const path = require('path');
 const express = require('express');
+// Os testes do oficial cifram o token de verdade: sem a chave no ambiente
+// (rodando fora do Docker), usa uma chave so de teste.
+process.env.MENSAGENS_MASTER_KEY = process.env.MENSAGENS_MASTER_KEY || crypto.randomBytes(32).toString('base64');
+// Teste nunca fala com a Meta, mesmo se o ambiente estiver com o envio real ligado.
+delete process.env.WHATSAPP_ENVIO_REAL;
 const prisma = require('../prisma');
 // Caixa de entrada fora deste teste (sem gravar no banco de dev).
 Object.assign(require('../conversas/servico'), { registrarSeguro: async () => null, pausaDoContato: async () => false });

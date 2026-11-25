@@ -31,14 +31,24 @@ test('passo Empresa valida CNPJ, regime e endereco', () => {
 test('passo Configuracao exige CSC so quando emite NFC-e', () => {
   assert.ok(a.validarConfiguracao({ serie: '1', proximoNumero: '1' }, { tipos: ['NFCE'] }).campos.includes('csc'));
   const ok = a.validarConfiguracao({ serie: '001', proximoNumero: '152', emitirAutomatico: true }, { tipos: ['NFSE'] });
-  assert.deepStrictEqual(ok.dados, { serie: '1', proximoNumero: 152, csc: null, emitirAutomatico: true });
+  assert.deepStrictEqual(ok.dados, { serie: '1', proximoNumero: 152, csc: null, cscId: null, emitirAutomatico: true });
+});
+
+test('NFC-e pede o ID do CSC junto com o codigo e completa com zeros', () => {
+  const semId = a.validarConfiguracao({ serie: '1', proximoNumero: '1', csc: 'ABCDEF0123456789' }, { tipos: ['NFCE'] });
+  assert.ok(semId.campos.includes('cscId'));
+  assert.match(semId.erro, /ID do CSC/);
+  const ok = a.validarConfiguracao({ serie: '1', proximoNumero: '1', csc: 'ABCDEF0123456789', cscId: '1' }, { tipos: ['NFCE'] });
+  assert.strictEqual(ok.dados.cscId, '000001');
+  const p = a.pendencias({ csc: 'ABCDEF0123456789', serie: '1', proximoNumero: 1 }, { tipos: ['NFCE'] });
+  assert.ok(p.configuracao.includes('ID do CSC'));
 });
 
 test('pendencias por passo e liberacao da nota de teste', () => {
   const vazio = a.pendencias(null, { tipos: ['NFSE'] });
   assert.ok(vazio.empresa.includes('CNPJ'));
   assert.deepStrictEqual(vazio.certificado, ['certificado A1']);
-  assert.ok(vazio.emissor.length === 2);
+  assert.deepStrictEqual(vazio.emissor, ['emissor de notas liberado pela Sellergy']);
   assert.strictEqual(vazio.prontoParaTeste, false);
   const cheio = a.pendencias({
     provedor: 'FOCUS_NFE', cnpj: '11222333000181', razaoSocial: 'X', regime: 'MEI', logradouro: 'R', numero: '1',

@@ -81,8 +81,8 @@ roteador.delete('/credencial-ia', async (req, res) => {
 
 // =====================================================================
 // INTEGRACOES DA PLATAFORMA (tela Admin › Integracoes)
-// Chaves da Sellergy, uma por tipo: a da IA (DeepSeek) e as de revenda fiscal
-// (Focus NFe / Nuvem Fiscal). Pagamento e WhatsApp oficial NAO entram aqui:
+// Chaves da Sellergy, uma por tipo: a da IA (DeepSeek) e a de revenda fiscal
+// (Focus NFe — unico emissor fiscal; ver fiscal/revenda.js). Pagamento e WhatsApp oficial NAO entram aqui:
 // sao sempre do cliente (o Pix cai na conta do dono da chave; o WhatsApp
 // oficial usa o app do proprio cliente na Meta).
 // =====================================================================
@@ -91,7 +91,6 @@ const { carregarCredencialDecifrada } = require('../credenciais');
 const TIPOS_PLATAFORMA = {
   DEEPSEEK_KEY: { nome: 'DeepSeek (plataforma)', campos: ['apiKey'] },
   FOCUS_NFE_KEY: { nome: 'Focus NFe (revenda)', campos: ['token'] },
-  NUVEM_FISCAL_KEY: { nome: 'Nuvem Fiscal (revenda)', campos: ['accessToken', 'clientId', 'clientSecret'] },
 };
 const TIPOS_PAGAMENTO = { MERCADO_PAGO_KEY: 'Mercado Pago', ASAAS_KEY: 'Asaas', PAGARME_KEY: 'Pagar.me' };
 
@@ -156,10 +155,18 @@ function situacaoWhatsapp(bot, temSegredo) {
   return { rotulo: 'Oficial', tom: 'ok' };
 }
 
+/** Regra pura: como mostrar as notas fiscais do cliente. */
+function situacaoNotas(fiscal, idsRevenda = new Set()) {
+  if (!fiscal?.credencialId) return { rotulo: 'Não ativou', tom: 'neutro' };
+  const ativa = fiscal.ativo && fiscal.ambiente === 'PRODUCAO';
+  const origem = idsRevenda.has(fiscal.credencialId) ? 'Sellergy' : 'Chave própria';
+  return ativa ? { rotulo: origem, tom: origem === 'Sellergy' ? 'ok' : 'info' } : { rotulo: `${origem} · em teste`, tom: 'alerta' };
+}
+
 // GET /admin/plataforma/integracoes/clientes — de onde vem cada integracao de cada cliente.
 roteador.get('/integracoes/clientes', async (req, res) => {
   try {
-    const [clientes, bots, fiscais, pagamentos] = await Promise.all([
+    const [clientes, bots, fiscais, credsRevenda, pagamentos] = await Promise.all([
       prisma.cliente.findMany({ select: { id: true, nome: true, status: true }, orderBy: { nome: 'asc' }, take: 500 }),
       prisma.bot.findMany({
         select: {
@@ -168,7 +175,8 @@ roteador.get('/integracoes/clientes', async (req, res) => {
         },
         orderBy: { criadoEm: 'asc' },
       }),
-      prisma.configuracaoFiscal.findMany({ select: { clienteId: true, credencialId: true } }),
+      prisma.configuracaoFiscal.findMany({ select: { clienteId: true, credencialId: true, ativo: true, ambiente: true } }),
+      prisma.credencial.findMany({ where: { clienteId: { not: null }, descricao: 'revenda-sellergy' }, select: { id: true } }),
       prisma.credencial.findMany({
         where: { clienteId: { not: null }, tipo: { in: Object.keys(TIPOS_PAGAMENTO) } },
         select: { clienteId: true, tipo: true },
@@ -177,6 +185,7 @@ roteador.get('/integracoes/clientes', async (req, res) => {
     const botPorCliente = new Map();
     for (const b of bots) if (!botPorCliente.has(b.clienteId)) botPorCliente.set(b.clienteId, b);
     const fiscalPorCliente = new Map(fiscais.map((f) => [f.clienteId, f]));
+    const idsRevenda = new Set(credsRevenda.map((c) => c.id));
     const pagPorCliente = new Map();
     for (const p of pagamentos) {
       const l = pagPorCliente.get(p.clienteId) || [];
@@ -199,7 +208,7 @@ roteador.get('/integracoes/clientes', async (req, res) => {
         nome: c.nome,
         status: c.status,
         whatsapp: situacaoWhatsapp(bot, temSegredo),
-        notas: fiscal?.credencialId ? { rotulo: 'Chave própria', tom: 'info' } : { rotulo: 'Sem emissor', tom: 'neutro' },
+        notas: situacaoNotas(fiscal, idsRevenda),
         ia: bot ? (bot.iaAtiva ? { rotulo: 'Ligada', tom: 'ok' } : { rotulo: 'Desligada', tom: 'neutro' }) : { rotulo: '—', tom: 'neutro' },
         pagamento: pag.length ? { rotulo: pag.join(', '), tom: 'neutro' } : { rotulo: 'Não configurado', tom: 'alerta' },
       });
@@ -222,3 +231,4 @@ roteador.get('/integracoes/clientes', async (req, res) => {
 
 module.exports = roteador;
 module.exports.situacaoWhatsapp = situacaoWhatsapp;
+module.exports.situacaoNotas = situacaoNotas;

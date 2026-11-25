@@ -18,19 +18,9 @@ const CHAVES = [
   },
   {
     tipo: 'FOCUS_NFE_KEY', grupo: 'Notas fiscais', nome: 'Focus NFe', icone: FileText,
-    desc: 'Token de revenda da Sellergy. Fica guardado para quando as notas passarem a usar a conta da plataforma.',
-    campos: [{ campo: 'token', rotulo: 'Token de revenda', exemplo: 'Cole o token' }],
-    ajuda: 'Hoje cada cliente ainda emite com a chave própria (tela Fiscal dele).',
-  },
-  {
-    tipo: 'NUVEM_FISCAL_KEY', grupo: 'Notas fiscais', nome: 'Nuvem Fiscal', icone: FileText,
-    desc: 'Alternativa à Focus NFe, também como conta da Sellergy.',
-    campos: [
-      { campo: 'accessToken', rotulo: 'Access token', exemplo: 'Cole o access token' },
-      { campo: 'clientId', rotulo: 'Client ID (opcional)', exemplo: 'Renova o token sozinho' },
-      { campo: 'clientSecret', rotulo: 'Client secret (opcional)', exemplo: 'Renova o token sozinho' },
-    ],
-    ajuda: 'Hoje cada cliente ainda emite com a chave própria (tela Fiscal dele).',
+    desc: 'Conta de revenda da Sellergy. O assistente fiscal do cliente cadastra a empresa dele aqui, com o certificado.',
+    campos: [{ campo: 'token', rotulo: 'Token Master da conta', exemplo: 'Cole o token master' }],
+    ajuda: 'Sem esta chave, o cliente não consegue ativar a nota fiscal (a não ser que tenha chave própria).',
   },
 ];
 const TOM = { ok: 'success', info: 'info', alerta: 'warning', neutro: 'neutral' };

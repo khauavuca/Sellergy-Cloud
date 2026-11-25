@@ -7,7 +7,7 @@ export const ROTULO_INTEGRACAO = {
   MERCADO_PAGO_KEY: { nome: 'Mercado Pago', desc: 'Cobrança Pix e link de pagamento' },
   ASAAS_KEY: { nome: 'Asaas', desc: 'Cobrança Pix, boleto e cartão' },
   PAGARME_KEY: { nome: 'Pagar.me', desc: 'Cobrança Pix e cartão' },
-  FOCUS_NFE_KEY: { nome: 'Focus NFe', desc: 'Emissão de NFC-e e NFS-e' },
+  FOCUS_NFE_KEY: { nome: 'Focus NFe (conta própria)', desc: 'Só se o cliente já tiver conta na Focus. O normal é a conta da Sellergy.' },
   NUVEM_FISCAL_KEY: { nome: 'Nuvem Fiscal', desc: 'Emissão de NFC-e e NFS-e' },
 };
 
@@ -21,4 +21,6 @@ export const ROTULO_CAMPO = {
 };
 
 // Ordem de exibição das seções.
-export const ORDEM_CATEGORIA = ['Pagamento', 'Fiscal', 'WhatsApp'];
+// WhatsApp saiu daqui: o cliente conecta o oficial na tela Bots (token e
+// segredo do app dele), e a chave ja fica ligada ao bot.
+export const ORDEM_CATEGORIA = ['Pagamento', 'Fiscal'];

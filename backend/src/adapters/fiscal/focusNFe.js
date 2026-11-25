@@ -40,7 +40,12 @@ function mensagemFocus(raw) {
 class FocusNFeAdapter extends ProvedorFiscal {
   static get provedor() { return 'FOCUS_NFE'; }
 
-  get _token() { return this.credencial?.dados?.token || this.credencial?.dados?.apiKey; }
+  // Conta de revenda: a Focus da um token por ambiente (ver fiscal/revenda.js).
+  get _token() {
+    const d = this.credencial?.dados || {};
+    if (this.ambiente !== 'producao' && d.tokenHomologacao) return d.tokenHomologacao;
+    return d.token || d.apiKey;
+  }
 
   _auth() {
     const b64 = Buffer.from(`${this._token || ''}:`).toString('base64');

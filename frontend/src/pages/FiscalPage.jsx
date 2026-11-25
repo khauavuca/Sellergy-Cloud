@@ -23,7 +23,6 @@ const DEST_VAZIO = { nome: '', documento: '', email: '', uf: '', municipio: '' }
 // backend/src/adapters/fiscal/index.js).
 const PROVEDORES = [
   { id: 'FOCUS_NFE', nome: 'Focus NFe', tipoCredencial: 'FOCUS_NFE_KEY' },
-  { id: 'NUVEM_FISCAL', nome: 'Nuvem Fiscal', tipoCredencial: 'NUVEM_FISCAL_KEY' },
 ];
 const TIPO_POR_PROVEDOR = Object.fromEntries(PROVEDORES.map((p) => [p.id, p.tipoCredencial]));
 const NOME_PROVEDOR = Object.fromEntries(PROVEDORES.map((p) => [p.id, p.nome]));

@@ -115,7 +115,7 @@ export default function AssistenteFiscalPage() {
   const [erroCarga, setErroCarga] = useState(null);
   const [passo, setPasso] = useState(1);
   const [empresa, setEmpresa] = useState(EMPRESA_VAZIA);
-  const [config, setConfig] = useState({ serie: '1', proximoNumero: '1', csc: '', emitirAutomatico: false });
+  const [config, setConfig] = useState({ serie: '1', proximoNumero: '1', csc: '', cscId: '', emitirAutomatico: false });
   const [camposErro, setCamposErro] = useState([]);
   const [salvando, setSalvando] = useState(false);
   const [arquivo, setArquivo] = useState(null);
@@ -142,6 +142,7 @@ export default function AssistenteFiscalPage() {
         serie: c.serie || '1',
         proximoNumero: String(c.proximoNumero || 1),
         csc: c.temCsc ? c.csc : '',
+        cscId: c.cscId || '',
         emitirAutomatico: c.emitirAutomatico === true,
       });
     }
@@ -298,7 +299,7 @@ export default function AssistenteFiscalPage() {
 
       <Painel titulo="Resumo" subtitulo="Do que já está salvo" semPadding>
         <LinhaInfo rotulo="Vai emitir" valor={tipos.map((t) => NOME_TIPO[t]).join(' e ') || '—'} />
-        <LinhaInfo rotulo="Emissor" valor={emissorAtual ? emissorAtual.provedorNome : 'Não ligado'} />
+        <LinhaInfo rotulo="Emissor" valor={estado.emissorModo === 'SELLERGY' ? 'Sellergy (Focus NFe)' : emissorAtual ? emissorAtual.provedorNome : 'Não ligado'} />
         <LinhaInfo rotulo="Certificado">
           {cert ? (
             <Badge variant={pend.certificado.length ? 'danger' : certVencendo ? 'warning' : 'success'}>
@@ -451,6 +452,11 @@ export default function AssistenteFiscalPage() {
                   <input id="f-csc" autoComplete="off" className={classeCampo(err('csc'))} value={config.csc} onChange={(e) => setConfig((c) => ({ ...c, csc: e.target.value }))} />
                 </Campo>
               )}
+              {tipos.includes('NFCE') && (
+                <Campo id="f-csc-id" rotulo="ID do CSC" erro={err('cscId')} ajuda="O número que a SEFAZ mostra junto com o CSC (ex.: 000001).">
+                  <input id="f-csc-id" inputMode="numeric" autoComplete="off" className={classeCampo(err('cscId'))} value={config.cscId} onChange={(e) => setConfig((c) => ({ ...c, cscId: e.target.value }))} />
+                </Campo>
+              )}
             </div>
             <div className="flex items-start justify-between gap-4 px-4 py-3 border-t border-[var(--border-subtle)]">
               <div className="min-w-0">
@@ -471,7 +477,7 @@ export default function AssistenteFiscalPage() {
               <p className="text-[13px] text-[var(--text-secondary)]">Mandamos uma nota de R$ 1,00 pro ambiente de teste. Não vale como nota de verdade.</p>
               <Falta itens={[...pend.empresa, ...pend.certificado, ...pend.configuracao, ...pend.emissor]} />
               {pend.emissor.length > 0 && (
-                <p className="text-[13px] text-[var(--text-secondary)]">A integração com o emissor da nota é ligada pelo suporte do Sellergy. Fale com a gente pelo chat e avisamos quando estiver pronta.</p>
+                <p className="text-[13px] text-[var(--text-secondary)]">A emissão de notas ainda não foi liberada para a sua conta. Fale com a gente pelo chat e avisamos quando estiver pronta.</p>
               )}
               {erroTeste && <p role="alert" className="text-[13px] text-[var(--danger-text)] flex items-start gap-2"><AlertTriangle size={16} className="mt-0.5 flex-shrink-0" aria-hidden />{erroTeste}</p>}
             </div>

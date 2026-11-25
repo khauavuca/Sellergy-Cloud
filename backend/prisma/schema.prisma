@@ -1316,6 +1316,7 @@ model ConfiguracaoFiscal {
   cep            String?
   certificadoRef String? // referencia segura ao certificado digital (nunca o conteudo)
   csc            String? // Codigo de Seguranca do Contribuinte (NFC-e)
+  cscId          String? // ID do CSC (Identificador do token na SEFAZ, ex. 000001)
   serie          String?
   ambiente       AmbienteFiscal @default(HOMOLOGACAO)
   ativo          Boolean        @default(true)
