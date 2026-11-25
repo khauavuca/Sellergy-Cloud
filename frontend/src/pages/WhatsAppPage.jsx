@@ -285,6 +285,7 @@ export default function WhatsAppPage() {
         carregandoMais={carregandoAntigas}
         onMais={carregarAntigas}
         onEnviar={enviar}
+        onMensagem={(mensagem) => mensagem && setMensagens((m) => (m.itens.some((x) => x.id === mensagem.id) ? m : { ...m, itens: [...m.itens, mensagem] }))}
         onPausar={pausar}
         onRetomar={retomar}
         onVoltar={() => setPainel('lista')}

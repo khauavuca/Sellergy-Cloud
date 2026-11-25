@@ -24,6 +24,23 @@ const { requerModuloLiberado, requerPermissao, ehAdmin } = require('../middlewar
 const regras = require('../conversas/regras');
 const conversas = require('../conversas/servico');
 const { temRecurso } = require('../planos/recursos');
+const multer = require('multer');
+const midia = require('../conversas/midia');
+
+// Arquivo da tela (foto, video, audio gravado, documento, figurinha).
+// Em memoria: o maior permitido (documento) e 100 MB, mas a tela limita a 25 MB.
+const TAM_MAX_ENVIO = 25 * 1024 * 1024;
+const receberArquivo = multer({ storage: multer.memoryStorage(), limits: { fileSize: TAM_MAX_ENVIO, files: 1 } }).single('arquivo');
+function aceitarArquivo(req, res, next) {
+  receberArquivo(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ erro: 'Arquivo grande demais (máximo 25 MB).' });
+    return res.status(400).json({ erro: 'Não foi possível receber o arquivo.' });
+  });
+}
+// Executavel e script nao viram anexo (nem pro cliente, nem pra equipe).
+const EXT_BLOQUEADA = /\.(exe|bat|cmd|com|msi|scr|ps1|vbs|js|jar|sh|apk|dll|html?|svg)$/i;
+
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -328,6 +345,136 @@ roteador.post('/:id/mensagens', responder, async (req, res) => {
     res.status(201).json({ mensagem: registro.mensagem, conversa: resumo });
   } catch (e) {
     erro500(res, 'responder', e);
+  }
+});
+
+// ---------- midia, nota interna e reacao ----------
+
+/** Abre (ou baixa) a midia de uma mensagem da conversa. */
+roteador.get('/:id/midia/:mensagemId', ver, async (req, res) => {
+  try {
+    const conversa = await conversaDoNegocio(req);
+    if (!conversa) return naoEncontrada(res);
+    const mensagem = await prisma.mensagemConversa.findFirst({
+      where: { id: String(req.params.mensagemId || ''), conversaId: conversa.id, clienteId: req.usuario.clienteId },
+      select: { midiaChave: true, midiaMime: true, midiaNome: true },
+    });
+    return midia.enviarAoNavegador(res, mensagem, { baixarArquivo: req.query.baixar === '1' });
+  } catch (e) {
+    return erro500(res, 'midia', e);
+  }
+});
+
+/** Equipe manda foto, video, GIF, audio, voz (gravada na tela), documento ou figurinha. */
+roteador.post('/:id/midia', responder, aceitarArquivo, async (req, res) => {
+  try {
+    const clienteId = req.usuario.clienteId;
+    if (!req.file) return res.status(422).json({ erro: 'Escolha um arquivo.', campos: ['arquivo'] });
+    if (EXT_BLOQUEADA.test(req.file.originalname || '')) return res.status(415).json({ erro: 'Esse tipo de arquivo não pode ser enviado.' });
+    const conversa = await conversaDoNegocio(req);
+    if (!conversa) return naoEncontrada(res);
+    const canal = await canalDoNegocio(clienteId);
+    if (!canal.conectado) return res.status(409).json({ erro: 'Conecte o WhatsApp em "Bots e conexão" para responder.', codigo: 'WHATSAPP_DESCONECTADO' });
+    if (!regras.dentroDaJanela({ canal: canal.provedor, ultimaEntradaEm: conversa.ultimaEntradaEm })) {
+      return res.status(422).json({ erro: 'No WhatsApp oficial só dá para enviar até 24 horas depois da última mensagem do cliente.', codigo: 'FORA_DA_JANELA' });
+    }
+    const legenda = typeof req.body?.legenda === 'string' ? req.body.legenda.trim().slice(0, 1000) : '';
+    const pedido = String(req.body?.tipo || '').toUpperCase();
+    const tipo = midia.tipoPeloMime(req.file.mimetype, { voz: pedido === 'VOZ', gif: pedido === 'GIF', figurinha: pedido === 'FIGURINHA' });
+    const segundos = Number.parseInt(req.body?.segundos, 10) || null;
+    let buffer = req.file.buffer;
+    let mime = req.file.mimetype;
+    let nome = req.file.originalname;
+    // Voz gravada na tela: converte pro OGG/Opus do WhatsApp (senao nao toca no celular).
+    if (tipo === 'VOZ' && !/ogg/.test(midia.mimeBase(mime))) {
+      try {
+        buffer = await midia.converterParaVoz(buffer);
+        mime = 'audio/ogg';
+        nome = 'mensagem-de-voz.ogg';
+      } catch (e) {
+        console.error('[conversas] conversao de voz', e?.message);
+        return res.status(422).json({ erro: 'Não foi possível preparar a mensagem de voz. Tente gravar de novo.' });
+      }
+    }
+    const guardado = await midia.guardar({ clienteId, conversaId: conversa.id, buffer, mime, nome, tipo });
+    const usuario = await prisma.usuario.findUnique({ where: { id: req.usuario.id }, select: { nome: true } });
+    const real = regras.envioRealLigado(canal.provedor);
+    const respondeAId = typeof req.body?.respondeAId === 'string' ? req.body.respondeAId.slice(0, 120) : null;
+    const registro = await conversas.registrarMensagem({
+      clienteId, telefone: conversa.telefone, texto: legenda, tipo, direcao: 'SAIDA', origem: 'EQUIPE',
+      botId: canal.botId, canal: canal.provedor, autorUsuarioId: req.usuario.id, autorNome: usuario?.nome || null,
+      status: real ? 'PENDENTE' : 'SIMULADA', midiaSegundos: segundos, respondeAId, ...guardado,
+      dadosConversa: { ...regras.pausaAoResponder(conversa), naoLidas: 0 },
+    });
+    if (!registro) return res.status(422).json({ erro: 'Telefone da conversa inválido.' });
+    if (real) {
+      // Os dois canais saem pela fila (o socket do QR Code vive no worker).
+      const { enfileirarMensagemTenant } = require('../filas');
+      await enfileirarMensagemTenant({
+        clienteId, para: conversa.telefoneEnvio, texto: legenda, tipo: 'conversa', mensagemConversaId: registro.mensagem.id,
+        midia: { chave: guardado.midiaChave, mime: guardado.midiaMime, nome: guardado.midiaNome, tipo, segundos, respondeAId },
+      }).catch(async (e) => {
+        console.error('[conversas] falha ao enfileirar midia', e?.message);
+        await conversas.atualizarStatusMensagem(registro.mensagem.id, { status: 'FALHOU', erro: 'Fila indisponível.' }).catch(() => {});
+        registro.mensagem.status = 'FALHOU';
+      });
+    } else {
+      console.log(`[conversas:SIMULADO] ${canal.provedor} ${tipo} -> final ${conversa.telefoneEnvio.slice(-4)}`);
+    }
+    const [resumo] = await comNomes([registro.conversa]);
+    return res.status(201).json({ mensagem: registro.mensagem, conversa: resumo });
+  } catch (e) {
+    if (e?.status) return res.status(e.status).json({ erro: e.message });
+    return erro500(res, 'enviar midia', e);
+  }
+});
+
+/** Nota interna: fica na conversa, so a equipe ve, nao vai pro WhatsApp. */
+roteador.post('/:id/nota', responder, async (req, res) => {
+  try {
+    const texto = typeof req.body?.texto === 'string' ? req.body.texto.trim() : '';
+    if (!texto) return res.status(422).json({ erro: 'Escreva a nota.', campos: ['texto'] });
+    const conversa = await conversaDoNegocio(req);
+    if (!conversa) return naoEncontrada(res);
+    const usuario = await prisma.usuario.findUnique({ where: { id: req.usuario.id }, select: { nome: true } });
+    const registro = await conversas.registrarMensagem({
+      clienteId: req.usuario.clienteId, telefone: conversa.telefone, texto: texto.slice(0, 4000), tipo: 'NOTA',
+      direcao: 'SAIDA', origem: 'EQUIPE', autorUsuarioId: req.usuario.id, autorNome: usuario?.nome || null,
+    });
+    if (!registro) return res.status(422).json({ erro: 'Não foi possível salvar a nota.' });
+    return res.status(201).json({ mensagem: registro.mensagem });
+  } catch (e) {
+    return erro500(res, 'nota', e);
+  }
+});
+
+/** Reagir com emoji a uma mensagem (emoji vazio tira a reacao). */
+roteador.post('/:id/reacao', responder, async (req, res) => {
+  try {
+    const conversa = await conversaDoNegocio(req);
+    if (!conversa) return naoEncontrada(res);
+    const alvo = await prisma.mensagemConversa.findFirst({
+      where: { id: String(req.body?.mensagemId || ''), conversaId: conversa.id }, select: { id: true, idExterno: true, direcao: true },
+    });
+    if (!alvo?.idExterno) return res.status(422).json({ erro: 'Essa mensagem não pode receber reação.' });
+    const emoji = typeof req.body?.emoji === 'string' ? req.body.emoji.slice(0, 8) : '';
+    const canal = await canalDoNegocio(req.usuario.clienteId);
+    if (!canal.conectado) return res.status(409).json({ erro: 'WhatsApp desconectado.', codigo: 'WHATSAPP_DESCONECTADO' });
+    const registro = await conversas.registrarMensagem({
+      clienteId: req.usuario.clienteId, telefone: conversa.telefone, texto: emoji, tipo: 'REACAO', direcao: 'SAIDA', origem: 'EQUIPE',
+      canal: canal.provedor, botId: canal.botId, extra: { emoji, alvo: alvo.idExterno },
+      status: regras.envioRealLigado(canal.provedor) ? 'PENDENTE' : 'SIMULADA',
+    });
+    if (regras.envioRealLigado(canal.provedor)) {
+      const { enfileirarMensagemTenant } = require('../filas');
+      await enfileirarMensagemTenant({
+        clienteId: req.usuario.clienteId, para: conversa.telefoneEnvio, texto: emoji, tipo: 'conversa', mensagemConversaId: registro?.mensagem?.id,
+        reacao: { alvoId: alvo.idExterno, emoji, deMim: alvo.direcao === 'SAIDA' },
+      }).catch((e) => console.error('[conversas] reacao', e?.message));
+    }
+    return res.status(201).json({ mensagem: registro?.mensagem || null });
+  } catch (e) {
+    return erro500(res, 'reacao', e);
   }
 });
 

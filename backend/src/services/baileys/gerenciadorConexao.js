@@ -31,7 +31,10 @@ const {
   isJidBroadcast,
   isJidGroup,
   isJidNewsletter,
+  downloadMediaMessage,
 } = require('@whiskeysockets/baileys');
+const { lerConteudo } = require('./conteudoMensagem');
+const midiaConversa = require('../../conversas/midia');
 
 const prisma = require('../../prisma');
 const { criarAuthState, limparAuthState } = require('./authStateStore');
@@ -218,14 +221,36 @@ async function tratarMensagemRecebida(botInicial, upsert) {
   const adapter = criarProvedorWhatsapp('BAILEYS', { modo: 'live', socket: sock });
 
   for (const msg of upsert.messages || []) {
-    if (msg.key?.fromMe) continue;
     const remoteJid = msg.key?.remoteJid || '';
     const de = await resolverTelefone(sock, msg.key);
     if (!de) {
       if (remoteJid.endsWith('@lid')) console.warn(`[baileys] contato LID sem numero conhecido (bot ${bot.id}): ignorada`);
       continue; // grupo, status, canal: fora do modelo 1:1
     }
-    const texto = textoDaMensagem(msg);
+    const conteudo = lerConteudo(msg);
+    if (!conteudo) continue;
+
+    // Mensagem mandada pelo proprio celular do negocio (fora do sistema): entra
+    // na conversa como da equipe, pra o historico ficar completo. As que o
+    // sistema mandou ja estao gravadas (mesmo id) e sao puladas.
+    if (msg.key?.fromMe) {
+      const jaTem = msg.key.id
+        ? await prisma.mensagemConversa.findFirst({ where: { clienteId: bot.clienteId, idExterno: msg.key.id }, select: { id: true } }).catch(() => null)
+        : null;
+      if (!jaTem) {
+        await registrarConteudo({ sock, bot, msg, de, conteudo, direcao: 'SAIDA', origem: 'EQUIPE', autorNome: 'Celular' });
+      }
+      continue;
+    }
+
+    // Midia, localizacao, contato, reacao: guarda na conversa (com o arquivo)
+    // e, se tiver legenda, a legenda segue pro bot como texto.
+    if (conteudo.tipo !== 'TEXTO') {
+      await sock.readMessages([msg.key]).catch(() => {});
+      await registrarConteudo({ sock, bot, msg, de, conteudo, direcao: 'ENTRADA', origem: 'CONTATO', nomeContato: msg.pushName || null });
+      continue;
+    }
+    const texto = conteudo.texto;
     if (!texto) continue;
 
     if (envioHumano.ehPedidoDeSaida(texto)) {
@@ -254,6 +279,32 @@ async function tratarMensagemRecebida(botInicial, upsert) {
     where: { id: bot.id },
     data: { totalMensagens: { increment: upsert.messages?.length || 0 }, ultimaAtividadeEm: new Date() },
   }).catch((e) => console.error('[baileys/stats]', e?.message));
+}
+
+/** Grava na conversa uma mensagem que nao e so texto (baixa e guarda a midia). */
+async function registrarConteudo({ sock, bot, msg, de, conteudo, direcao, origem, nomeContato = null, autorNome = null }) {
+  let campos = {};
+  if (conteudo.midia) {
+    try {
+      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { reuploadRequest: sock.updateMediaMessage });
+      campos = await midiaConversa.guardar({
+        clienteId: bot.clienteId, conversaId: de, buffer, mime: conteudo.midia.mime, nome: conteudo.midia.nome, tipo: conteudo.tipo,
+      });
+    } catch (e) {
+      console.error(`[baileys/midia] nao deu pra baixar ${conteudo.tipo} (bot ${bot.id}):`, e?.message);
+      campos = { extra: { ...(conteudo.extra || {}), falhaDownload: true } };
+    }
+  }
+  await conversas.registrarSeguro({
+    clienteId: bot.clienteId, telefone: de, botId: bot.id, canal: 'BAILEYS',
+    direcao, origem, nomeContato, autorNome,
+    texto: conteudo.texto || '', tipo: conteudo.tipo,
+    midiaSegundos: conteudo.midia?.segundos ?? null,
+    extra: campos.extra || conteudo.extra || (conteudo.visualizacaoUnica ? { visualizacaoUnica: true } : undefined),
+    respondeAId: conteudo.respondeAId || null,
+    idExterno: msg.key?.id || null,
+    ...(campos.midiaChave ? { midiaChave: campos.midiaChave, midiaMime: campos.midiaMime, midiaNome: campos.midiaNome, midiaTamanho: campos.midiaTamanho } : {}),
+  });
 }
 
 // ---------- conexao ----------

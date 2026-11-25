@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import api from '../../services/api';
+import ConteudoMensagem from './ConteudoMensagem';
 import clsx from 'clsx';
-import { ArrowLeft, Bot, Send, ShieldCheck, UserRound, Hand, Undo2, AlertTriangle } from 'lucide-react';
-import { Badge, Button, IconButton, Dropdown, DropdownItem } from '../ui';
+import { ArrowLeft, Bot, Send, ShieldCheck, UserRound, Hand, Undo2, AlertTriangle, Paperclip, Mic, Square, X, Lock, SmilePlus } from 'lucide-react';
+import { Badge, Button, IconButton, Dropdown, DropdownItem, useToast } from '../ui';
 import AtalhosResposta from './AtalhosResposta';
 import {
   ROTULO_ORIGEM, ROTULO_STATUS, NOME_CANAL, chaveDia, formatarTelefone, hora, iniciais, nomeDaConversa, rotuloDia,
@@ -9,7 +11,27 @@ import {
 
 const LIMITE = 4096;
 
-function Bolha({ m }) {
+const EMOJIS_RAPIDOS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+function Bolha({ m, conversaId, onReagir, podeReagir }) {
+  // Nota interna: so a equipe ve, nao foi pro WhatsApp.
+  if (m.tipo === 'NOTA') {
+    return (
+      <div className="self-center max-w-[85%] sm:max-w-[72%] px-3 py-2 rounded-[10px] border border-dashed border-[var(--warning)] bg-[var(--warning-soft)] text-[12.5px] text-[var(--warning-text)]">
+        <span className="flex items-center gap-1 font-bold text-[11px]"><Lock size={11} aria-hidden="true" />Nota interna{m.autorNome ? ` · ${m.autorNome}` : ''} · {hora(m.criadoEm)}</span>
+        <div className="whitespace-pre-wrap [overflow-wrap:anywhere] mt-0.5">{m.texto}</div>
+      </div>
+    );
+  }
+  // Reacao: linha pequena (quem reagiu e com o que).
+  if (m.tipo === 'REACAO') {
+    const entradaR = m.direcao === 'ENTRADA';
+    return (
+      <div className={clsx('text-[11px] text-[var(--text-muted)] px-1', entradaR ? 'self-start' : 'self-end')}>
+        {entradaR ? 'Cliente reagiu' : 'Você reagiu'} {m.extra?.emoji || m.texto || '(tirou a reação)'} · {hora(m.criadoEm)}
+      </div>
+    );
+  }
   const entrada = m.direcao === 'ENTRADA';
   const automatica = !entrada && m.origem !== 'EQUIPE';
   return (
@@ -31,8 +53,19 @@ function Bolha({ m }) {
       {!entrada && m.origem === 'EQUIPE' && m.autorNome && (
         <span className="block text-[11px] font-bold text-[var(--success-text)] mb-0.5">{m.autorNome}</span>
       )}
-      <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">{m.texto}</div>
+      <ConteudoMensagem m={m} conversaId={conversaId} />
       <span className="flex justify-end gap-1.5 items-center text-[11px] text-[var(--text-muted)] mt-1">
+        {podeReagir && m.idExterno && (
+          <Dropdown align={entrada ? 'left' : 'right'} trigger={
+            <button type="button" aria-label="Reagir" className="mr-auto opacity-60 hover:opacity-100 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"><SmilePlus size={13} /></button>
+          }>
+            <div className="flex gap-1 px-2 py-1">
+              {EMOJIS_RAPIDOS.map((e) => (
+                <button key={e} type="button" onClick={() => onReagir(m, e)} className="text-lg leading-none p-1 rounded hover:bg-[var(--bg-subtle)]" aria-label={`Reagir com ${e}`}>{e}</button>
+              ))}
+            </div>
+          </Dropdown>
+        )}
         {ROTULO_STATUS[m.status] && (
           <span className={clsx(m.status === 'FALHOU' && 'text-[var(--danger-text)] font-semibold')} title={m.erro || undefined}>
             {ROTULO_STATUS[m.status]}
@@ -59,9 +92,15 @@ function avisoEnvio({ canal, conversa }) {
 
 export default function ConversaAberta({
   conversa, canal, atalhos, mensagens, carregando, temMais, carregandoMais, onMais,
-  onEnviar, onPausar, onRetomar, onVoltar, onFicha, podeResponder, className,
+  onEnviar, onPausar, onRetomar, onVoltar, onFicha, podeResponder, className, onMensagem,
 }) {
+  const toast = useToast();
   const [rascunho, setRascunho] = useState('');
+  const [modo, setModo] = useState('mensagem'); // mensagem | nota
+  const [arquivo, setArquivo] = useState(null); // { file, previa, figurinha }
+  const [gravando, setGravando] = useState(null); // { inicio }
+  const gravador = useRef(null);
+  const entradaArquivo = useRef(null);
   const [enviando, setEnviando] = useState(false);
   const rolagem = useRef(null);
   const campo = useRef(null);
@@ -96,14 +135,106 @@ export default function ConversaAberta({
   const bloqueado = !podeResponder || !canal?.conectado
     || (canal?.provedor === 'META_CLOUD' && canal?.envioReal && (!conversa?.janelaAte || new Date(conversa.janelaAte) < new Date()));
 
+  const anexar = (file) => {
+    if (!file) return;
+    if (file.size > 25 * 1024 * 1024) { toast.error('Arquivo grande demais (máximo 25 MB).'); return; }
+    const previa = file.type.startsWith('image/') || file.type.startsWith('video/') ? URL.createObjectURL(file) : null;
+    setArquivo({ file, previa, figurinha: false });
+  };
+  const tirarArquivo = () => setArquivo((a) => { if (a?.previa) URL.revokeObjectURL(a.previa); return null; });
+
+  const enviarArquivo = async (file, { tipo, segundos, legenda } = {}) => {
+    const f = new FormData();
+    f.append('arquivo', file, file.name || 'arquivo');
+    if (legenda) f.append('legenda', legenda);
+    if (tipo) f.append('tipo', tipo);
+    if (segundos) f.append('segundos', String(segundos));
+    const r = await api.post(`/conversas/${conversa.id}/midia`, f);
+    onMensagem?.(r.data.mensagem);
+  };
+
   const enviar = async () => {
     const texto = rascunho.trim();
-    if (!texto || enviando || bloqueado) return;
+    if (enviando) return;
+    // Nota interna: nao depende do WhatsApp estar conectado.
+    if (modo === 'nota') {
+      if (!texto) return;
+      setEnviando(true);
+      try {
+        const r = await api.post(`/conversas/${conversa.id}/nota`, { texto });
+        onMensagem?.(r.data.mensagem);
+        setRascunho('');
+      } catch (e) {
+        toast.error(e.response?.data?.erro || 'Não foi possível salvar a nota.');
+      } finally {
+        setEnviando(false);
+      }
+      return;
+    }
+    if (bloqueado) return;
+    if (arquivo) {
+      setEnviando(true);
+      try {
+        await enviarArquivo(arquivo.file, { tipo: arquivo.figurinha ? 'FIGURINHA' : undefined, legenda: texto });
+        tirarArquivo();
+        setRascunho('');
+      } catch (e) {
+        toast.error(e.response?.data?.erro || 'Não foi possível enviar o arquivo.');
+      } finally {
+        setEnviando(false);
+      }
+      return;
+    }
+    if (!texto) return;
     setEnviando(true);
     const ok = await onEnviar(texto);
     setEnviando(false);
     if (ok) setRascunho('');
     campo.current?.focus();
+  };
+
+  // Mensagem de voz gravada na tela (o servidor converte pro formato do WhatsApp).
+  const gravar = async () => {
+    if (gravando) {
+      gravador.current?.stop();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      const partes = [];
+      const inicio = Date.now();
+      rec.ondataavailable = (e) => { if (e.data.size) partes.push(e.data); };
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setGravando(null);
+        const segundos = Math.round((Date.now() - inicio) / 1000);
+        if (segundos < 1 || !partes.length) return;
+        const blob = new Blob(partes, { type: rec.mimeType || 'audio/webm' });
+        setEnviando(true);
+        try {
+          await enviarArquivo(new File([blob], 'voz.webm', { type: blob.type }), { tipo: 'VOZ', segundos });
+        } catch (e) {
+          toast.error(e.response?.data?.erro || 'Não foi possível enviar a mensagem de voz.');
+        } finally {
+          setEnviando(false);
+        }
+      };
+      gravador.current = rec;
+      rec.start();
+      setGravando({ inicio });
+    } catch {
+      toast.error('Não deu para usar o microfone. Confira a permissão do navegador.');
+    }
+  };
+
+  const reagir = async (m, emoji) => {
+    try {
+      const r = await api.post(`/conversas/${conversa.id}/reacao`, { mensagemId: m.id, emoji });
+      if (r.data?.mensagem) onMensagem?.(r.data.mensagem);
+    } catch (e) {
+      toast.error(e.response?.data?.erro || 'Não foi possível reagir.');
+    }
   };
 
   const inserir = (texto) => {
@@ -180,16 +311,52 @@ export default function ConversaAberta({
           <div key={it.chave} className="self-center text-[11px] font-semibold text-[var(--text-secondary)] bg-[var(--bg-card)] border border-[var(--border-main)] rounded-[10px] px-2.5 py-0.5">
             {it.dia}
           </div>
-        ) : <Bolha key={it.m.id} m={it.m} />))}
+        ) : <Bolha key={it.m.id} m={it.m} conversaId={conversa.id} podeReagir={podeResponder && !bloqueado} onReagir={reagir} />))}
       </div>
 
       <div className="border-t border-[var(--border-subtle)] px-3 sm:px-4 py-3 flex flex-col gap-2.5">
         {podeResponder && <AtalhosResposta atalhos={atalhos} conversa={conversa} onInserir={inserir} desabilitado={bloqueado} />}
+        {podeResponder && (
+          <div className="flex items-center gap-1" role="tablist" aria-label="Tipo de mensagem">
+            {[['mensagem', 'Mensagem'], ['nota', 'Nota interna']].map(([v, r]) => (
+              <button key={v} type="button" role="tab" aria-selected={modo === v} onClick={() => setModo(v)}
+                className={clsx('min-h-7 px-2.5 rounded-md text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]',
+                  modo === v ? (v === 'nota' ? 'bg-[var(--warning-soft)] text-[var(--warning-text)]' : 'bg-[var(--bg-subtle)] text-[var(--text-main)]') : 'text-[var(--text-muted)] hover:text-[var(--text-main)]')}>
+                {r}
+              </button>
+            ))}
+            {modo === 'nota' && <span className="text-[11px] text-[var(--text-muted)] ml-1">só a equipe vê, não vai pro WhatsApp</span>}
+          </div>
+        )}
+        {arquivo && modo === 'mensagem' && (
+          <div className="flex items-center gap-2 p-2 rounded-lg border border-[var(--border-main)] bg-[var(--bg-subtle)]">
+            {arquivo.previa && arquivo.file.type.startsWith('image/') && <img src={arquivo.previa} alt="" className="w-12 h-12 rounded object-cover" />}
+            {arquivo.previa && arquivo.file.type.startsWith('video/') && <video src={arquivo.previa} className="w-12 h-12 rounded object-cover" muted />}
+            <span className="min-w-0 flex-1 text-[12px]">
+              <span className="block font-semibold truncate">{arquivo.file.name}</span>
+              <span className="text-[var(--text-muted)]">{Math.max(1, Math.round(arquivo.file.size / 1024))} KB · a mensagem vira legenda</span>
+              {arquivo.file.type === 'image/webp' && (
+                <label className="flex items-center gap-1.5 mt-0.5 cursor-pointer">
+                  <input type="checkbox" checked={arquivo.figurinha} onChange={(e) => setArquivo((a) => ({ ...a, figurinha: e.target.checked }))} />
+                  Enviar como figurinha
+                </label>
+              )}
+            </span>
+            <IconButton icon={X} ariaLabel="Tirar o arquivo" size="sm" onClick={tirarArquivo} />
+          </div>
+        )}
         {podeResponder ? (
           <form
             className="flex gap-2 items-end"
             onSubmit={(e) => { e.preventDefault(); enviar(); }}
           >
+            {modo === 'mensagem' && (
+              <>
+                <IconButton icon={Paperclip} ariaLabel="Anexar foto, vídeo, áudio ou documento" disabled={bloqueado || Boolean(gravando)} onClick={() => entradaArquivo.current?.click()} />
+                <input ref={entradaArquivo} type="file" className="hidden" tabIndex={-1}
+                  onChange={(e) => { anexar(e.target.files?.[0]); e.target.value = ''; }} />
+              </>
+            )}
             <label htmlFor="resposta-whatsapp" className="sr-only">Mensagem para {nome}</label>
             <textarea
               id="resposta-whatsapp"
@@ -197,17 +364,24 @@ export default function ConversaAberta({
               rows={1}
               value={rascunho}
               maxLength={LIMITE}
-              disabled={bloqueado}
               onChange={(e) => setRascunho(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); enviar(); }
               }}
-              placeholder={bloqueado ? 'Responder está indisponível agora' : 'Escreva uma mensagem (Enter envia, Shift+Enter quebra linha)'}
+              disabled={modo === 'mensagem' && (bloqueado || Boolean(gravando))}
+              placeholder={modo === 'nota' ? 'Nota interna (só a equipe vê)' : gravando ? 'Gravando mensagem de voz…' : bloqueado ? 'Responder está indisponível agora' : arquivo ? 'Legenda (opcional)' : 'Escreva uma mensagem (Enter envia, Shift+Enter quebra linha)'}
               className="flex-1 min-w-0 min-h-10 max-h-40 resize-none field-sizing-content px-3 py-2 rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)] text-[13px] text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--primary)] focus:shadow-[var(--shadow-focus)] disabled:opacity-60"
             />
-            <Button type="submit" icon={Send} loading={enviando} disabled={!rascunho.trim() || bloqueado}>
-              <span className="max-sm:sr-only">Enviar</span>
-            </Button>
+            {modo === 'mensagem' && !rascunho.trim() && !arquivo ? (
+              <Button type="button" variant={gravando ? 'danger' : 'secondary'} icon={gravando ? Square : Mic} loading={enviando && !gravando}
+                disabled={bloqueado} onClick={gravar} aria-label={gravando ? 'Parar e enviar a mensagem de voz' : 'Gravar mensagem de voz'}>
+                <span className="max-sm:sr-only">{gravando ? 'Parar e enviar' : 'Voz'}</span>
+              </Button>
+            ) : (
+              <Button type="submit" icon={modo === 'nota' ? Lock : Send} loading={enviando} disabled={modo === 'mensagem' ? (bloqueado || (!rascunho.trim() && !arquivo)) : !rascunho.trim()}>
+                <span className="max-sm:sr-only">{modo === 'nota' ? 'Salvar nota' : 'Enviar'}</span>
+              </Button>
+            )}
           </form>
         ) : (
           <p className="m-0 text-xs text-[var(--text-muted)]">Você pode ler as conversas, mas responder precisa da permissão de editar Clientes.</p>

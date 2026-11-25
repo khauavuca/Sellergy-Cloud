@@ -93,6 +93,29 @@ class BaileysAdapter extends ProvedorWhatsApp {
       { tipo, textoParaDigitar: pergunta });
   }
 
+  /**
+   * Foto, video, GIF, audio, mensagem de voz, documento ou figurinha a partir
+   * do arquivo (Buffer). Voz vai como "bolinha" (ptt).
+   */
+  enviarMidia({ para, tipo, buffer, mime, nome, legenda, segundos, tipoEnvio = 'conversa' }) {
+    const montar = {
+      IMAGEM: () => ({ image: buffer, caption: legenda || undefined, mimetype: mime }),
+      VIDEO: () => ({ video: buffer, caption: legenda || undefined, mimetype: mime }),
+      GIF: () => ({ video: buffer, caption: legenda || undefined, gifPlayback: true, mimetype: mime }),
+      AUDIO: () => ({ audio: buffer, mimetype: mime, ptt: false, seconds: segundos || undefined }),
+      VOZ: () => ({ audio: buffer, mimetype: 'audio/ogg; codecs=opus', ptt: true, seconds: segundos || undefined }),
+      DOCUMENTO: () => ({ document: buffer, mimetype: mime || 'application/octet-stream', fileName: nome || 'arquivo', caption: legenda || undefined }),
+      FIGURINHA: () => ({ sticker: buffer, mimetype: mime || 'image/webp' }),
+    }[tipo];
+    if (!montar) return Promise.resolve({ ok: false, erro: `Tipo de mídia não suportado: ${tipo}` });
+    return this._enviar(`${tipo.toLowerCase()} -> ${para}`, para, montar(), { tipo: tipoEnvio, textoParaDigitar: legenda || '' });
+  }
+
+  /** Reacao com emoji (emoji vazio tira a reacao). */
+  enviarReacao({ para, alvoId, emoji, deMim = false }) {
+    return this._enviar(`reacao -> ${para}`, para, { react: { text: emoji || '', key: { remoteJid: paraJid(para), id: alvoId, fromMe: deMim } } });
+  }
+
   async enviarTemplate() {
     throw Object.assign(new Error('Templates HSM não existem no WhatsApp Web.'), {
       status: 501, codigo: 'BAILEYS_TEMPLATE_INDISPONIVEL',

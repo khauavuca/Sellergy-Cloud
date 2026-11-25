@@ -9,6 +9,7 @@
 // Tudo aqui e "best-effort" pra quem chama do atendimento: gravar a conversa
 // nunca pode derrubar a resposta do bot (use registrarSeguro).
 
+const midia = require('./midia');
 const porTelefone = require('../clientesFinais/porTelefone');
 const prisma = require('../prisma');
 const r = require('./regras');
@@ -86,7 +87,9 @@ function resumoConversa(c) {
 
 const CAMPOS_MENSAGEM = {
   id: true, conversaId: true, direcao: true, origem: true, texto: true, status: true,
-  erro: true, autorNome: true, criadoEm: true,
+  erro: true, autorNome: true, criadoEm: true, idExterno: true,
+  // Midia: a chave do storage nunca sai; a tela usa /conversas/:id/midia/:mensagemId.
+  tipo: true, midiaMime: true, midiaNome: true, midiaTamanho: true, midiaSegundos: true, extra: true, respondeAId: true,
 };
 
 // Cadastro do contato: mensagem que CHEGA ja cria o cliente (regra unica em
@@ -137,8 +140,11 @@ async function obterOuCriarConversa({ clienteId, chave, telefone, nomeContato, b
  */
 async function registrarMensagem(p) {
   const chave = r.chaveTelefone(p.telefone);
+  const tipo = p.tipo || 'TEXTO';
   const texto = r.textoParaGuardar(p.texto);
-  if (!p.clienteId || !chave || !texto) return null;
+  // Texto e obrigatorio so na mensagem de texto; midia pode vir sem legenda.
+  if (!p.clienteId || !chave || (tipo === 'TEXTO' && !texto)) return null;
+  const nota = tipo === 'NOTA';
   if (!r.ORIGENS.includes(p.origem)) throw new Error(`origem invalida: ${p.origem}`);
 
   const entrada = p.direcao === 'ENTRADA';
@@ -148,9 +154,11 @@ async function registrarMensagem(p) {
     criarLead: entrada && p.origem === 'CONTATO',
   });
 
-  const dados = {
+  const resumo = (texto || midia.rotuloDoTipo(tipo) || '').slice(0, 200);
+  // Nota interna nao mexe na lista (nao e mensagem trocada com o cliente).
+  const dados = nota ? { ...(p.dadosConversa || {}) } : {
     ultimaMensagemEm: agora,
-    ultimaMensagemTexto: texto.slice(0, 200),
+    ultimaMensagemTexto: resumo,
     ultimaMensagemOrigem: p.origem,
     ...(p.botId ? { botId: p.botId } : {}),
     ...(p.canal ? { canal: p.canal } : {}),
@@ -171,8 +179,16 @@ async function registrarMensagem(p) {
         clienteId: p.clienteId,
         direcao: entrada ? 'ENTRADA' : 'SAIDA',
         origem: p.origem,
-        texto,
-        status: p.status || (entrada ? 'RECEBIDA' : 'ENVIADA'),
+        texto: texto || '',
+        tipo,
+        midiaChave: p.midiaChave || null,
+        midiaMime: p.midiaMime || null,
+        midiaNome: p.midiaNome || null,
+        midiaTamanho: p.midiaTamanho ?? null,
+        midiaSegundos: p.midiaSegundos ?? null,
+        extra: p.extra ?? undefined,
+        respondeAId: p.respondeAId || null,
+        status: p.status || (nota ? 'NOTA' : entrada ? 'RECEBIDA' : 'ENVIADA'),
         erro: p.erro ? String(p.erro).slice(0, 300) : null,
         idExterno: p.idExterno || null,
         autorUsuarioId: p.autorUsuarioId || null,

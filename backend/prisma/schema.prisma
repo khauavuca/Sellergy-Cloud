@@ -2226,6 +2226,17 @@ model MensagemConversa {
   idExterno      String?  // id da mensagem no WhatsApp (quando o provedor devolve)
   autorUsuarioId String?
   autorNome      String?
+  // Tipo do conteudo: TEXTO | IMAGEM | VIDEO | GIF | AUDIO | VOZ | DOCUMENTO |
+  // FIGURINHA | LOCALIZACAO | CONTATO | REACAO | NOTA (nota interna, so a equipe ve)
+  tipo           String   @default("TEXTO")
+  // Midia guardada no MinIO privado, SEM prazo de apagar (decisao do dono).
+  midiaChave     String?
+  midiaMime      String?
+  midiaNome      String?
+  midiaTamanho   Int?
+  midiaSegundos  Int?     // duracao de audio/video
+  extra          Json?    // localizacao {lat,lng,nome}, contato {nome,telefones}, reacao {emoji,alvo}
+  respondeAId    String?  // id externo da mensagem citada (responder com quote)
   criadoEm       DateTime @default(now())
 
   conversa Conversa @relation(fields: [conversaId], references: [id], onDelete: Cascade)

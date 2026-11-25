@@ -33,7 +33,7 @@ async function registrarNaConversa({ clienteId, destino, texto, tipo, canal, res
   }
 }
 
-async function enviarAgora({ clienteId, para, texto, tipo = 'conversa', enquete = null, mensagemConversaId = null }) {
+async function enviarAgora({ clienteId, para, texto, tipo = 'conversa', enquete = null, mensagemConversaId = null, midia = null, reacao = null }) {
   const { canalWhatsappDoTenant, telefoneParaWhatsapp } = require('./whatsappDoTenant');
   const destino = telefoneParaWhatsapp(para);
   if (!destino) return { ok: false, motivo: 'SEM_TELEFONE' };
@@ -49,7 +49,21 @@ async function enviarAgora({ clienteId, para, texto, tipo = 'conversa', enquete 
     }
     return canal;
   }
-  const r = await canal.adapter.enviarTexto({ para: destino, texto, tipo });
+  let r;
+  if (midia?.chave) {
+    // Midia guardada no storage (a tela subiu): le e manda pelo canal do negocio.
+    const { lerBuffer } = require('../conversas/midia');
+    const buffer = await lerBuffer(midia.chave).catch(() => null);
+    if (!buffer) r = { ok: false, erro: 'Arquivo não encontrado no storage.' };
+    else if (typeof canal.adapter.enviarMidia !== 'function') r = { ok: false, erro: 'Este canal não envia mídia.' };
+    else r = await canal.adapter.enviarMidia({ para: destino, tipo: midia.tipo, buffer, mime: midia.mime, nome: midia.nome, legenda: texto || undefined, segundos: midia.segundos, respondeAId: midia.respondeAId });
+  } else if (reacao?.alvoId) {
+    r = typeof canal.adapter.enviarReacao === 'function'
+      ? await canal.adapter.enviarReacao({ para: destino, alvoId: reacao.alvoId, emoji: reacao.emoji, deMim: reacao.deMim })
+      : { ok: false, erro: 'Este canal não envia reação.' };
+  } else {
+    r = await canal.adapter.enviarTexto({ para: destino, texto, tipo });
+  }
   await registrarNaConversa({ clienteId, destino, texto, tipo, canal, resultado: r, mensagemConversaId });
   if (!r?.ok) return { ok: false, motivo: r?.erro || 'FALHA' };
   if (enquete && canal.provedor === 'BAILEYS' && typeof canal.adapter.enviarEnquete === 'function') {

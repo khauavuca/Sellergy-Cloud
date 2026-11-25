@@ -28,6 +28,9 @@ const { processarMensagemRecebida, CAMPOS_BOT_ATENDIMENTO } = require('../servic
 const { conferirWebhookMetaPorNumero } = require('../services/assinaturaWebhookMeta');
 const { ehPedidoDeSaida } = require('../services/baileys/envioHumano');
 const { carregarCredencialDecifrada } = require('../credenciais');
+const { lerConteudoMeta } = require('../services/conteudoMensagemMeta');
+const { baixarMidia } = require('../services/whatsappCloud');
+const midiaConversa = require('../conversas/midia');
 const { criarProvedorWhatsapp } = require('../adapters/whatsapp');
 const conversas = require('../conversas/servico');
 const { statusDoEnvio } = require('../conversas/regras');
@@ -173,6 +176,31 @@ roteador.post('/whatsapp', async (req, res) => {
           const de = msg.from;
           const nomeContato = nomes.get(de) || null;
           const texto = msg.text?.body || msg.button?.text || msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || '';
+
+          // Foto, video, audio, voz, documento, figurinha, localizacao, contato,
+          // reacao: baixa a midia (a Meta so manda o id) e guarda na conversa,
+          // sem prazo de apagar.
+          const conteudo = lerConteudoMeta(msg);
+          if (conteudo) {
+            let campos = {};
+            if (conteudo.midia?.id && token) {
+              try {
+                const { buffer, mime } = await baixarMidia({ token, mediaId: conteudo.midia.id });
+                campos = await midiaConversa.guardar({ clienteId: bot.clienteId, conversaId: de, buffer, mime: mime || conteudo.midia.mime, nome: conteudo.midia.nome, tipo: conteudo.tipo });
+              } catch (e) {
+                console.error('[webhook/whatsapp midia]', conteudo.tipo, e?.message);
+                campos = { extra: { ...(conteudo.extra || {}), falhaDownload: true } };
+              }
+            }
+            await conversas.registrarSeguro({
+              clienteId: bot.clienteId, telefone: de, botId: bot.id, canal: 'META_CLOUD',
+              direcao: 'ENTRADA', origem: 'CONTATO', nomeContato,
+              texto: conteudo.texto || '', tipo: conteudo.tipo, extra: campos.extra || conteudo.extra,
+              respondeAId: conteudo.respondeAId || null, idExterno: msg.id || null,
+              ...(campos.midiaChave ? { midiaChave: campos.midiaChave, midiaMime: campos.midiaMime, midiaNome: campos.midiaNome, midiaTamanho: campos.midiaTamanho } : {}),
+            });
+            continue;
+          }
 
           if (ehPedidoDeSaida(texto)) {
             await registrarOptOut(bot.clienteId, de).catch((e) => console.error('[webhook/whatsapp optout]', e?.message));

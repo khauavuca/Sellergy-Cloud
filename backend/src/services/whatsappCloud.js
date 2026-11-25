@@ -108,8 +108,81 @@ function enviarDocumento({ phoneNumberId, token, para, link, filename, caption }
   return enviar({ phoneNumberId, token, corpo: corpoDocumento(para, link, filename, caption) });
 }
 
+// ---------- midia (foto, video, audio, documento, figurinha) ----------
+// Tipo do sistema -> tipo da Meta.
+const TIPO_META = { IMAGEM: 'image', GIF: 'video', VIDEO: 'video', AUDIO: 'audio', VOZ: 'audio', DOCUMENTO: 'document', FIGURINHA: 'sticker' };
+
+/** Sobe o arquivo pra Meta e devolve o media id. */
+async function subirMidia({ phoneNumberId, token, buffer, mime, nome }) {
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('type', mime);
+  form.append('file', new Blob([buffer], { type: mime }), nome || 'arquivo');
+  const resp = await fetchComRetentativa(`https://graph.facebook.com/${GRAPH_VERSAO}/${phoneNumberId}/media`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form,
+  });
+  const dados = await resp.json().catch(() => ({}));
+  if (!resp.ok || !dados?.id) throw new Error(dados?.error?.message || `falha ao subir midia (${resp.status})`);
+  return dados.id;
+}
+
+/** Envia midia: sobe o arquivo e manda a mensagem com o id. */
+async function enviarMidia({ phoneNumberId, token, para, tipo, buffer, mime, nome, legenda, respondeAId }) {
+  const tipoMeta = TIPO_META[tipo];
+  if (!tipoMeta) return { ok: false, erro: `Tipo de mídia não suportado: ${tipo}` };
+  if (!ENVIO_REAL) {
+    console.log('[whatsappCloud:DRY_RUN]', phoneNumberId, '->', para, `(${tipoMeta}, ${buffer?.length || 0} bytes)`);
+    return { ok: true, simulado: true };
+  }
+  if (!phoneNumberId || !token) return { ok: false, erro: 'phoneNumberId/token ausentes' };
+  try {
+    const id = await subirMidia({ phoneNumberId, token, buffer, mime, nome });
+    const objeto = { id };
+    // Audio e figurinha nao aceitam legenda na Meta.
+    if (legenda && ['image', 'video', 'document'].includes(tipoMeta)) objeto.caption = legenda;
+    if (tipoMeta === 'document' && nome) objeto.filename = nome;
+    const corpo = { messaging_product: 'whatsapp', recipient_type: 'individual', to: para, type: tipoMeta, [tipoMeta]: objeto };
+    if (respondeAId) corpo.context = { message_id: respondeAId };
+    return enviar({ phoneNumberId, token, corpo });
+  } catch (e) {
+    console.error('[whatsappCloud] midia falhou', e?.message);
+    return { ok: false, erro: e?.message || 'falha ao enviar mídia' };
+  }
+}
+
+/** Baixa uma midia recebida (o webhook so manda o id). Devolve { buffer, mime }. */
+async function baixarMidia({ token, mediaId }) {
+  const info = await fetchComRetentativa(`https://graph.facebook.com/${GRAPH_VERSAO}/${mediaId}`, { headers: { Authorization: `Bearer ${token}` } });
+  const meta = await info.json().catch(() => ({}));
+  if (!info.ok || !meta?.url) throw new Error(meta?.error?.message || `midia ${mediaId} indisponivel`);
+  const arq = await fetchComRetentativa(meta.url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!arq.ok) throw new Error(`download da midia falhou (${arq.status})`);
+  return { buffer: Buffer.from(await arq.arrayBuffer()), mime: meta.mime_type || arq.headers.get('content-type') || 'application/octet-stream' };
+}
+
+/** Reacao com emoji a uma mensagem. */
+function enviarReacao({ phoneNumberId, token, para, alvoId, emoji }) {
+  return enviar({ phoneNumberId, token, corpo: { messaging_product: 'whatsapp', to: para, type: 'reaction', reaction: { message_id: alvoId, emoji: emoji || '' } } });
+}
+
+/** Marca como lida e (opcional) mostra "digitando..." pro cliente. */
+async function marcarLida({ phoneNumberId, token, idMensagem, digitando = false }) {
+  if (!ENVIO_REAL || !phoneNumberId || !token || !idMensagem) return { ok: true, simulado: !ENVIO_REAL };
+  const corpo = { messaging_product: 'whatsapp', status: 'read', message_id: idMensagem };
+  if (digitando) corpo.typing_indicator = { type: 'text' };
+  const r = await fetchComRetentativa(`https://graph.facebook.com/${GRAPH_VERSAO}/${phoneNumberId}/messages`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(corpo),
+  }).catch(() => null);
+  return { ok: Boolean(r?.ok) };
+}
+
 module.exports = {
   enviar,
+  subirMidia,
+  enviarMidia,
+  baixarMidia,
+  enviarReacao,
+  marcarLida,
   enviarTexto,
   enviarTemplate,
   enviarDocumento,
