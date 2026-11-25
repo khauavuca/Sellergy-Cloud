@@ -161,6 +161,16 @@ app.use('/estoque', rotasEstoque);
 app.use('/fornecedores', rotasFornecedores);
 app.use('/notas-compra', rotasNotasCompra);
 // Admin gerencia as integracoes (credenciais) de cada cliente — rota segura, admin-only.
+// Com a API do painel num endereco proprio (API_PAINEL_HOSTS), as rotas de
+// admin nem existem no endereco do site.
+{
+  const { hostsPainel } = require('./seguranca/acessoAdmin');
+  app.use('/admin', (req, res, next) => {
+    const hosts = hostsPainel();
+    if (hosts.length && !hosts.includes(String(req.hostname || '').toLowerCase())) return res.status(404).json({ erro: 'Rota não encontrada' });
+    return next();
+  });
+}
 app.use('/admin/clientes', rotasAdminCredenciais);
 // Credencial de IA da PLATAFORMA (uma so, da Sellergy) — rota separada da
 // acima porque nao pertence a nenhum cliente.

@@ -163,7 +163,7 @@ roteador.post('/login', limitadorLogin, async (req, res) => {
     // errada e conta como erro: quem tenta pelo site do cliente nao descobre nada.
     // E conta de cliente pelo site do painel tambem: resposta de senha errada.
     const origemRecusada = usuario
-      ? acessoAdmin.camadaRecusada({ origem: req.get('origin'), perfil: usuario.perfil })
+      ? acessoAdmin.camadaRecusada({ origem: req.get('origin'), host: req.hostname, perfil: usuario.perfil })
       : false;
     if (!usuario || !senhaValida || origemRecusada) {
       if (ehAdmin) {
@@ -209,7 +209,7 @@ roteador.post('/login/2fa', limitadorLogin, async (req, res) => {
     if (!usuario?.totpAtivo || !usuario.totpSegredoCifrado) return res.status(401).json({ erro: 'Desafio invalido.' });
 
     const ehAdmin = usuario.perfil === 'ADMIN';
-    if (!ehAdmin && acessoAdmin.camadaRecusada({ origem: req.get('origin'), perfil: usuario.perfil })) {
+    if (!ehAdmin && acessoAdmin.camadaRecusada({ origem: req.get('origin'), host: req.hostname, perfil: usuario.perfil })) {
       return res.status(401).json({ erro: 'Desafio invalido.' });
     }
     if (ehAdmin) {

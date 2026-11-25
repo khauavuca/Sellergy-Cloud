@@ -44,3 +44,16 @@ test('camadas separadas: cliente nao entra pelo painel, admin nao entra pelo sit
   assert.equal(camadaRecusada({ origem: crm, perfil: 'CLIENTE' }, []), false);
   assert.equal(camadaRecusada({ origem: 'http://localhost:5173', perfil: 'CLIENTE' }, [...lista, 'http://localhost:5173']), false);
 });
+
+test('API do painel em endereco proprio: admin so nela, cliente so em suporte', () => {
+  const { hostRecusado, camadaRecusada } = require('./acessoAdmin');
+  const lista = ['api-crm.sellergycloud.com'];
+  assert.equal(hostRecusado({ host: 'api-crm.sellergycloud.com', perfil: 'ADMIN' }, lista), false);
+  assert.equal(hostRecusado({ host: 'api.sellergycloud.com', perfil: 'ADMIN' }, lista), true);
+  assert.equal(hostRecusado({ host: 'api.sellergycloud.com', perfil: 'CLIENT' }, lista), false);
+  assert.equal(hostRecusado({ host: 'api-crm.sellergycloud.com', perfil: 'CLIENT' }, lista), true);
+  assert.equal(hostRecusado({ host: 'api-crm.sellergycloud.com', perfil: 'CLIENT', suporte: { id: 1 } }, lista), false);
+  assert.equal(hostRecusado({ host: 'api.sellergycloud.com', perfil: 'ADMIN' }, []), false);
+  // Sem API_PAINEL_HOSTS no ambiente, camadaRecusada segue so pela origem.
+  assert.equal(camadaRecusada({ origem: undefined, host: 'qualquer', perfil: 'ADMIN' }, []), false);
+});

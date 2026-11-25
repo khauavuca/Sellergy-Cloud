@@ -95,7 +95,7 @@ const middlewareAutenticacao = (req, res, next) => {
 
   // Painel (crm.) e site do cliente sao camadas separadas: a sessao de uma
   // nao serve na outra, mesmo com o cookie da API valendo pras duas.
-  if (camadaRecusada({ origem: req.get?.('origin'), perfil: decodificado.perfil, suporte: decodificado.suporte })) {
+  if (camadaRecusada({ origem: req.get?.('origin'), host: req.hostname, perfil: decodificado.perfil, suporte: decodificado.suporte })) {
     return res.status(401).json({ erro: 'Sessão inválida neste endereço. Entre de novo.' });
   }
 

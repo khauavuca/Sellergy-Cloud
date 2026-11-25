@@ -53,7 +53,27 @@ function origemLiberada(origem, lista = origensAdmin()) {
  * Sessão de suporte (admin vendo a conta do cliente) roda no painel e passa.
  * Origem localhost (dev, um front só) não barra cliente.
  */
-function camadaRecusada({ origem, perfil, suporte }, lista = origensAdmin()) {
+/**
+ * Enderecos da API que so o painel usa (API_PAINEL_HOSTS, ex.:
+ * api-crm.sellergycloud.com). Com eles, o navegador separa os cookies do site
+ * e do painel sozinho (cada um mora num endereco). PURA.
+ */
+function hostsPainel(valor = process.env.API_PAINEL_HOSTS) {
+  return String(valor || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+}
+
+/**
+ * Com API_PAINEL_HOSTS definido: sessao ADMIN so vale no endereco da API do
+ * painel, e cliente so entra nele em sessao de suporte. Sem a lista (dev), passa.
+ */
+function hostRecusado({ host, perfil, suporte }, lista = hostsPainel()) {
+  if (lista.length === 0 || !host || suporte) return false;
+  const doPainel = lista.includes(String(host).trim().toLowerCase());
+  return perfil === 'ADMIN' ? !doPainel : doPainel;
+}
+
+function camadaRecusada({ origem, perfil, suporte, host }, lista = origensAdmin()) {
+  if (hostRecusado({ host, perfil, suporte })) return true;
   if (lista.length === 0 || !origem || suporte) return false;
   const doPainel = origemLiberada(origem, lista);
   if (perfil === 'ADMIN') return !doPainel;
@@ -123,6 +143,8 @@ module.exports = {
   origensAdmin,
   origemLiberada,
   camadaRecusada,
+  hostsPainel,
+  hostRecusado,
   segundosBloqueado,
   registrarFalha,
   limparFalhas,
