@@ -14,10 +14,13 @@
 //   - BAILEYS (QR Code): texto livre com "responda 1 ou 2" + o link.
 //   Nos dois, vai o link /confirmar/<token> (funciona sem depender do bot).
 //
-// Roda no worker.js a cada CICLO_MS. Cada agendamento e "reivindicado" com um
-// updateMany condicional antes do envio: dois workers nunca mandam o mesmo
-// lembrete, e uma falha nao vira reenvio a cada ciclo (fica no historico).
-// Respeita a cota mensal do plano (limites.lembretesMes).
+// Roda no worker.js a cada CICLO_MS. Cada agendamento e RESERVADO com um
+// updateMany condicional antes do envio (lembreteReservadoAte, expira sozinho
+// se o processo cair): dois workers nunca mandam o mesmo lembrete. O campo
+// lembrete24hEm/lembrete2hEm so e gravado DEPOIS do envio dar certo. Falha
+// passageira (socket do QR Code fora do ar, erro de rede) fica pra proxima
+// rodada, ate MAX_TENTATIVAS; falha definitiva (opt-out, sem canal) desiste
+// na hora. Respeita a cota mensal do plano (limites.lembretesMes).
 // =====================================================================
 
 const crypto = require('crypto');
@@ -29,6 +32,10 @@ const { canalWhatsappDoTenant, telefoneParaWhatsapp } = require('../services/wha
 const MIN = 60 * 1000;
 const HORA = 60 * MIN;
 const CICLO_MS = 5 * MIN;
+const RESERVA_MS = 15 * MIN;
+const MAX_TENTATIVAS = 3;
+// Falhas que nao se resolvem tentando de novo na proxima rodada.
+const FALHAS_DEFINITIVAS = new Set(['OPT_OUT', 'SEM_WHATSAPP', 'SEM_CREDENCIAL', 'TELEFONE_INVALIDO', 'NUMERO_SEM_WHATSAPP']);
 
 const ANTECEDENCIAS = Object.freeze({
   '24h': { ms: 24 * HORA, campo: 'lembrete24hEm', minimoRestanteMs: 3 * HORA, status: ['PENDING', 'CONFIRMED'] },
@@ -151,11 +158,27 @@ async function registrarHistorico(agendamentoId, acao, alteracoes) {
   }
 }
 
-/** Envia 1 lembrete ja reivindicado. Nunca lanca: devolve { ok, erro? }. */
+function codigoDaFalha(r) {
+  if (r?.codigo === 'SEM_WHATSAPP') return 'NUMERO_SEM_WHATSAPP'; // o destino nao tem WhatsApp
+  if (r?.erro === 'Telefone inválido.') return 'TELEFONE_INVALIDO';
+  return r?.codigo || 'FALHA_ENVIO';
+}
+
+/**
+ * Regra pura: depois de uma falha, tenta de novo na proxima rodada ou desiste?
+ * @param {{ codigo?: string, tentativas: number, max?: number }} p  tentativas = ja feitas, contando esta
+ * @returns {'TENTAR_DE_NOVO'|'DESISTIR'}
+ */
+function decidirAposFalha({ codigo, tentativas, max = MAX_TENTATIVAS }) {
+  if (FALHAS_DEFINITIVAS.has(codigo)) return 'DESISTIR';
+  return tentativas < max ? 'TENTAR_DE_NOVO' : 'DESISTIR';
+}
+
+/** Envia 1 lembrete ja reservado. Nunca lanca: devolve { ok, erro? }. */
 async function enviarLembrete(ag, chave, cfg) {
   try {
     const canal = await canalWhatsappDoTenant(ag.clienteId);
-    if (!canal.ok) return { ok: false, erro: canal.motivo };
+    if (!canal.ok) return { ok: false, erro: canal.motivo, codigo: canal.motivo };
 
     let token = ag.tokenConfirmacao;
     if (!token) {
@@ -163,9 +186,10 @@ async function enviarLembrete(ag, chave, cfg) {
       await prisma.agendamento.update({ where: { id: ag.id }, data: { tokenConfirmacao: token } });
     }
     const para = telefoneParaWhatsapp(ag.telefoneCliente);
+    if (!para || para.length < 12) return { ok: false, erro: 'Telefone inválido.', codigo: 'TELEFONE_INVALIDO' };
     // Quem respondeu SAIR/PARAR nao recebe mais nada automatico.
     const optOut = await prisma.optOutWhatsapp.findUnique({ where: { clienteId_telefone: { clienteId: ag.clienteId, telefone: para } } }).catch(() => null);
-    if (optOut) return { ok: false, erro: 'OPT_OUT' };
+    if (optOut) return { ok: false, erro: 'OPT_OUT', codigo: 'OPT_OUT' };
     const base = {
       nomeNegocio: ag.cliente.nome,
       nomeCliente: ag.nomeCliente,
@@ -176,13 +200,13 @@ async function enviarLembrete(ag, chave, cfg) {
 
     if (canal.provedor === 'META_CLOUD') {
       const r = await canal.adapter.enviarTemplate({ para, nomeTemplate: cfg.nomeTemplate, idioma: cfg.idioma, componentes: componentesTemplate({ ...base, token }) });
-      return r?.ok ? { ok: true, canal: canal.provedor } : { ok: false, erro: r?.erro || 'Falha no envio.' };
+      return r?.ok ? { ok: true, canal: canal.provedor } : { ok: false, erro: r?.erro || 'Falha no envio.', codigo: codigoDaFalha(r) };
     }
 
     // Canal QR Code: texto + enquete Confirmar/Remarcar (um toque pra
     // responder). "1"/"2" e o link continuam valendo pra quem nao ve enquete.
     const r = await canal.adapter.enviarTexto({ para, tipo: 'lembrete', texto: montarTextoLembrete({ ...base, link: urlConfirmacao(token) }) });
-    if (!r?.ok) return { ok: false, erro: r?.erro || 'Falha no envio.' };
+    if (!r?.ok) return { ok: false, erro: r?.erro || 'Falha no envio.', codigo: codigoDaFalha(r) };
     if (typeof canal.adapter.enviarEnquete === 'function') {
       const e = await canal.adapter.enviarEnquete({ para, pergunta: 'Você confirma o horário?', opcoes: ['Confirmar', 'Remarcar'] });
       if (e?.ok && e.mensagem) {
@@ -198,9 +222,10 @@ async function enviarLembrete(ag, chave, cfg) {
 
 /**
  * Um ciclo: acha os agendamentos que precisam de lembrete agora e envia.
- * @returns {Promise<{ avaliados: number, enviados: number, falhas: number, puladosPorCota: number }>}
+ * `enviar` injetavel pra teste (padrao: enviarLembrete).
+ * @returns {Promise<{ avaliados: number, enviados: number, falhas: number, adiados: number, puladosPorCota: number }>}
  */
-async function processarLembretes(agora = new Date()) {
+async function processarLembretes(agora = new Date(), { enviar = enviarLembrete } = {}) {
   const ate = new Date(agora.getTime() + ANTECEDENCIAS['24h'].ms);
   const candidatos = await prisma.agendamento.findMany({
     where: {
@@ -212,6 +237,7 @@ async function processarLembretes(agora = new Date()) {
     select: {
       id: true, clienteId: true, data: true, status: true, nomeCliente: true, telefoneCliente: true,
       servico: true, tokenConfirmacao: true, lembrete24hEm: true, lembrete2hEm: true,
+      lembreteReservadoAte: true, lembreteTentativas: true,
       especialista: { select: { nome: true } },
       cliente: { select: { nome: true, plano: true, statusAssinatura: true, trialAte: true, configLembrete: true } },
     },
@@ -220,7 +246,7 @@ async function processarLembretes(agora = new Date()) {
   });
 
   const usoPorTenant = new Map();
-  const resultado = { avaliados: candidatos.length, enviados: 0, falhas: 0, puladosPorCota: 0 };
+  const resultado = { avaliados: candidatos.length, enviados: 0, falhas: 0, adiados: 0, puladosPorCota: 0 };
 
   for (const ag of candidatos) {
     const cfg = configLembreteEfetiva(ag.cliente.configLembrete);
@@ -237,16 +263,39 @@ async function processarLembretes(agora = new Date()) {
       continue;
     }
 
-    // Reivindica: so um processo consegue marcar o campo que ainda esta nulo.
+    // Reserva: so um processo consegue (campo ainda nulo e sem reserva viva).
+    // A reserva expira sozinha (RESERVA_MS) se o worker cair no meio.
     const campo = ANTECEDENCIAS[chave].campo;
-    const reivindicado = await prisma.agendamento.updateMany({ where: { id: ag.id, [campo]: null }, data: { [campo]: agora } });
-    if (reivindicado.count === 0) continue;
-    usoPorTenant.set(ag.clienteId, usoPorTenant.get(ag.clienteId) + 1);
+    const reservado = await prisma.agendamento.updateMany({
+      where: { id: ag.id, [campo]: null, OR: [{ lembreteReservadoAte: null }, { lembreteReservadoAte: { lt: agora } }] },
+      data: { lembreteReservadoAte: new Date(agora.getTime() + RESERVA_MS), lembreteTentativas: { increment: 1 } },
+    });
+    if (reservado.count === 0) continue;
+    const tentativas = (ag.lembreteTentativas || 0) + 1;
 
-    const envio = await enviarLembrete(ag, chave, cfg);
-    await registrarHistorico(ag.id, envio.ok ? 'LEMBRETE_ENVIADO' : 'LEMBRETE_FALHOU', { antecedencia: chave, canal: envio.canal || null, erro: envio.erro || null });
-    if (envio.ok) resultado.enviados += 1;
-    else resultado.falhas += 1;
+    const envio = await enviar(ag, chave, cfg);
+
+    if (envio.ok) {
+      // So agora conta como enviado (e entra na cota do mes).
+      await prisma.agendamento.update({ where: { id: ag.id }, data: { [campo]: new Date(), lembreteReservadoAte: null, lembreteTentativas: 0 } });
+      usoPorTenant.set(ag.clienteId, usoPorTenant.get(ag.clienteId) + 1);
+      await registrarHistorico(ag.id, 'LEMBRETE_ENVIADO', { antecedencia: chave, canal: envio.canal || null, tentativas });
+      resultado.enviados += 1;
+      continue;
+    }
+
+    if (decidirAposFalha({ codigo: envio.codigo, tentativas }) === 'TENTAR_DE_NOVO') {
+      // Solta a reserva: a proxima rodada tenta de novo. Sem historico a cada
+      // tentativa pra nao encher a linha do tempo do agendamento.
+      await prisma.agendamento.update({ where: { id: ag.id }, data: { lembreteReservadoAte: null } });
+      resultado.adiados += 1;
+      continue;
+    }
+
+    // Desiste: marca o campo pra nao tentar mais este lembrete.
+    await prisma.agendamento.update({ where: { id: ag.id }, data: { [campo]: new Date(), lembreteReservadoAte: null, lembreteTentativas: 0 } });
+    await registrarHistorico(ag.id, 'LEMBRETE_FALHOU', { antecedencia: chave, canal: envio.canal || null, erro: envio.erro || null, tentativas });
+    resultado.falhas += 1;
   }
   return resultado;
 }
@@ -259,7 +308,7 @@ function iniciarCicloLembretes({ intervaloMs = CICLO_MS } = {}) {
     rodando = true;
     try {
       const r = await processarLembretes();
-      if (r.enviados || r.falhas || r.puladosPorCota) console.log('[lembretes]', JSON.stringify(r));
+      if (r.enviados || r.falhas || r.adiados || r.puladosPorCota) console.log('[lembretes]', JSON.stringify(r));
     } catch (e) {
       console.error('[lembretes] ciclo falhou:', e?.message);
     } finally {
@@ -281,6 +330,8 @@ module.exports = {
   componentesTemplate,
   urlConfirmacao,
   contarLembretesDoMes,
+  decidirAposFalha,
+  MAX_TENTATIVAS,
   processarLembretes,
   iniciarCicloLembretes,
 };

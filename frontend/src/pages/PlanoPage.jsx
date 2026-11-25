@@ -328,6 +328,14 @@ export default function PlanoPage() {
                   nota="Zera todo dia 1º"
                 />
               )}
+              {resumo?.uso && planoEfetivo?.recursos?.notaFiscal && (
+                <LinhaUso
+                  rotulo={`Notas fiscais em ${mesAtual}`}
+                  usado={Number(resumo.uso.notasNoMes || 0)}
+                  limite={resumo.uso.notasLimite}
+                  nota="NFC-e e NFS-e emitidas · zera todo dia 1º"
+                />
+              )}
               {planoEfetivo?.limites && (
                 <>
                   <LinhaUso rotulo="Usuários" limite={planoEfetivo.limites.usuarios} nota="Pessoas com acesso ao sistema" />

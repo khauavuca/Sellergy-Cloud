@@ -34,6 +34,8 @@ const PLANOS_BASE = Object.freeze({
       profissionais: 2,
       // Lembretes/confirmacoes de agendamento por WhatsApp por mes.
       lembretesMes: 300,
+      // Notas fiscais (NFC-e + NFS-e) emitidas por mes. Essencial nao tem nota.
+      notasMes: 0,
     }),
     recursos: Object.freeze({
       vendas: true,
@@ -60,6 +62,7 @@ const PLANOS_BASE = Object.freeze({
       usuarios: 5,
       profissionais: 5,
       lembretesMes: 1000,
+      notasMes: 100,
     }),
     recursos: Object.freeze({
       vendas: true,
@@ -86,6 +89,7 @@ const PLANOS_BASE = Object.freeze({
       usuarios: 10,
       profissionais: 10,
       lembretesMes: 3000,
+      notasMes: 300,
     }),
     recursos: Object.freeze({
       vendas: true,

@@ -14,6 +14,7 @@
 const prisma = require('../prisma');
 const { carregarCredencialDecifrada } = require('../credenciais');
 const { criarProvedor } = require('../adapters/pagamento');
+const { resolverPagador, exigeCpfCnpj, cpfCnpjValido } = require('./pagadorCobranca');
 
 /** 'live' so com PAGAMENTO_LIVE=true; qualquer outra coisa = 'fixture'. */
 function modoPagamento(env = process.env) {
@@ -33,6 +34,20 @@ function ambienteDaCredencial(credencial, env = process.env) {
   return normalizarAmbiente(credencial?.dados?.ambiente)
     || normalizarAmbiente(env.PAGAMENTO_AMBIENTE_PADRAO)
     || (modoPagamento(env) === 'live' ? 'producao' : 'homologacao');
+}
+
+/**
+ * Webhook de pagamento com o PSP em modo fixture/simulado: a "consulta" do
+ * adapter devolve PAGO pra qualquer id, entao aplicar o evento deixaria
+ * qualquer POST (a API local fica exposta por tunel) marcar cobranca como paga.
+ * Por isso o webhook so aplica status em modo 'live' — a nao ser que o dev
+ * ligue explicitamente PAGAMENTO_WEBHOOK_SIMULADO=1 (nunca vale em producao).
+ * @returns {boolean} true = pode aplicar o status consultado
+ */
+function webhookPodeAplicar(modo, env = process.env) {
+  if (modo === 'live') return true;
+  if (env.NODE_ENV === 'production') return false;
+  return String(env.PAGAMENTO_WEBHOOK_SIMULADO || '').trim() === '1';
 }
 
 /** Opcoes pro criarProvedor a partir da credencial decifrada. */
@@ -75,10 +90,23 @@ async function provedorDoTenant(clienteId) {
  * `itensPendentes` (opcional): carrinho que a ferramenta do bot quer
  * confirmar como Venda quando o Pix for pago — ver services/cobrancaPagamento.js.
  * `pagador` (opcional): { nome?, email?, telefone?, cpfCnpj? } — o Asaas exige
- * CPF/CNPJ de quem paga em modo live.
+ * CPF/CNPJ de quem paga (ver services/pagadorCobranca.js).
+ * `leadId` (opcional): cliente final; completa o pagador com nome/telefone/CPF
+ * do lead e, se o CPF veio digitado e o lead nao tinha, grava no lead.
  */
-async function criarCobranca({ clienteId, origem = 'AVULSA', refId = null, valor, metodo = 'PIX', descricao, vencimento, pagador, itensPendentes }) {
+async function criarCobranca({ clienteId, origem = 'AVULSA', refId = null, valor, metodo = 'PIX', descricao, vencimento, pagador, leadId = null, itensPendentes }) {
   const { config, psp } = await provedorDoTenant(clienteId);
+
+  // CPF/CNPJ resolvido ANTES de criar a Cobranca: faltando (Asaas), a tela ou
+  // o bot pedem o dado sem deixar uma cobranca CANCELADO de lixo pra tras.
+  const lead = leadId
+    ? await prisma.lead.findFirst({ where: { id: leadId, clienteId }, select: { id: true, nome: true, telefone: true, email: true, cpf: true } })
+    : null;
+  const { pagador: pagadorFinal, cpfNovoDoLead } = resolverPagador({ provedor: config.provedor, pagador, lead });
+  if (cpfNovoDoLead) {
+    await prisma.lead.update({ where: { id: lead.id }, data: { cpf: cpfNovoDoLead } })
+      .catch((e) => console.error('[pagamento] falha ao gravar CPF no lead', e?.message));
+  }
 
   const cobranca = await prisma.cobranca.create({
     data: {
@@ -91,7 +119,7 @@ async function criarCobranca({ clienteId, origem = 'AVULSA', refId = null, valor
   let dto;
   try {
     const params = {
-      valor, descricao: descricao || `Cobranca ${cobranca.id}`, refExterna: cobranca.id, vencimento, pagador,
+      valor, descricao: descricao || `Cobranca ${cobranca.id}`, refExterna: cobranca.id, vencimento, pagador: pagadorFinal,
     };
     dto = metodo === 'PIX' ? await psp.criarCobrancaPix(params) : await psp.criarLink(params);
   } catch (errPsp) {
@@ -114,11 +142,45 @@ async function criarCobranca({ clienteId, origem = 'AVULSA', refId = null, valor
   return { ...atualizada, qrCodeBase64: dto.qrCodeBase64 || null };
 }
 
+/**
+ * Provedor ativo do tenant e se ele pede CPF/CNPJ de quem paga — pra tela
+ * saber se mostra o campo. null quando nao ha pagamento ativo.
+ */
+async function provedorAtivo(clienteId) {
+  const config = await prisma.configuracaoPagamento.findUnique({ where: { clienteId }, select: { provedor: true, ativo: true } });
+  if (!config?.ativo) return null;
+  return { provedor: config.provedor, exigeCpfCnpj: exigeCpfCnpj(config.provedor) };
+}
+
+/**
+ * Lead do tenant pelo telefone (compara os ultimos 10 digitos, com ou sem 55),
+ * preferindo o que ja tem CPF valido. Usado pra achar o CPF de quem paga o
+ * sinal quando o agendamento nao veio ligado a um lead.
+ * @returns {Promise<{id:string, cpf:string|null}|null>}
+ */
+async function leadPorTelefone(clienteId, telefone) {
+  const tel = String(telefone || '').replace(/\D/g, '');
+  if (tel.length < 10) return null;
+  const candidatos = await prisma.lead.findMany({
+    // ultimos 4 digitos aparecem juntos mesmo em telefone gravado com mascara;
+    // a comparacao exata (ultimos 10) e feita abaixo.
+    where: { clienteId, telefone: { contains: tel.slice(-4) } },
+    select: { id: true, telefone: true, cpf: true },
+    take: 50,
+  });
+  const mesmos = candidatos.filter((l) => String(l.telefone || '').replace(/\D/g, '').endsWith(tel.slice(-10)));
+  const escolhido = mesmos.find((l) => cpfCnpjValido(l.cpf)) || mesmos[0];
+  return escolhido ? { id: escolhido.id, cpf: escolhido.cpf || null } : null;
+}
+
 module.exports = {
   provedorDoTenant,
+  provedorAtivo,
+  leadPorTelefone,
   criarCobranca,
   modoPagamento,
   normalizarAmbiente,
   ambienteDaCredencial,
   opcoesDoProvedor,
+  webhookPodeAplicar,
 };

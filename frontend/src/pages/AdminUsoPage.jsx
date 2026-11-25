@@ -21,7 +21,7 @@ function opcoesDeMes() {
 
 const pct = (v) => (v === null || v === undefined ? '—' : `${Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`);
 const num = (v) => Number(v || 0).toLocaleString('pt-BR');
-const NOME_LIMITE = { lembretesMes: 'lembretes no mês', usuarios: 'usuários' };
+const NOME_LIMITE = { lembretesMes: 'lembretes no mês', notasMes: 'notas fiscais no mês', usuarios: 'usuários' };
 
 function BadgeMargem({ linha }) {
   if (linha.paga <= 0) return <span className="text-[var(--text-muted)]">—</span>;

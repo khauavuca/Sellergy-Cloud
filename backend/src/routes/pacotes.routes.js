@@ -23,6 +23,8 @@ const { obterOuAbrirSessaoCaixa } = require('../services/caixaAutomatico');
 const { criarVenda } = require('../services/vendaService');
 const pacotes = require('../agenda/pacotes');
 const { pagamentoConfigurado } = require('../agenda/sinal');
+const { provedorAtivo } = require('../services/pagamentoService');
+const { resolverPagador } = require('../services/pagadorCobranca');
 const { reconciliarEstornos } = require('../agenda/eventosAgenda');
 const { mesmoTelefone, digitos, round2, brl } = require('../agenda/utilAgenda');
 
@@ -198,6 +200,7 @@ roteador.post('/vender', requerPermissao('AGENDA', 'criar'), async (req, res) =>
     const clienteId = clienteDe(req, res);
     if (!clienteId) return;
     const { modeloId, leadId, nome, telefone, forma, metodoPagamento } = req.body || {};
+    const cpfCnpj = typeof req.body?.cpfCnpj === 'string' ? req.body.cpfCnpj : null;
     const parcelas = forma === 'PIX' ? Number(req.body?.parcelas || 1) : 1;
     const campos = [];
     if (forma !== 'CAIXA' && forma !== 'PIX') campos.push('forma');
@@ -253,15 +256,22 @@ roteador.post('/vender', requerPermissao('AGENDA', 'criar'), async (req, res) =>
       return res.status(201).json({ pacote: resultado.pacote, venda: { id: resultado.venda.id, numero: resultado.venda.numero, valor: resultado.venda.valor } });
     }
 
+    // Asaas pede CPF/CNPJ de quem paga: confere antes de criar o pacote (o do
+    // lead ou o digitado; o digitado fica gravado no lead pras proximas parcelas).
+    const prov = await provedorAtivo(clienteId);
+    const cpfDoLead = await prisma.lead.findFirst({ where: { id: lead.id, clienteId }, select: { cpf: true } });
+    resolverPagador({ provedor: prov?.provedor, pagador: { cpfCnpj }, lead: cpfDoLead });
+
     // PIX (parcelado ou nao): a 1a parcela sai agora; as outras, a cada mes, quando a anterior e paga.
     const pacote = await prisma.pacoteCliente.create({
       data: { clienteId, modeloId: modelo.id, leadId: lead.id, sessoesTotal: modelo.sessoes, valor: modelo.preco, parcelas, parcelasPagas: 0, validoAte },
     });
     let cobranca;
     try {
-      cobranca = await pacotes.cobrarParcela({ pacote, nomeModelo: modelo.nome, lead, numero: 1 });
+      cobranca = await pacotes.cobrarParcela({ pacote, nomeModelo: modelo.nome, lead, numero: 1, cpfCnpj });
     } catch (e) {
       await prisma.pacoteCliente.delete({ where: { id: pacote.id } }).catch(() => {});
+      if (e?.status === 422) return responderErro(res, e, 'vender');
       console.error('[pacotes/vender pix]', e?.message);
       return res.status(502).json({ erro: 'Não foi possível gerar o Pix agora. Tente de novo ou registre no caixa.' });
     }

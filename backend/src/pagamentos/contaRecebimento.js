@@ -106,7 +106,10 @@ async function abrir(clienteId, entrada) {
     throw e;
   }
 
-  // apiKey -> cofre do tenant. Daqui pra frente so o id da credencial circula.
+  // apiKey -> cofre do tenant, ANTES de qualquer outra gravacao: o Asaas so
+  // devolve essa chave uma vez. Se o cofre falhar, a subconta existe e a chave
+  // se perderia — entao o id externo fica gravado (estado recuperavel pelo
+  // suporte, que gera chave nova no painel do Asaas) e o log nunca leva a chave.
   const payload = {
     apiKey: criada.apiKey,
     webhookSecret,
@@ -114,31 +117,53 @@ async function abrir(clienteId, entrada) {
     origem: 'SUBCONTA_PLATAFORMA',
     contaExternaId: criada.id,
   };
-  const cifrado = cifrarPayload(clienteId, payload);
-  const credencial = await prisma.credencial.create({
-    data: {
-      clienteId,
-      nome: NOME_CREDENCIAL,
-      tipo: 'ASAAS_KEY',
-      descricao: 'Criada automaticamente ao abrir a conta de recebimento.',
-      dadosCifrados: cifrado.conteudoCifrado,
-      iv: cifrado.iv,
-      tag: cifrado.tag,
-      versaoChave: cifrado.versaoChave,
-    },
-    select: { id: true },
-  });
+  let credencial;
+  try {
+    const cifrado = cifrarPayload(clienteId, payload);
+    credencial = await prisma.credencial.create({
+      data: {
+        clienteId,
+        nome: NOME_CREDENCIAL,
+        tipo: 'ASAAS_KEY',
+        descricao: 'Criada automaticamente ao abrir a conta de recebimento.',
+        dadosCifrados: cifrado.conteudoCifrado,
+        iv: cifrado.iv,
+        tag: cifrado.tag,
+        versaoChave: cifrado.versaoChave,
+      },
+      select: { id: true },
+    });
+  } catch (e) {
+    console.error(`[conta-recebimento] subconta ${criada.id} criada no Asaas mas a chave NAO foi pro cofre (cliente=${clienteId}): ${e?.message}`);
+    await prisma.contaRecebimento.update({
+      where: { id: conta.id },
+      data: {
+        contaExternaId: criada.id,
+        walletId: criada.walletId,
+        motivoRecusa: 'CHAVE_PENDENTE: conta aberta no Asaas, mas a chave não foi guardada. Fale com o suporte.',
+        dados: { ...dadosSemSegredo, chavePendente: true, enviadoEm: new Date().toISOString() },
+      },
+    }).catch((e2) => console.error(`[conta-recebimento] nao gravou o estado da subconta ${criada.id}: ${e2?.message}`));
+    throw new asaas.ErroSubconta('A conta foi aberta, mas não conseguimos guardar a chave. Fale com o suporte antes de tentar de novo.', 502, { codigo: 'CHAVE_NAO_GUARDADA' });
+  }
 
-  const atualizada = await prisma.contaRecebimento.update({
-    where: { id: conta.id },
-    data: {
-      contaExternaId: criada.id,
-      walletId: criada.walletId,
-      status: 'EM_ANALISE',
-      motivoRecusa: null,
-      dados: { ...dadosSemSegredo, credencialId: credencial.id, enviadoEm: new Date().toISOString() },
-    },
-  });
+  let atualizada;
+  try {
+    atualizada = await prisma.contaRecebimento.update({
+      where: { id: conta.id },
+      data: {
+        contaExternaId: criada.id,
+        walletId: criada.walletId,
+        status: 'EM_ANALISE',
+        motivoRecusa: null,
+        dados: { ...dadosSemSegredo, credencialId: credencial.id, enviadoEm: new Date().toISOString() },
+      },
+    });
+  } catch (e) {
+    // A chave ja esta no cofre (credencial.id): o suporte religa pela credencial.
+    console.error(`[conta-recebimento] subconta ${criada.id} com chave no cofre (credencial=${credencial.id}) mas a conta local nao atualizou: ${e?.message}`);
+    throw e;
+  }
 
   const pagamento = await prisma.configuracaoPagamento.findUnique({ where: { clienteId }, select: { ativo: true } });
   if (!pagamento?.ativo) await apontarPagamentoPraSubconta(clienteId, credencial.id);
@@ -255,6 +280,26 @@ function num(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Intervalo minimo entre dois saques do mesmo negocio. Trava no banco
+// (ContaRecebimento.saqueTravadoAte, update condicional): duplo clique, duas
+// abas ou retentativa do navegador nao viram dois Pix.
+const SAQUE_INTERVALO_MS = 2 * 60 * 1000;
+
+async function travarSaque(conta, agora = new Date()) {
+  const r = await prisma.contaRecebimento.updateMany({
+    where: { id: conta.id, OR: [{ saqueTravadoAte: null }, { saqueTravadoAte: { lt: agora } }] },
+    data: { saqueTravadoAte: new Date(agora.getTime() + SAQUE_INTERVALO_MS) },
+  });
+  if (r.count !== 1) {
+    throw new asaas.ErroSubconta('Já tem um saque sendo feito agora. Espere 2 minutos e confira o extrato antes de pedir outro.', 409, { codigo: 'SAQUE_RECENTE' });
+  }
+}
+
+async function liberarSaque(conta) {
+  await prisma.contaRecebimento.updateMany({ where: { id: conta.id }, data: { saqueTravadoAte: null } })
+    .catch((e) => console.error('[conta-recebimento] liberar trava do saque', e?.message));
+}
+
 /** Saque pra chave Pix cadastrada (nunca uma chave vinda do navegador). */
 async function sacar(conta, valor) {
   if (conta.status !== 'ATIVA') throw new asaas.ErroSubconta('A conta ainda não está liberada.', 409, { codigo: 'CONTA_NAO_ATIVA' });
@@ -262,11 +307,58 @@ async function sacar(conta, valor) {
   if (!Number.isFinite(v) || v < 1) throw new asaas.ErroSubconta('Informe um valor a partir de R$ 1,00.', 422, { campos: ['valor'], codigo: 'VALOR_INVALIDO' });
   const repasse = conta.dados?.repasse || {};
   if (!repasse.chavePix || !repasse.tipoChavePix) throw new asaas.ErroSubconta('Cadastre a chave Pix do repasse primeiro.', 409, { codigo: 'SEM_CHAVE_PIX' });
-  const apiKey = await chaveDaSubconta(conta);
-  const s = await asaas.saldo(apiKey);
-  if (v > (Number(s?.balance) || 0)) throw new asaas.ErroSubconta('Valor maior que o disponível pra sacar.', 422, { campos: ['valor'], codigo: 'SALDO_INSUFICIENTE' });
-  const t = await asaas.transferirPix(apiKey, { valor: v, chavePix: repasse.chavePix, tipoChavePix: repasse.tipoChavePix });
-  return { id: t?.id ? String(t.id) : null, status: String(t?.status || 'PENDING'), valor: v, taxa: num(t?.transferFee), data: t?.effectiveDate || t?.scheduleDate || null };
+
+  await travarSaque(conta);
+  let pedidoEnviado = false;
+  try {
+    const apiKey = await chaveDaSubconta(conta);
+    const s = await asaas.saldo(apiKey);
+    if (v > (Number(s?.balance) || 0)) throw new asaas.ErroSubconta('Valor maior que o disponível pra sacar.', 422, { campos: ['valor'], codigo: 'SALDO_INSUFICIENTE' });
+    pedidoEnviado = true;
+    const t = await asaas.transferirPix(apiKey, { valor: v, chavePix: repasse.chavePix, tipoChavePix: repasse.tipoChavePix });
+    return { id: t?.id ? String(t.id) : null, status: String(t?.status || 'PENDING'), valor: v, taxa: num(t?.transferFee), data: t?.effectiveDate || t?.scheduleDate || null };
+  } catch (e) {
+    // So destrava quando com certeza nada saiu: falhou antes de pedir o Pix,
+    // ou o Asaas recusou o pedido (4xx -> 422). 5xx/timeout no POST pode ter
+    // transferido — a trava segura ate o extrato mostrar.
+    const recusado = e instanceof asaas.ErroSubconta && e.status === 422;
+    if (!pedidoEnviado || recusado) await liberarSaque(conta);
+    throw e;
+  }
+}
+
+/** O pedido troca a chave Pix (tipo ou chave diferente da atual)? */
+function trocaChavePix(conta, { tipoChavePix, chavePix }) {
+  const atual = conta.dados?.repasse || {};
+  if (chavePix === undefined && tipoChavePix === undefined) return false;
+  const tipo = String(tipoChavePix || atual.tipoChavePix || '').toUpperCase();
+  const chave = asaas.normalizarChavePix(tipo, chavePix ?? atual.chavePix);
+  return tipo !== String(atual.tipoChavePix || '').toUpperCase() || chave !== atual.chavePix;
+}
+
+/**
+ * Confirma que quem pede e o dono da sessao antes de trocar a chave Pix (o
+ * destino do dinheiro): com 2 etapas ligado, pede o codigo do app; sem, a senha.
+ * @param {{id:string, senha:string, totpAtivo?:boolean, totpSegredoCifrado?:string}} usuario
+ * @param {{senha?:string, codigo?:string}} prova
+ */
+async function confirmarIdentidade(usuario, { senha, codigo } = {}, deps = {}) {
+  const bcrypt = deps.bcrypt || require('bcryptjs');
+  const totp = deps.totp || require('../seguranca/totp');
+  if (!usuario) throw new asaas.ErroSubconta('Entre de novo para trocar a chave Pix.', 401, { codigo: 'CONFIRMACAO_INVALIDA' });
+  if (usuario.totpAtivo && usuario.totpSegredoCifrado) {
+    if (!codigo) throw new asaas.ErroSubconta('Digite o código do app autenticador para trocar a chave Pix.', 401, { campos: ['codigo'], codigo: 'CONFIRMACAO_NECESSARIA' });
+    const segredo = totp.decifrarSegredo(usuario.id, usuario.totpSegredoCifrado);
+    if (totp.verificarCodigo(segredo, String(codigo)) === null) {
+      throw new asaas.ErroSubconta('Código incorreto.', 401, { campos: ['codigo'], codigo: 'CONFIRMACAO_INVALIDA' });
+    }
+    return true;
+  }
+  if (!senha) throw new asaas.ErroSubconta('Digite sua senha para trocar a chave Pix.', 401, { campos: ['senha'], codigo: 'CONFIRMACAO_NECESSARIA' });
+  if (!(await bcrypt.compare(String(senha), String(usuario.senha || '')))) {
+    throw new asaas.ErroSubconta('Senha incorreta.', 401, { campos: ['senha'], codigo: 'CONFIRMACAO_INVALIDA' });
+  }
+  return true;
 }
 
 /** Troca chave Pix e/ou prazo do repasse. */
@@ -317,6 +409,9 @@ module.exports = {
   financeiro,
   sacar,
   atualizarRepasse,
+  trocaChavePix,
+  confirmarIdentidade,
+  SAQUE_INTERVALO_MS,
   processarEventoConta,
   contaDoTenant,
   resumirTaxas,

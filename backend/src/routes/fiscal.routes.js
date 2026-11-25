@@ -2,9 +2,10 @@
 // config do emissor por tenant + emissao/consulta de DocumentoFiscal.
 //
 // Emissao e ASSINCRONA no provedor: emitir cria o documento em PROCESSANDO; o
-// status final (EMITIDA/ERRO) vem por sincronizacao (consultarStatus). Uma fila
-// dedicada com retry automatico e o proximo passo (SEAM) — por ora a
-// sincronizacao e sob demanda, e tudo roda em modo 'fixture' (nao bate na rede).
+// status final (EMITIDA/ERRO) vem por sincronizacao (consultarStatus): sob
+// demanda (POST /documentos/:id/sincronizar) e pela rotina do worker
+// (fiscal/tarefasFiscal.js, documentos parados em PROCESSANDO). Sem
+// FISCAL_LIVE=true tudo roda em modo 'fixture' (nao bate na rede).
 //
 // Gating: modulo FISCAL + papel privilegiado (dono/admin) — nota fiscal e
 // sensivel; fora da matriz de colaborador por enquanto.
@@ -22,10 +23,16 @@ const {
   PROVEDORES,
   TIPO_CREDENCIAL_POR_PROVEDOR,
 } = require('../adapters/fiscal');
-const { emissorDoTenant } = require('../fiscal/emissao');
+const {
+  emissorDoTenant, criarDocumentoUnico, reservarNumero, mensagemFalhaEmissor, credencialValida,
+  codigosFiscaisConhecidos, STATUS_ATIVOS,
+} = require('../fiscal/emissao');
+const { garantirLimiteNotas } = require('../fiscal/limiteNotas');
+const { montarAtualizacaoConfig, avaliarCancelamento, CAMPOS_EMITENTE } = require('../fiscal/regrasRotas');
+const assistente = require('../fiscal/assistente');
 const { aplicarDocumento, CAMPOS_DOCUMENTO } = require('../services/documentoFiscal');
 const {
-  soDigitos, validarCnpj, validarDocumento, validarNcm, validarCfop, validarCest,
+  soDigitos, validarDocumento, validarNcm, validarCfop, validarCest,
   validarUf, resolverModoFiscal, conteudoCertificadoProibido, validarProntidaoProducao,
 } = require('../utils/validacaoFiscal');
 
@@ -37,22 +44,14 @@ roteador.use(requerPapelPrivilegiado);
 roteador.use(exigirRecursoNaEscrita('notaFiscal'));
 
 const TIPOS = ['NFCE', 'NFSE'];
-const AMBIENTES = ['HOMOLOGACAO', 'PRODUCAO'];
-
-// Campos do emitente (identidade da empresa na nota). Persistidos e devolvidos
-// junto da config; opcionais (exigidos so na emissao real, Fase 4).
-const CAMPOS_EMITENTE = [
-  'inscricaoMunicipal', 'razaoSocial', 'nomeFantasia', 'cnae',
-  'emailEmitente', 'telefoneEmitente',
-  'logradouro', 'numero', 'complemento', 'bairro', 'municipio', 'uf', 'cep',
-];
+// Campos do emitente (identidade da empresa na nota): ver fiscal/regrasRotas.js.
 
 // Config (sem o conteudo da credencial / certificado).
 const CAMPOS_CONFIG = {
   provedor: true, credencialId: true, regime: true, cnpj: true, inscricao: true,
   csc: true, serie: true, ambiente: true, ativo: true, atualizadoEm: true,
   certificadoRef: true, certificadoValidoAte: true, certificadoTitular: true,
-  proximoNumero: true, emitirAutomatico: true,
+  proximoNumero: true, emitirAutomatico: true, tributacao: true,
   ...Object.fromEntries(CAMPOS_EMITENTE.map((k) => [k, true])),
 };
 
@@ -89,25 +88,29 @@ roteador.put('/config', async (req, res) => {
       });
     }
 
-    const {
-      provedor, credencialId, regime, cnpj, inscricao,
-      certificadoRef, csc, serie, ambiente, ativo,
-    } = req.body || {};
+    const corpo = req.body || {};
+    const atual = await prisma.configuracaoFiscal.findUnique({ where: { clienteId } });
+    const provedor = corpo.provedor !== undefined ? corpo.provedor : atual?.provedor;
 
-    if (!PROVEDORES.includes(provedor)) {
-      return res.status(400).json({ erro: `Emissor invalido. Use: ${PROVEDORES.join(', ')}.` });
+    // PRODUCAO so com o assistente concluido (mesmas pendencias do "Ativar").
+    let prontoParaProducao = false;
+    if (corpo.ambiente !== undefined && String(corpo.ambiente).toUpperCase() === 'PRODUCAO') {
+      const futuro = { ...(atual || {}), ...corpo, provedor };
+      const cliente = await prisma.cliente.findUnique({ where: { id: clienteId }, select: { segmento: true } });
+      const temCredencial = Boolean(await credencialValida(clienteId, futuro));
+      const pend = assistente.pendencias(futuro, {
+        temCredencial,
+        tipos: assistente.tiposPorSegmento(cliente?.segmento),
+        emissaoReal: String(process.env.FISCAL_LIVE || '').toLowerCase() === 'true',
+      });
+      prontoParaProducao = pend.prontoParaTeste;
     }
-    const amb = ambiente === undefined ? 'HOMOLOGACAO' : String(ambiente).toUpperCase();
-    if (!AMBIENTES.includes(amb)) {
-      return res.status(400).json({ erro: `Ambiente invalido. Use: ${AMBIENTES.join(', ')}.` });
-    }
-    if (cnpj && !validarCnpj(cnpj)) {
-      return res.status(400).json({ erro: 'CNPJ do emitente invalido.' });
-    }
-    if (req.body?.uf && !validarUf(req.body.uf)) {
-      return res.status(400).json({ erro: 'UF invalida.' });
-    }
-    if (credencialId) {
+
+    const r = montarAtualizacaoConfig(corpo, { atual, provedores: PROVEDORES, prontoParaProducao });
+    if (r.erro) return res.status(r.status || 400).json({ erro: r.erro, ...(r.campos ? { campos: r.campos } : {}) });
+
+    const credencialId = r.dados.credencialId !== undefined ? r.dados.credencialId : atual?.credencialId;
+    if (credencialId && (r.dados.credencialId !== undefined || r.dados.provedor !== undefined)) {
       const cred = await prisma.credencial.findFirst({
         where: { id: credencialId, clienteId }, select: { tipo: true },
       });
@@ -118,27 +121,10 @@ roteador.put('/config', async (req, res) => {
       }
     }
 
-    const dados = {
-      provedor,
-      credencialId: credencialId || null,
-      regime: regime || null,
-      cnpj: cnpj || null,
-      inscricao: inscricao || null,
-      // Sem certificadoRef no corpo, mantem o que o assistente gravou.
-      ...(certificadoRef !== undefined ? { certificadoRef: certificadoRef || null } : {}),
-      csc: csc || null,
-      serie: serie || null,
-      ambiente: amb,
-      ativo: ativo === undefined ? true : ativo === true,
-      // Dados do emitente (cada um string opcional; vazio vira null).
-      ...Object.fromEntries(
-        CAMPOS_EMITENTE.map((k) => [k, String(req.body?.[k] ?? '').trim().slice(0, 200) || null]),
-      ),
-    };
     const config = await prisma.configuracaoFiscal.upsert({
       where: { clienteId },
-      create: { clienteId, ...dados },
-      update: dados,
+      create: { clienteId, ...r.dados },
+      update: r.dados,
       select: CAMPOS_CONFIG,
     });
     res.json(config);
@@ -170,7 +156,9 @@ roteador.get('/documentos', async (req, res) => {
 roteador.post('/documentos', async (req, res) => {
   try {
     const clienteId = req.usuario.clienteId;
-    const { tipo, vendaId, valor, descricao, payload, itens, baseValor } = req.body || {};
+    // `payload` livre nao e mais repassado ao emissor: o corpo da nota e montado
+    // aqui (adapters/fiscal/corpoNota) e nao pode ser sobrescrito pelo cliente.
+    const { tipo, vendaId, valor, descricao, itens, baseValor } = req.body || {};
 
     const t = String(tipo || '').toUpperCase();
     if (!TIPOS.includes(t)) {
@@ -255,51 +243,101 @@ roteador.post('/documentos', async (req, res) => {
       destMunicipio: dest.municipio ? String(dest.municipio).slice(0, 120) : null,
     };
 
+    // Venda de origem: precisa ser deste negocio; dela vem a forma de pagamento.
+    let venda = null;
+    if (vendaId) {
+      venda = await prisma.venda.findFirst({
+        where: { id: String(vendaId), clienteId },
+        select: { id: true, metodoPagamento: true, lead: { select: { nome: true, cpf: true, email: true } } },
+      });
+      if (!venda) return res.status(404).json({ erro: 'Venda nao encontrada.' });
+    }
+
     const { config, emissor } = await emissorDoTenant(clienteId);
+    const live = resolverModoFiscal(config) === 'live';
+
+    // NCM/CFOP/CEST que o produto ja usou em nota anterior completam o item.
+    if (itensData.some((it) => !it.ncm || !it.cfop)) {
+      const conhecidos = await codigosFiscaisConhecidos(clienteId, itensData.map((it) => it.produtoId));
+      for (const it of itensData) {
+        const c = conhecidos.get(it.produtoId) || {};
+        it.ncm = it.ncm || c.ncm || null;
+        it.cfop = it.cfop || c.cfop || null;
+        it.cest = it.cest || c.cest || null;
+      }
+    }
 
     // GATE de PRODUCAO: antes de emitir DE VERDADE, exige emitente/certificado/
     // credencial completos + NCM/CFOP por item + destinatario; senao bloqueia
     // (nada e enviado). Em fixture, nada disso e exigido — facilita o teste.
-    if (resolverModoFiscal(config) === 'live') {
-      const falta = validarProntidaoProducao(config, itensData);
+    if (live) {
+      const falta = validarProntidaoProducao(config, t === 'NFCE' ? itensData : [], { tipo: t });
       if (!destData.destNome || !destData.destDocumento) falta.push('destinatario (nome e CNPJ/CPF)');
       if (falta.length) {
         return res.status(422).json({ erro: `Emissao em producao bloqueada — falta: ${falta.join('; ')}.` });
       }
     }
 
-    // Cria o documento PENDENTE (+ itens); o id vira a refExterna (idempotencia).
-    const doc = await prisma.documentoFiscal.create({
-      data: {
-        clienteId,
-        vendaId: vendaId || null,
-        tipo: t,
-        status: 'PENDENTE',
-        provedor: config.provedor,
-        baseValor: base,
-        valorTotal: valorNum,
-        ...destData,
-        ...(itensData.length ? { itens: { create: itensData } } : {}),
-      },
+    // Teto de notas do plano (limite notasMes). Venda que ja tem nota viva
+    // deste tipo nao gasta cota: cai no "existente" logo abaixo.
+    const jaTemNota = venda && await prisma.documentoFiscal.findFirst({
+      where: { clienteId, vendaId: venda.id, tipo: t, status: { in: STATUS_ATIVOS } }, select: { id: true },
     });
+    if (!jaTemNota) await garantirLimiteNotas({ clienteId });
+
+    // Cria o documento PENDENTE (+ itens); o id vira a refExterna (idempotencia).
+    // Trava unica venda+tipo: se ja existe nota viva desta venda, devolve ela.
+    const { doc, existente } = await criarDocumentoUnico({
+      clienteId,
+      vendaId: venda?.id || null,
+      tipo: t,
+      status: 'PENDENTE',
+      provedor: config.provedor,
+      baseValor: base,
+      valorTotal: valorNum,
+      ...destData,
+      ...(itensData.length ? { itens: { create: itensData } } : {}),
+    });
+    if (existente) {
+      const atual = await prisma.documentoFiscal.findUnique({ where: { id: doc.id }, select: CAMPOS_DOCUMENTO });
+      return res.status(200).json({ ...atual, jaExistia: true, aviso: 'Esta venda já tem uma nota deste tipo. Mostramos a existente.' });
+    }
 
     let dto;
     try {
-      const params = { valor: valorNum, descricao: descricao || `Documento ${doc.id}`, refExterna: doc.id, payload };
+      const destinatario = destData.destNome || destData.destDocumento
+        ? { nome: destData.destNome, documento: destData.destDocumento, email: destData.destEmail, uf: destData.destUf, municipio: destData.destMunicipio }
+        : (venda?.lead ? { nome: venda.lead.nome, documento: venda.lead.cpf, email: venda.lead.email } : null);
+      const numero = live && config.provedor === 'NUVEM_FISCAL' ? await reservarNumero(clienteId) : null;
+      const params = {
+        valor: valorNum,
+        descricao: descricao || `Documento ${doc.id}`,
+        refExterna: doc.id,
+        itens: itensData,
+        destinatario,
+        formaPagamento: req.body?.formaPagamento || venda?.metodoPagamento,
+        numero,
+      };
       dto = t === 'NFCE' ? await emissor.emitirNFCe(params) : await emissor.emitirNFSe(params);
     } catch (errEmissor) {
       const comErro = await prisma.documentoFiscal.update({
         where: { id: doc.id },
-        data: { status: 'ERRO', mensagemErro: errEmissor.message?.slice(0, 500) || 'Falha na emissao.' },
+        data: { status: 'ERRO', mensagemErro: mensagemFalhaEmissor(errEmissor) },
         select: CAMPOS_DOCUMENTO,
       });
-      return res.status(502).json(comErro);
+      return res.status(errEmissor.status === 422 ? 422 : 502).json({ ...comErro, erro: comErro.mensagemErro });
     }
 
     const atualizado = await aplicarDocumento(doc, dto);
     res.status(201).json(atualizado);
   } catch (e) {
-    if (e.status) return res.status(e.status).json({ erro: e.message });
+    if (e.status) {
+      return res.status(e.status).json({
+        erro: e.message,
+        ...(e.codigo ? { codigo: e.codigo } : {}),
+        ...(e.limite ? { limite: e.limite, maximo: e.maximo, planoSugerido: e.planoSugerido } : {}),
+      });
+    }
     console.error('[fiscal/documentos emit]', e);
     res.status(500).json({ erro: 'Erro ao emitir documento fiscal.' });
   }
@@ -337,7 +375,12 @@ roteador.post('/documentos/:id/sincronizar', async (req, res) => {
     if (!doc.provedorDocId) return res.status(400).json({ erro: 'Documento sem id no emissor — nada a sincronizar.' });
 
     const { emissor } = await emissorDoTenant(clienteId);
-    const dto = await emissor.consultarStatus(doc.provedorDocId);
+    let dto;
+    try {
+      dto = await emissor.consultarStatus(doc.provedorDocId, doc.tipo);
+    } catch (errEmissor) {
+      return res.status(errEmissor.status || 502).json({ erro: mensagemFalhaEmissor(errEmissor) });
+    }
     const atualizado = await aplicarDocumento(doc, dto);
     res.json(atualizado);
   } catch (e) {
@@ -351,17 +394,36 @@ roteador.post('/documentos/:id/sincronizar', async (req, res) => {
 roteador.post('/documentos/:id/cancelar', async (req, res) => {
   try {
     const clienteId = req.usuario.clienteId;
-    const { motivo } = req.body || {};
+    const { motivo, confirmarForaDoPrazo } = req.body || {};
     const doc = await prisma.documentoFiscal.findFirst({ where: { id: req.params.id, clienteId } });
     if (!doc) return res.status(404).json({ erro: 'Documento nao encontrado.' });
     if (!doc.provedorDocId || doc.status !== 'EMITIDA') {
       return res.status(400).json({ erro: 'So documentos EMITIDOS podem ser cancelados.' });
     }
 
+    // Justificativa >= 15 caracteres (SEFAZ/prefeitura) e prazo: NFC-e fora
+    // dos ~30 min pede confirmacao; NFS-e so avisa (prazo e do municipio).
+    const regra = avaliarCancelamento({
+      tipo: doc.tipo, emitidoEm: doc.criadoEm, motivo, confirmarForaDoPrazo: confirmarForaDoPrazo === true,
+    });
+    if (regra.erro) return res.status(regra.status).json({ erro: regra.erro, codigo: regra.codigo });
+
     const { emissor } = await emissorDoTenant(clienteId);
-    const r = await emissor.cancelar(doc.provedorDocId, motivo || 'Cancelamento solicitado.');
+    let r;
+    try {
+      r = await emissor.cancelar(doc.provedorDocId, regra.motivo, doc.tipo);
+    } catch (errEmissor) {
+      return res.status(errEmissor.status || 502).json({ erro: mensagemFalhaEmissor(errEmissor), aviso: regra.aviso });
+    }
+    if (r.status === 'ERRO') {
+      // A nota continua EMITIDA; so o pedido de cancelamento foi recusado.
+      return res.status(422).json({ erro: `O emissor não cancelou a nota: ${r.mensagemErro || 'motivo não informado'}.`, aviso: regra.aviso });
+    }
+    if (r.status !== 'CANCELADA') {
+      return res.status(202).json({ id: doc.id, status: doc.status, aviso: 'Cancelamento em processamento no emissor. Sincronize em alguns minutos.' });
+    }
     const atualizado = await aplicarDocumento(doc, { provedorDocId: doc.provedorDocId, status: r.status });
-    res.json(atualizado);
+    res.json({ ...atualizado, aviso: regra.aviso });
   } catch (e) {
     if (e.status) return res.status(e.status).json({ erro: e.message });
     console.error('[fiscal/documentos cancel]', e);

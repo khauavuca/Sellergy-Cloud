@@ -16,7 +16,11 @@ const prisma = require('../prisma');
 const { carregarCredencialDecifrada } = require('../credenciais');
 const { PROVEDORES, TIPO_CREDENCIAL_POR_PROVEDOR } = require('../adapters/fiscal');
 const assistente = require('./assistente');
-const { lerCertificadoA1, enviarAoProvedor, TAMANHO_MAX } = require('./certificado');
+const {
+  lerCertificadoA1, enviarAoProvedor, ehRefSimulada, refSoHomologacao, TAMANHO_MAX,
+} = require('./certificado');
+
+const emissaoRealLigada = () => String(process.env.FISCAL_LIVE || '').toLowerCase() === 'true';
 const { credencialValida, emitirNotaDeTeste } = require('./emissao');
 
 const roteador = express.Router();
@@ -31,6 +35,24 @@ const CAMPOS = {
   certificadoRef: true, certificadoValidoAte: true, certificadoTitular: true,
   csc: true, serie: true, proximoNumero: true, emitirAutomatico: true, ambiente: true, ativo: true,
 };
+
+/**
+ * CNPJ do certificado x CNPJ da empresa. Certificado sem CNPJ legivel (e-CPF,
+ * certificado fora do padrao ICP-Brasil) e recusado: o emissor rejeitaria a
+ * nota de qualquer jeito. Devolve null (ok) ou { erro, codigo }.
+ */
+function conferirCnpjCertificado(cnpjCertificado, cnpjEmpresa) {
+  if (!cnpjCertificado) {
+    return {
+      codigo: 'CERTIFICADO_SEM_CNPJ',
+      erro: 'Não conseguimos ler o CNPJ deste certificado. Use o certificado A1 de pessoa jurídica (e-CNPJ) da empresa.',
+    };
+  }
+  if (cnpjCertificado !== String(cnpjEmpresa || '').replace(/\D/g, '')) {
+    return { codigo: 'CERTIFICADO_OUTRO_CNPJ', erro: 'Este certificado é de outro CNPJ. Confira se é o da sua empresa.' };
+  }
+  return null;
+}
 
 async function contexto(clienteId) {
   const [config, cliente, credenciais] = await Promise.all([
@@ -49,7 +71,7 @@ async function contexto(clienteId) {
 
 function respostaEstado({ config, cliente, credenciais, tipos, temCredencial }) {
   const c = config || null;
-  const pend = assistente.pendencias(c, { temCredencial, tipos });
+  const pend = assistente.pendencias(c, { temCredencial, tipos, emissaoReal: emissaoRealLigada() });
   return {
     config: c ? { ...c, csc: c.csc ? `••••${c.csc.slice(-4)}` : null, temCsc: Boolean(c.csc) } : null,
     tipos,
@@ -60,10 +82,13 @@ function respostaEstado({ config, cliente, credenciais, tipos, temCredencial }) 
     sugestaoCnpj: !c?.cnpj && String(cliente?.cpfCnpj || '').replace(/\D/g, '').length === 14 ? cliente.cpfCnpj.replace(/\D/g, '') : null,
     certificado: c?.certificadoRef ? {
       titular: c.certificadoTitular, validoAte: c.certificadoValidoAte, diasParaVencer: assistente.diasParaVencer(c.certificadoValidoAte),
+      // Registrado com FISCAL_LIVE desligado: com o modo real ligado, precisa reenviar.
+      simulado: ehRefSimulada(c.certificadoRef),
+      precisaReenviar: emissaoRealLigada() && ehRefSimulada(c.certificadoRef),
     } : null,
     pendencias: pend,
     ativo: Boolean(c?.ativo && c?.ambiente === 'PRODUCAO'),
-    emissaoReal: String(process.env.FISCAL_LIVE || '').toLowerCase() === 'true',
+    emissaoReal: emissaoRealLigada(),
   };
 }
 
@@ -143,15 +168,13 @@ roteador.post('/certificado', receberCertificado, async (req, res) => {
     }
 
     const info = lerCertificadoA1(buffer, senha);
-    if (info.cnpj && info.cnpj !== config.cnpj) {
-      return res.status(422).json({ erro: 'Este certificado é de outro CNPJ. Confira se é o da sua empresa.', campos: ['certificado'] });
-    }
+    const recusa = conferirCnpjCertificado(info.cnpj, config.cnpj);
+    if (recusa) return res.status(422).json({ erro: recusa.erro, codigo: recusa.codigo, campos: ['certificado'] });
     const credencial = config.credencialId
       ? await carregarCredencialDecifrada({ credencialId: config.credencialId, clienteId }).catch(() => null)
       : null;
     const { certificadoRef, simulado } = await enviarAoProvedor({
       provedor: config.provedor, credencial, cnpj: config.cnpj, buffer, senha,
-      ambiente: config.ambiente === 'PRODUCAO' ? 'producao' : 'homologacao',
     });
     await prisma.configuracaoFiscal.update({
       where: { clienteId },
@@ -217,6 +240,13 @@ roteador.post('/ativar', async (req, res) => {
     if (!p.prontoParaTeste) {
       return res.status(422).json({ erro: `Falta: ${[...p.empresa, ...p.certificado, ...p.configuracao, ...p.emissor].join(', ')}.`, pendencias: p });
     }
+    // Nuvem Fiscal: o certificado precisa estar tambem na conta de producao.
+    if (emissaoRealLigada() && refSoHomologacao(ctx.config?.certificadoRef)) {
+      return res.status(409).json({
+        erro: 'A Nuvem Fiscal aceitou o certificado só no ambiente de teste. Reenvie o certificado A1 para liberar a produção.',
+        codigo: 'CERTIFICADO_SO_HOMOLOGACAO',
+      });
+    }
     await prisma.configuracaoFiscal.update({ where: { clienteId }, data: { ambiente: 'PRODUCAO', ativo: true } });
     return res.json(respostaEstado(await contexto(clienteId)));
   } catch (e) {
@@ -226,3 +256,4 @@ roteador.post('/ativar', async (req, res) => {
 });
 
 module.exports = roteador;
+module.exports.conferirCnpjCertificado = conferirCnpjCertificado;

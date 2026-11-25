@@ -15,16 +15,21 @@
 // Arquivo proprio (nao o webhooks.routes.js de pagamento) pra as Frentes 2 e 4
 // nao colidirem no mesmo arquivo. Montado em /webhooks no index.js.
 //
-// SEAM: validacao da assinatura x-hub-signature-256 (app secret da Meta) entra
-// junto com o App Review; por ora o gating e o verify token + match do bot.
+// SEGURANCA: todo POST precisa da assinatura X-Hub-Signature-256 (HMAC-SHA256
+// do corpo cru com WHATSAPP_APP_SECRET) — ver services/assinaturaWebhookMeta.js.
+// O corpo cru vem de req.rawBody (express.json com verify, no index.js).
 
 const express = require('express');
 const prisma = require('../prisma');
-const { processarMensagemRecebida } = require('../services/whatsappInbound');
+const { processarMensagemRecebida, CAMPOS_BOT_ATENDIMENTO } = require('../services/whatsappInbound');
+const { conferirWebhookMeta } = require('../services/assinaturaWebhookMeta');
+const { ehPedidoDeSaida } = require('../services/baileys/envioHumano');
 const { carregarCredencialDecifrada } = require('../credenciais');
 const { criarProvedorWhatsapp } = require('../adapters/whatsapp');
 
 const roteador = express.Router();
+
+const TEXTO_OPT_OUT = 'Pronto, você não vai mais receber nossas mensagens automáticas. Se precisar de algo, é só escrever aqui.';
 
 // GET — a Meta valida o endpoint ecoando hub.challenge se o verify token bater.
 roteador.get('/whatsapp', async (req, res) => {
@@ -46,9 +51,26 @@ roteador.get('/whatsapp', async (req, res) => {
   }
 });
 
-// POST — recebe eventos. Ack 200 imediato (a Meta re-tenta se demorar), e
-// processa em seguida sem bloquear a resposta.
+/** "SAIR"/"PARAR" no canal oficial: grava o opt-out (campanhas e automaticos respeitam). */
+async function registrarOptOut(clienteId, telefone) {
+  const digitos = String(telefone || '').replace(/\D/g, '');
+  if (!digitos) return;
+  await prisma.optOutWhatsapp.upsert({
+    where: { clienteId_telefone: { clienteId, telefone: digitos } },
+    create: { clienteId, telefone: digitos },
+    update: {},
+  });
+}
+
+// POST — recebe eventos. Confere a assinatura ANTES de tudo; depois ack 200
+// imediato (a Meta re-tenta se demorar) e processa sem bloquear a resposta.
 roteador.post('/whatsapp', async (req, res) => {
+  const conferencia = conferirWebhookMeta({ corpoCru: req.rawBody, cabecalho: req.get('x-hub-signature-256') });
+  if (!conferencia.ok) {
+    console.warn(`[webhook/whatsapp] POST recusado: ${conferencia.motivo}`);
+    return res.sendStatus(conferencia.status);
+  }
+
   res.sendStatus(200);
   try {
     const entradas = req.body?.entry || [];
@@ -60,17 +82,14 @@ roteador.post('/whatsapp', async (req, res) => {
         if (!phoneNumberId || mensagens.length === 0) continue;
 
         const bot = await prisma.bot.findFirst({
-          where: { identificadorCanal: String(phoneNumberId) },
-          select: {
-            id: true, clienteId: true, credencialCanalId: true, provedorCanal: true,
-            iaAtiva: true, iaModelo: true, iaPromptSistema: true,
-            iaTokensIncluidosMes: true, iaPrecoPorMilTokensExcedenteCentavos: true,
-          },
+          where: { identificadorCanal: String(phoneNumberId), provedorCanal: 'META_CLOUD' },
+          select: { ...CAMPOS_BOT_ATENDIMENTO },
         });
         if (!bot) continue;
 
         // So carrega FAQ se o bot nao estiver no modo IA — economiza uma
-        // query que o motor de decisao nem vai usar.
+        // query que o motor de decisao nem vai usar (se a IA ficar
+        // indisponivel, o iaRouter busca as FAQs ele mesmo).
         const faqs = bot.iaAtiva ? [] : await prisma.faq.findMany({
           where: { clienteId: bot.clienteId, ativo: true },
           orderBy: { ordem: 'asc' },
@@ -91,6 +110,13 @@ roteador.post('/whatsapp', async (req, res) => {
         for (const msg of mensagens) {
           const de = msg.from;
           const texto = msg.text?.body || msg.button?.text || msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || '';
+
+          if (ehPedidoDeSaida(texto)) {
+            await registrarOptOut(bot.clienteId, de).catch((e) => console.error('[webhook/whatsapp optout]', e?.message));
+            await adapter.enviarTexto({ para: de, texto: TEXTO_OPT_OUT }).catch(() => {});
+            continue;
+          }
+
           // canalContexto: so usado por ferramentas que enviam midia direto
           // (ex.: CATALOGO manda o PDF como documento, fora da resposta de texto).
           // Botao de resposta rapida (template de lembrete) chega com payload.
@@ -115,3 +141,4 @@ roteador.post('/whatsapp', async (req, res) => {
 });
 
 module.exports = roteador;
+module.exports.registrarOptOut = registrarOptOut;

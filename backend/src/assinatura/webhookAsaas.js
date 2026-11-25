@@ -70,9 +70,10 @@ async function processarWebhook({ headers, body, query }) {
     const cliente = await acharCliente(pg);
     if (!cliente) return { status: 200, corpo: { ok: true, ignorado: 'cliente desconhecido' } };
 
-    const anterior = await prisma.faturaAssinatura.findFirst({ where: { cobrancaExternaId: pg.id }, select: { status: true } });
+    // statusAnterior vem da fatura que a cobranca realmente casou (pelo id ou
+    // pela competencia); cobranca ignorada nunca conta como "paga agora".
     const fatura = await sincronizarCobranca(cliente.id, pg);
-    const pagaAgora = fatura.status === 'PAGA' && anterior?.status !== 'PAGA';
+    const pagaAgora = !fatura.ignorada && fatura.status === 'PAGA' && fatura.statusAnterior !== 'PAGA';
     if (pagaAgora) {
       await prisma.cliente.updateMany({ where: { id: cliente.id, statusAssinatura: { in: ['TRIAL', 'CANCELADA'] } }, data: { statusAssinatura: 'ATIVA' } });
     }

@@ -97,6 +97,7 @@ function calcularUso({ clientes, uso, custos, planoDe = obterPlano }) {
     const limites = plano.limites || {};
     const acima = [];
     if (Number.isFinite(limites.lembretesMes) && lembretes > limites.lembretesMes) acima.push({ limite: 'lembretesMes', uso: lembretes, maximo: limites.lembretesMes });
+    if (Number.isFinite(limites.notasMes) && notas > limites.notasMes) acima.push({ limite: 'notasMes', uso: notas, maximo: limites.notasMes });
     if (Number.isFinite(limites.usuarios) && (u.usuarios || 0) > limites.usuarios) acima.push({ limite: 'usuarios', uso: u.usuarios, maximo: limites.usuarios });
     return {
       clienteId: cli.id,

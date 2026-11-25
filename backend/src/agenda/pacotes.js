@@ -217,7 +217,7 @@ async function enviarWhats(msg) {
 }
 
 /** Cria a cobranca Pix da parcela `numero` e manda pelo WhatsApp. */
-async function cobrarParcela({ pacote, nomeModelo, lead, numero, vencimento = null }) {
+async function cobrarParcela({ pacote, nomeModelo, lead, numero, vencimento = null, cpfCnpj = null }) {
   const { criarCobranca } = require('../services/pagamentoService');
   const valor = valorParcela(pacote.valor, pacote.parcelas, numero);
   const venc = vencimento || new Date(Date.now() + 3 * DIA_MS);
@@ -225,6 +225,10 @@ async function cobrarParcela({ pacote, nomeModelo, lead, numero, vencimento = nu
     clienteId: pacote.clienteId, origem: 'PACOTE', refId: pacote.id, valor, metodo: 'PIX',
     descricao: `Pacote ${nomeModelo}${pacote.parcelas > 1 ? ` (parcela ${numero}/${pacote.parcelas})` : ''}`,
     vencimento: venc.toISOString(),
+    // Asaas pede CPF/CNPJ: o do lead do pacote ou o digitado na venda (que
+    // fica gravado no lead, pras proximas parcelas sairem sozinhas).
+    leadId: pacote.leadId || null,
+    pagador: { nome: lead?.nome || undefined, telefone: lead?.telefone || undefined, cpfCnpj: cpfCnpj || undefined },
   });
   if (lead?.telefone && cobranca.qrCode) {
     await enviarWhats({

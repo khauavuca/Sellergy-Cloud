@@ -14,6 +14,7 @@ import { useAcaoTopo } from '../hooks/useAcaoTopo';
 import {
   STATUS_LABELS, coresPorStatus, fmtBRL, fmtHora, inicioDaSemana, intervaloDaVisao,
 } from '../components/agenda/agendaUtils';
+import { URL_SITE } from '../utils/painel';
 
 const VISOES = [
   { valor: 'dia', rotulo: 'Dia' },
@@ -52,7 +53,7 @@ export default function AgendaPage() {
   const { resumo } = useResumoConta();
   const slug = resumo?.configuracoes?.slugPublico;
   const linkAgendamento = resumo?.plano?.recursos?.linkAgendamento && slug && resumo?.negocio?.segmento !== 'PRODUTO'
-    ? `${window.location.origin}/agendar/${slug}`
+    ? `${URL_SITE}/agendar/${slug}`
     : null;
   const copiarLink = async () => {
     try {
@@ -118,6 +119,8 @@ export default function AgendaPage() {
             MUITO_PERTO: 'sem sinal: o horário está muito perto pra esperar o Pix',
             SEM_SINAL: 'sem sinal: o valor ficou abaixo de R$ 1,00',
             FALHA_COBRANCA: 'sem sinal: não foi possível gerar o Pix agora',
+            SEM_CPF: 'sem sinal: o Asaas pede o CPF ou CNPJ de quem paga',
+            CPF_INVALIDO: 'sem sinal: o CPF ou CNPJ informado não confere',
           };
           toast.warning(`Agendamento criado ${motivos[r.data.sinalMotivo] || 'sem sinal'}.`);
         } else {

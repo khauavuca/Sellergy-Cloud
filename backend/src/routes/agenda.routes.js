@@ -14,6 +14,8 @@ const { temRecurso, CAMPOS_ASSINATURA } = require('../planos/recursos');
 const { aoLiberarHorario } = require('../agenda/eventosAgenda');
 const sinal = require('../agenda/sinal');
 const pacotes = require('../agenda/pacotes');
+const { provedorAtivo, leadPorTelefone } = require('../services/pagamentoService');
+const { cpfCnpjValido } = require('../services/pagadorCobranca');
 const { gerarComissaoAtendimento } = require('../agenda/comissoes');
 
 // Mesmo limite usado no VendaController/tool — cobre colisao da unique
@@ -235,6 +237,8 @@ roteador.get('/config', requerPermissao('AGENDA', 'visualizar'), async (req, res
       sinalPadraoPct: cliente?.sinalPadraoPct ?? 0,
       encaixeAutomatico: !!cliente?.encaixeAutomatico,
       pagamentoConfigurado: await sinal.pagamentoConfigurado(clienteId),
+      // Asaas pede CPF/CNPJ de quem paga (venda de pacote por Pix mostra o campo).
+      pagamentoExigeCpf: Boolean((await provedorAtivo(clienteId))?.exigeCpfCnpj),
       pacotesNoPlano: cliente ? temRecurso(cliente, 'pacotes') : false,
       prazoSinalHoras: sinal.PRAZO_PADRAO_HORAS,
     });
@@ -329,6 +333,16 @@ roteador.get('/pre-agendamento', requerPermissao('AGENDA', 'visualizar'), async 
       lista = await pacotes.pacotesAtivosDaCliente({ clienteId, leadId, telefone });
     }
     const pct = await sinal.percentualDoServico(clienteId, produtoId);
+    // Asaas pede CPF/CNPJ de quem paga o sinal: a tela so pede o campo quando
+    // o provedor exige e a cliente (achada pelo lead ou telefone) nao tem CPF.
+    const prov = await provedorAtivo(clienteId);
+    let cpfCadastrado = false;
+    if (prov?.exigeCpfCnpj && (leadId || telefone)) {
+      const lead = leadId
+        ? await prisma.lead.findFirst({ where: { id: leadId, clienteId }, select: { cpf: true } })
+        : await leadPorTelefone(clienteId, telefone);
+      cpfCadastrado = Boolean(cpfCnpjValido(lead?.cpf));
+    }
     res.json({
       pacotes: lista,
       pacotesNoPlano,
@@ -337,6 +351,8 @@ roteador.get('/pre-agendamento', requerPermissao('AGENDA', 'visualizar'), async 
         valor: sinal.valorSinal({ preco, pct }),
         pagamentoConfigurado: await sinal.pagamentoConfigurado(clienteId),
         prazoHoras: sinal.PRAZO_PADRAO_HORAS,
+        exigeCpf: Boolean(prov?.exigeCpfCnpj),
+        cpfCadastrado,
       },
     });
   } catch (erro) {
@@ -419,6 +435,8 @@ roteador.post('/', requerPermissao('AGENDA', 'criar'), async (req, res) => {
       clienteId: bodyClienteId,
       // fase 2: servico do catalogo (sinal por servico), pacote e sinal
       produtoId, pacoteClienteId, cobrarSinal,
+      // Asaas pede CPF/CNPJ de quem paga o sinal (quando o lead nao tem)
+      cpfCnpj,
     } = req.body;
 
     // Apenas ADMIN pode criar para outro tenant.
@@ -538,7 +556,10 @@ roteador.post('/', requerPermissao('AGENDA', 'criar'), async (req, res) => {
     // Sinal por Pix: so quando a equipe pediu, sem pacote e com valor.
     let sinalResultado = null;
     if (cobrarSinal === true && !pacoteIdValidado) {
-      sinalResultado = await sinal.cobrarSinal({ agendamento: novoAgendamento, produtoId: produtoIdValidado });
+      sinalResultado = await sinal.cobrarSinal({
+        agendamento: novoAgendamento, produtoId: produtoIdValidado,
+        cpfCnpj: typeof cpfCnpj === 'string' ? cpfCnpj : null,
+      });
     }
     const final = sinalResultado?.cobrado
       ? await prisma.agendamento.findUnique({ where: { id: novoAgendamento.id } })

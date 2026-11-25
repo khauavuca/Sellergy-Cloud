@@ -65,51 +65,83 @@ function modoEnvio(credencial) {
   return String(process.env.FISCAL_LIVE || '').toLowerCase() === 'true' && credencial ? 'live' : 'fixture';
 }
 
-/**
- * Envia o certificado ao emissor e devolve a referencia que fica no banco.
- * Em 'fixture' (padrao, sem FISCAL_LIVE=true) nao bate na rede.
- */
-async function enviarAoProvedor({ provedor, credencial, cnpj, buffer, senha, ambiente = 'homologacao' }) {
-  const doc = soDigitos(cnpj);
-  const modo = modoEnvio(credencial);
-  const ref = `${provedor}:empresa:${doc}`;
-  if (modo === 'fixture') return { certificadoRef: ref, simulado: true };
+// Referencia gravada em modo simulado (FISCAL_LIVE desligado): o certificado
+// NAO foi para o emissor. Marcada com prefixo para, ao ligar o modo real,
+// pedir o reenvio (ver assistente.pendencias e validarProntidaoProducao).
+const PREFIXO_SIMULADO = 'simulado:';
+// Nuvem Fiscal: sandbox e producao sao contas separadas. Sufixo quando o
+// certificado so entrou no sandbox (producao recusou) -> "Ativar" pede reenvio.
+const SUFIXO_SO_HOMOLOGACAO = ':so-homologacao';
 
-  const base64 = buffer.toString('base64');
-  let req;
-  if (provedor === 'FOCUS_NFE') {
-    const token = credencial?.dados?.token || credencial?.dados?.apiKey || '';
-    req = {
-      // API de revenda da Focus (cadastro da empresa emitente com o A1).
-      url: 'https://api.focusnfe.com.br/v2/empresas',
-      metodo: 'POST',
-      headers: { Authorization: `Basic ${Buffer.from(`${token}:`).toString('base64')}` },
-      corpo: { cnpj: doc, arquivo_certificado_base64: base64, senha_certificado: senha },
-    };
-  } else if (provedor === 'NUVEM_FISCAL') {
-    const token = credencial?.dados?.accessToken || credencial?.dados?.token || '';
-    const base = ambiente === 'producao' ? 'https://api.nuvemfiscal.com.br' : 'https://api.sandbox.nuvemfiscal.com.br';
-    req = {
-      url: `${base}/empresas/${doc}/certificado`,
-      metodo: 'PUT',
-      headers: { Authorization: `Bearer ${token}` },
-      corpo: { certificado: base64, password: senha },
-    };
-  } else {
-    throw erro(400, 'Emissor fiscal desconhecido.', 'PROVEDOR_INVALIDO');
-  }
-
-  const resp = await fetchComRetentativa(req.url, {
-    method: req.metodo,
-    headers: { 'content-type': 'application/json', ...req.headers },
-    body: JSON.stringify(req.corpo),
-  });
-  if (!resp.ok) {
-    throw erro(502, resp.status === 401 || resp.status === 403
-      ? 'O emissor recusou o acesso. Peça ao suporte para conferir a integração.'
-      : 'O emissor não aceitou o certificado agora. Tente de novo em alguns minutos.', 'PROVEDOR_RECUSOU');
-  }
-  return { certificadoRef: ref, simulado: false };
+function ehRefSimulada(ref) {
+  return typeof ref === 'string' && ref.startsWith(PREFIXO_SIMULADO);
 }
 
-module.exports = { lerCertificadoA1, enviarAoProvedor, cnpjDoTitular, modoEnvio, TAMANHO_MAX };
+function refSoHomologacao(ref) {
+  return typeof ref === 'string' && ref.endsWith(SUFIXO_SO_HOMOLOGACAO);
+}
+
+async function enviarNuvem({ credencial, doc, base64, senha, ambiente }) {
+  const NuvemFiscalAdapter = require('../adapters/fiscal/nuvemFiscal');
+  const dados = credencial?.dados || {};
+  const token = dados.clientId && dados.clientSecret
+    ? await NuvemFiscalAdapter.obterTokenOAuth(dados)
+    : (dados.accessToken || dados.token || '');
+  return fetchComRetentativa(`${NuvemFiscalAdapter.baseUrl(ambiente)}/empresas/${doc}/certificado`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ certificado: base64, password: senha }),
+  });
+}
+
+function erroRecusa(resp) {
+  return erro(502, resp.status === 401 || resp.status === 403
+    ? 'O emissor recusou o acesso. Peça ao suporte para conferir a integração.'
+    : 'O emissor não aceitou o certificado agora. Tente de novo em alguns minutos.', 'PROVEDOR_RECUSOU');
+}
+
+/**
+ * Envia o certificado ao emissor e devolve a referencia que fica no banco.
+ * Em 'fixture' (padrao, sem FISCAL_LIVE=true) nao bate na rede e a referencia
+ * sai com o prefixo "simulado:".
+ * Nuvem Fiscal (live): homologacao -> sandbox (obrigatorio, e onde sai a nota
+ * de teste) e producao -> api (melhor esforco; se recusar, a ref ganha
+ * ":so-homologacao" e o "Ativar" pede o reenvio).
+ */
+async function enviarAoProvedor({ provedor, credencial, cnpj, buffer, senha }) {
+  const doc = soDigitos(cnpj);
+  if (!['FOCUS_NFE', 'NUVEM_FISCAL'].includes(provedor)) throw erro(400, 'Emissor fiscal desconhecido.', 'PROVEDOR_INVALIDO');
+  const modo = modoEnvio(credencial);
+  const ref = `${provedor}:empresa:${doc}`;
+  if (modo === 'fixture') return { certificadoRef: `${PREFIXO_SIMULADO}${ref}`, simulado: true };
+
+  const base64 = buffer.toString('base64');
+  if (provedor === 'FOCUS_NFE') {
+    const token = credencial?.dados?.token || credencial?.dados?.apiKey || '';
+    // API de revenda da Focus (cadastro da empresa emitente com o A1); vale
+    // para homologacao e producao.
+    const resp = await fetchComRetentativa('https://api.focusnfe.com.br/v2/empresas', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: `Basic ${Buffer.from(`${token}:`).toString('base64')}` },
+      body: JSON.stringify({ cnpj: doc, arquivo_certificado_base64: base64, senha_certificado: senha }),
+    });
+    if (!resp.ok) throw erroRecusa(resp);
+    return { certificadoRef: ref, simulado: false };
+  }
+
+  const homolog = await enviarNuvem({ credencial, doc, base64, senha, ambiente: 'homologacao' });
+  if (!homolog.ok) throw erroRecusa(homolog);
+  let producaoOk = false;
+  try {
+    const prod = await enviarNuvem({ credencial, doc, base64, senha, ambiente: 'producao' });
+    producaoOk = prod.ok;
+  } catch (_) {
+    producaoOk = false;
+  }
+  return { certificadoRef: producaoOk ? ref : `${ref}${SUFIXO_SO_HOMOLOGACAO}`, simulado: false, producaoOk };
+}
+
+module.exports = {
+  lerCertificadoA1, enviarAoProvedor, cnpjDoTitular, modoEnvio, ehRefSimulada, refSoHomologacao,
+  PREFIXO_SIMULADO, SUFIXO_SO_HOMOLOGACAO, TAMANHO_MAX,
+};

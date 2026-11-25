@@ -11,9 +11,21 @@ export default function PainelBotAtendimento({
 }) {
   const ehIA = !!bot.iaAtiva;
   const faqsAtivas = faqs.filter((f) => f.ativo).length;
-  const pctIA = consumoIA && consumoIA.tokensIncluidosMes > 0
-    ? Math.round((consumoIA.tokensUsados / consumoIA.tokensIncluidosMes) * 100)
-    : null;
+  // A cota é do negócio (soma de todos os bots) + pacote extra autorizado.
+  const usadoIA = consumoIA ? (consumoIA.tokensUsadosCliente ?? consumoIA.tokensUsados ?? 0) : 0;
+  const limiteIA = consumoIA ? (consumoIA.limiteTokens ?? consumoIA.tokensIncluidosMes ?? 0) : 0;
+  const pctIA = consumoIA && limiteIA > 0 ? Math.round((usadoIA / limiteIA) * 100) : null;
+  const fmtTokens = (n) => {
+    const v = Number(n) || 0;
+    if (v >= 1_000_000) return `${(v / 1_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} mi`;
+    if (v >= 1_000) return `${Math.round(v / 1_000).toLocaleString('pt-BR')} mil`;
+    return v.toLocaleString('pt-BR');
+  };
+  const avisoIA = consumoIA?.iaPausadaNaPlataforma
+    ? 'A IA está pausada na plataforma por hoje. O bot responde pelo menu de perguntas.'
+    : consumoIA?.cotaEsgotada
+      ? 'A cota de IA do mês acabou. Até o mês virar, o bot responde pelo menu de perguntas, sem IA.'
+      : null;
 
   return (
     <Painel
@@ -90,17 +102,25 @@ export default function PainelBotAtendimento({
         {ehIA ? (
           <LinhaInfo
             rotulo="Consumo de IA (mês)"
-            valor={consumoIA
-              ? `${consumoIA.tokensUsados.toLocaleString('pt-BR')} / ${consumoIA.tokensIncluidosMes.toLocaleString('pt-BR')}`
-              : '—'}
+            valor={consumoIA ? `${fmtTokens(usadoIA)} de ${fmtTokens(limiteIA)} tokens` : '—'}
           >
             {pctIA != null && (
               <div className="basis-full h-1.5 rounded-full bg-[var(--bg-subtle)]" role="progressbar" aria-label="Consumo de IA do mês" aria-valuenow={Math.min(100, pctIA)} aria-valuemin={0} aria-valuemax={100}>
                 <div
-                  className={clsx('h-1.5 rounded-full', pctIA >= 90 ? 'bg-[var(--warning)]' : 'bg-[var(--primary)]')}
+                  className={clsx('h-1.5 rounded-full', pctIA >= 100 ? 'bg-[var(--danger)]' : pctIA >= 90 ? 'bg-[var(--warning)]' : 'bg-[var(--primary)]')}
                   style={{ width: `${Math.min(100, pctIA)}%` }}
                 />
               </div>
+            )}
+            {consumoIA && (
+              <span className="basis-full text-xs text-[var(--text-muted)] leading-snug">
+                {`Cota do plano: ${fmtTokens(consumoIA.tokensIncluidosMes)} tokens por mês (cerca de ${Math.round((consumoIA.tokensIncluidosMes || 0) / 3300).toLocaleString('pt-BR')} respostas)`}
+                {consumoIA.excedenteAutorizadoTokens > 0 ? ` + ${fmtTokens(consumoIA.excedenteAutorizadoTokens)} do pacote extra` : ''}
+                {`. Restam ${fmtTokens(consumoIA.tokensRestantes ?? Math.max(0, limiteIA - usadoIA))}.`}
+              </span>
+            )}
+            {avisoIA && (
+              <span role="status" className="basis-full text-xs font-medium text-[var(--warning-text)] leading-snug">{avisoIA}</span>
             )}
           </LinhaInfo>
         ) : (

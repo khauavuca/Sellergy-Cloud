@@ -23,6 +23,17 @@ const prisma = require('../prisma');
 const { tratarRespostaWhatsapp } = require('../agenda/respostaLembrete');
 const { montarRespostaBot } = require('./iaRouter');
 const { reabrirLeadSeFechado } = require('./etapaLeadAuto');
+const { permitirRespostaBot } = require('./limiteContato');
+
+// Campos do Bot que o atendimento precisa — o MESMO select nos dois canais
+// (webhook da Meta e Baileys). Faltar `acoesPermitidas` deixava as
+// ferramentas da IA sempre desligadas; faltar `status` fazia bot OFFLINE
+// continuar respondendo.
+const CAMPOS_BOT_ATENDIMENTO = Object.freeze({
+  id: true, clienteId: true, credencialCanalId: true, provedorCanal: true, status: true,
+  iaAtiva: true, iaModelo: true, iaPromptSistema: true, acoesPermitidas: true,
+  iaTokensIncluidosMes: true, iaPrecoPorMilTokensExcedenteCentavos: true, iaExcedenteAutorizadoTokens: true,
+});
 
 // Lead.telefone e cadastrado sem o codigo do pais (DDD + numero, 10-11
 // digitos — ver VendaController.validarClienteFinal), mas o remetente sempre
@@ -49,14 +60,26 @@ async function reabrirLeadPorTelefone(clienteId, telefoneRemetente) {
   });
 }
 
+/** Bot desligado (OFFLINE/ERROR) nao responde nada sozinho. Regra pura. */
+function botPodeResponder(bot) {
+  return bot?.status === 'ONLINE';
+}
+
 /**
  * Processa UMA mensagem recebida: reabre/avanca o lead (best-effort), monta a
  * resposta (IA ou FAQ) e envia via o adapter ja resolvido por quem chama.
+ *
+ * Ordem:
+ *   1. resposta a lembrete (confirma/remarca) — vale mesmo com o bot
+ *      desligado: o lembrete e do sistema, nao do bot;
+ *   2. bot desligado -> nao responde (so reabre o lead);
+ *   3. IA ou menu (iaRouter decide, com as travas de custo);
+ *   4. resposta sem IA tem limite por contato (anti-loop com outro robo).
  * @param {{
  *   bot: Object, texto: string, de: string, faqs: Array,
  *   canalContexto: Object, adapter: import('../adapters/whatsapp').ProvedorWhatsApp,
  * }} p
- * @returns {Promise<{texto?:string}|null>} resposta montada (pra log/depuracao de quem chama)
+ * @returns {Promise<{texto?:string, origem?:string}|null>} resposta montada (pra log/depuracao de quem chama)
  */
 async function processarMensagemRecebida({ bot, texto, de, faqs, canalContexto, adapter, payload = null }) {
   // Resposta a lembrete de agendamento ("1"/"2" ou botao do template) tem
@@ -77,7 +100,15 @@ async function processarMensagemRecebida({ bot, texto, de, faqs, canalContexto, 
   reabrirLeadPorTelefone(bot.clienteId, de)
     .catch((e) => console.error('[whatsappInbound reabrir-lead]', e?.message));
 
-  const resposta = await montarRespostaBot({ bot, texto, faqs, canalContexto });
+  if (!botPodeResponder(bot)) return null;
+
+  const resposta = await montarRespostaBot({ bot, texto, faqs, de, canalContexto });
+
+  // Limite por contato pras respostas SEM IA (a IA ja passou pelo limite
+  // dela no iaRouter): outro robo respondendo o menu/fallback em loop.
+  if (resposta?.origem !== 'IA' && !permitirRespostaBot(bot.id, de)) {
+    return { ...resposta, texto: null, silenciado: 'LIMITE_CONTATO' };
+  }
 
   if (resposta?.texto && adapter) {
     await adapter.enviarTexto({ para: de, texto: resposta.texto });
@@ -86,4 +117,4 @@ async function processarMensagemRecebida({ bot, texto, de, faqs, canalContexto, 
   return resposta;
 }
 
-module.exports = { processarMensagemRecebida, reabrirLeadPorTelefone };
+module.exports = { processarMensagemRecebida, reabrirLeadPorTelefone, botPodeResponder, CAMPOS_BOT_ATENDIMENTO };

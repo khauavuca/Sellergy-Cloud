@@ -9,7 +9,8 @@ import clsx from 'clsx';
 import { Loader2, RefreshCw, Copy, CheckCircle2, Delete, QrCode, Bell } from 'lucide-react';
 import api from '../services/api';
 import { iniciais } from '../components/agenda/agendaUtils';
-import { Pagina, FaixaNumeros, Numero, Painel, AbasPilula, Badge, Button, useToast } from '../components/ui';
+import { Pagina, FaixaNumeros, Numero, Painel, AbasPilula, Badge, Button, Input, useToast } from '../components/ui';
+import { formatarCpfCnpj, erroCpfCnpj, limparCpfCnpj } from '../utils/cpfCnpj';
 
 const fmtBRL = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtHora = (d) => new Date(d).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -35,9 +36,12 @@ const PIX_DESISTE_MS = 20 * 60 * 1000;
 // Valores em dinheiro encolhem um pouco no celular pra não cortar.
 const VALOR_COMPACTO = 'max-sm:[&>div:nth-child(2)]:text-lg';
 
-function CobrarRapido({ pagamentoConfigurado, aoMudar }) { // aoMudar = recarrega o resumo do dia
+function CobrarRapido({ pagamentoConfigurado, exigeCpf = false, aoMudar }) { // aoMudar = recarrega o resumo do dia
   const toast = useToast();
   const [centavos, setCentavos] = useState('');
+  // Asaas pede CPF/CNPJ de quem paga: o campo so aparece nesse caso.
+  const [cpfCnpj, setCpfCnpj] = useState('');
+  const [erroCpf, setErroCpf] = useState(null);
   const [pix, setPix] = useState(null);
   const [gerando, setGerando] = useState(false);
   const [erro, setErro] = useState(null);
@@ -70,21 +74,28 @@ function CobrarRapido({ pagamentoConfigurado, aoMudar }) { // aoMudar = recarreg
   };
 
   const gerar = async () => {
+    const erroDoc = exigeCpf ? erroCpfCnpj(cpfCnpj, true) : null;
+    setErroCpf(erroDoc);
+    if (erroDoc) return;
     setGerando(true);
     setErro(null);
     try {
-      const r = await api.post('/hoje/cobrar', { centavos: Number(centavos) });
+      const r = await api.post('/hoje/cobrar', {
+        centavos: Number(centavos),
+        ...(exigeCpf ? { cpfCnpj: limparCpfCnpj(cpfCnpj) } : {}),
+      });
       setPix(r.data);
       aoMudar?.(); // atualiza o "A receber"
       acompanhar(r.data.id);
     } catch (e) {
-      setErro(erroDe(e, 'Não foi possível gerar o Pix.'));
+      if (e?.response?.data?.campos?.includes('cpfCnpj')) setErroCpf(erroDe(e, 'Confira o CPF ou CNPJ.'));
+      else setErro(erroDe(e, 'Não foi possível gerar o Pix.'));
     } finally {
       setGerando(false);
     }
   };
 
-  const nova = () => { acompanhando.current = null; setPix(null); setCentavos(''); setErro(null); };
+  const nova = () => { acompanhando.current = null; setPix(null); setCentavos(''); setCpfCnpj(''); setErroCpf(null); setErro(null); };
 
   const copiar = async () => {
     try {
@@ -127,6 +138,19 @@ function CobrarRapido({ pagamentoConfigurado, aoMudar }) { // aoMudar = recarreg
               </button>
             ))}
           </div>
+          {exigeCpf && (
+            <div className="mt-3">
+              <Input
+                label="CPF ou CNPJ de quem paga"
+                inputMode="numeric"
+                value={cpfCnpj}
+                onChange={(e) => { setCpfCnpj(formatarCpfCnpj(e.target.value)); setErroCpf(null); }}
+                placeholder="000.000.000-00"
+                error={erroCpf}
+                hint="O Asaas pede esse dado para gerar o Pix."
+              />
+            </div>
+          )}
           {erro && <p role="alert" className="m-0 text-[13px] text-[var(--danger-text)] mt-3">{erro}</p>}
           <Button fullWidth className="mt-3 max-lg:h-12" icon={QrCode} loading={gerando} disabled={valor < 1} onClick={gerar}>
             Gerar Pix
@@ -478,7 +502,7 @@ export default function HojePage() {
             </div>
           )}
           <div className={clsx('flex flex-col', naAba('cobrar'))}>
-            <CobrarRapido pagamentoConfigurado={dados.pagamentoConfigurado} aoMudar={carregar} />
+            <CobrarRapido pagamentoConfigurado={dados.pagamentoConfigurado} exigeCpf={dados.pagamentoExigeCpf} aoMudar={carregar} />
           </div>
         </section>
 

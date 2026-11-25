@@ -3,23 +3,29 @@
 // =====================================================================
 // Tres portas, uma regra so (aplicarResposta):
 //   1. botao do template oficial  -> payload "CONFIRMAR:<token>" / "REMARCAR:<token>"
-//   2. texto no WhatsApp ("1", "sim", "2", "remarcar") -> acha o agendamento
-//      que recebeu lembrete pra aquele telefone nas proximas 48 h
+//   2. texto no WhatsApp ("1", "confirmar", "2", "remarcar") -> so vale pro
+//      agendamento cujo lembrete foi o MAIS RECENTE enviado praquele telefone,
+//      e so numa janela curta depois do envio (JANELA_RESPOSTA_MS)
 //   3. link publico /confirmar/<token> (routes/publico.routes.js)
 //
 // REMARCAR cancela o horario (libera a vaga) e avisa a equipe pra combinar
 // outro — com o link de agendamento quando o plano tiver. A vaga vai pra fila
 // de encaixe (agenda/encaixe.js).
 // So respostas CURTAS e exatas contam (texto livre segue pro bot normal),
-// pra uma conversa comum nunca virar confirmacao sem querer.
+// pra uma conversa comum nunca virar confirmacao sem querer. "Nao" sozinho
+// NAO cancela (pode ser resposta a outra coisa): o bot pergunta de novo e so
+// remarca com "2"/"remarcar"/"cancelar" ou o botao/enquete do lembrete.
 // =====================================================================
 
 const prisma = require('../prisma');
 const { criarNotificacao } = require('../utils/notificacoes');
 
-const JANELA_RESPOSTA_MS = 48 * 60 * 60 * 1000;
-const RESPOSTAS_CONFIRMAR = new Set(['1', 'sim', 's', 'confirmo', 'confirmar', 'confirmado', 'confirmada', 'ok', 'confirma']);
-const RESPOSTAS_REMARCAR = new Set(['2', 'remarcar', 'remarca', 'nao', 'não', 'n', 'cancelar', 'desmarcar']);
+// Depois do lembrete, por quanto tempo "1"/"2" ainda sao resposta a ele.
+const JANELA_RESPOSTA_MS = 12 * 60 * 60 * 1000;
+const RESPOSTAS_CONFIRMAR = new Set(['1', 'sim', 'confirmo', 'confirmar', 'confirmado', 'confirmada', 'confirma']);
+const RESPOSTAS_REMARCAR = new Set(['2', 'remarcar', 'remarca', 'cancelar', 'cancela', 'desmarcar']);
+// Negativa solta: pode ser "nao" pra qualquer outra pergunta — pede confirmacao.
+const RESPOSTAS_AMBIGUAS = new Set(['nao', 'não', 'n', 'nao posso', 'não posso', 'nao vou', 'não vou']);
 
 /** Regra pura: o que o cliente respondeu? */
 function interpretarResposta({ texto = '', payload = '' } = {}) {
@@ -27,9 +33,10 @@ function interpretarResposta({ texto = '', payload = '' } = {}) {
   const m = /^(CONFIRMAR|REMARCAR):([A-Za-z0-9_-]{10,64})$/.exec(p);
   if (m) return { acao: m[1], token: m[2] };
 
-  const t = String(texto || '').trim().toLowerCase().replace(/[.!*]+$/g, '');
+  const t = String(texto || '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.!*]+$/g, '');
   if (RESPOSTAS_CONFIRMAR.has(t)) return { acao: 'CONFIRMAR', token: null };
   if (RESPOSTAS_REMARCAR.has(t)) return { acao: 'REMARCAR', token: null };
+  if (RESPOSTAS_AMBIGUAS.has(t)) return { acao: 'NEGATIVA_AMBIGUA', token: null };
   return null;
 }
 
@@ -85,11 +92,41 @@ async function aplicarResposta({ agendamento, acao, origem }) {
   return { ok: true, status: 'CANCELED', mensagem: `Tudo bem, liberamos esse horário e a equipe vai falar com você para remarcar.${link}` };
 }
 
+function ultimoLembreteEm(ag) {
+  const a = ag.lembrete24hEm ? new Date(ag.lembrete24hEm).getTime() : 0;
+  const b = ag.lembrete2hEm ? new Date(ag.lembrete2hEm).getTime() : 0;
+  return Math.max(a, b);
+}
+
+/**
+ * Regra pura: entre os agendamentos do tenant, qual recebeu o lembrete MAIS
+ * RECENTE pra este telefone, dentro da janela curta, com horario ainda por vir?
+ */
+function escolherAgendamentoDoLembrete(candidatos, de, agora = new Date(), janelaMs = JANELA_RESPOSTA_MS) {
+  const sufixo = ultimosDigitos(de);
+  if (sufixo.length < 8) return null;
+  const t = agora.getTime();
+  return (candidatos || [])
+    .filter((a) => ['PENDING', 'CONFIRMED'].includes(a.status))
+    .filter((a) => new Date(a.data).getTime() > t)
+    .filter((a) => ultimosDigitos(a.telefoneCliente) === sufixo)
+    .map((a) => ({ a, enviadoEm: ultimoLembreteEm(a) }))
+    .filter(({ enviadoEm }) => enviadoEm > 0 && t - enviadoEm <= janelaMs && enviadoEm <= t)
+    .sort((x, y) => y.enviadoEm - x.enviadoEm)[0]?.a || null;
+}
+
+function textoPerguntaRemarcar(agendamento) {
+  const d = new Date(agendamento.data);
+  const dia = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' }).format(d);
+  const hora = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }).format(d);
+  return `Só para eu entender: você quer remarcar o horário de ${dia} às ${hora}? Responda *2* para remarcar ou *1* para manter o horário.`;
+}
+
 /**
  * Porta do WhatsApp: chamada no inicio de processarMensagemRecebida.
  * @returns {Promise<{ tratado: false } | { tratado: true, resposta: string }>}
  */
-async function tratarRespostaWhatsapp({ clienteId, de, texto, payload }) {
+async function tratarRespostaWhatsapp({ clienteId, de, texto, payload, agora = new Date() }) {
   const interpretacao = interpretarResposta({ texto, payload });
   if (!interpretacao) return { tratado: false };
 
@@ -97,30 +134,35 @@ async function tratarRespostaWhatsapp({ clienteId, de, texto, payload }) {
   if (interpretacao.token) {
     agendamento = await prisma.agendamento.findFirst({ where: { clienteId, tokenConfirmacao: interpretacao.token } });
   } else {
-    // Resposta por texto: so vale se ESTE telefone recebeu lembrete e tem
-    // horario chegando. Sem isso, "sim" e so conversa — segue pro bot.
-    const sufixo = ultimosDigitos(de);
-    if (sufixo.length < 8) return { tratado: false };
-    const agora = new Date();
+    // Resposta por texto: so vale se ESTE telefone recebeu lembrete ha pouco
+    // e tem horario chegando. Sem isso, "sim"/"1" e so conversa — segue pro bot.
+    if (ultimosDigitos(de).length < 8) return { tratado: false };
+    const desde = new Date(agora.getTime() - JANELA_RESPOSTA_MS);
     const candidatos = await prisma.agendamento.findMany({
       where: {
         clienteId,
         status: { in: ['PENDING', 'CONFIRMED'] },
-        data: { gt: agora, lte: new Date(agora.getTime() + JANELA_RESPOSTA_MS) },
+        data: { gt: agora },
         telefoneCliente: { not: null },
-        OR: [{ lembrete24hEm: { not: null } }, { lembrete2hEm: { not: null } }],
+        OR: [{ lembrete24hEm: { gte: desde } }, { lembrete2hEm: { gte: desde } }],
       },
-      orderBy: { data: 'asc' },
       take: 200,
     });
     // O telefone e gravado como foi digitado (com ou sem mascara): compara
     // so os digitos finais.
-    agendamento = candidatos.find((a) => ultimosDigitos(a.telefoneCliente) === sufixo) || null;
+    agendamento = escolherAgendamentoDoLembrete(candidatos, de, agora);
   }
   if (!agendamento) return { tratado: false };
+
+  if (interpretacao.acao === 'NEGATIVA_AMBIGUA') {
+    return { tratado: true, resposta: textoPerguntaRemarcar(agendamento) };
+  }
 
   const r = await aplicarResposta({ agendamento, acao: interpretacao.acao, origem: 'CLIENTE_WHATSAPP' });
   return { tratado: true, resposta: r.mensagem };
 }
 
-module.exports = { interpretarResposta, aplicarResposta, tratarRespostaWhatsapp, RESPOSTAS_CONFIRMAR, RESPOSTAS_REMARCAR };
+module.exports = {
+  interpretarResposta, aplicarResposta, tratarRespostaWhatsapp, escolherAgendamentoDoLembrete,
+  RESPOSTAS_CONFIRMAR, RESPOSTAS_REMARCAR, RESPOSTAS_AMBIGUAS, JANELA_RESPOSTA_MS,
+};

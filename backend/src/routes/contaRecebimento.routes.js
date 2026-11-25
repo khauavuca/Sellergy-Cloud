@@ -7,7 +7,7 @@
 //   POST /conta-recebimento/atualizar-status -> consulta o Asaas e aplica (+ documentos pendentes)
 //   GET  /conta-recebimento/financeiro       -> saldo, a liberar, extrato (?offset), taxas
 //   POST /conta-recebimento/saque            -> { valor } Pix pra chave cadastrada
-//   PUT  /conta-recebimento/repasse          -> { prazo?, tipoChavePix?, chavePix? }
+//   PUT  /conta-recebimento/repasse          -> { prazo?, tipoChavePix?, chavePix?, senha?|codigo? } (trocar a chave pede senha ou 2 etapas)
 //
 // Dinheiro e dados do dono: modulo PAGAMENTOS + papel privilegiado (dono ou
 // administrador), igual a /pagamentos. A apiKey da subconta nunca sai daqui.
@@ -161,11 +161,21 @@ roteador.post('/saque', limitadorDinheiro, async (req, res) => {
   }
 });
 
-roteador.put('/repasse', async (req, res) => {
+roteador.put('/repasse', limitadorDinheiro, async (req, res) => {
   try {
     const c = await conta.contaDoTenant(req.usuario.clienteId);
     if (!c || !c.contaExternaId) return res.status(404).json({ erro: 'Nenhuma conta de recebimento aberta.' });
-    const { prazo, tipoChavePix, chavePix } = req.body || {};
+    const { prazo, tipoChavePix, chavePix, senha, codigo } = req.body || {};
+    // Trocar a chave Pix muda pra onde vai o dinheiro: confirma senha (ou o
+    // codigo de 2 etapas, se ligado) de quem esta logado.
+    if (conta.trocaChavePix(c, { tipoChavePix, chavePix })) {
+      const usuario = await prisma.usuario.findUnique({
+        where: { id: req.usuario.id },
+        select: { id: true, senha: true, totpAtivo: true, totpSegredoCifrado: true },
+      });
+      await conta.confirmarIdentidade(usuario, { senha, codigo });
+      console.log(`[conta-recebimento] chave Pix do repasse trocada por usuario=${req.usuario.id} cliente=${req.usuario.clienteId}`);
+    }
     const atualizada = await conta.atualizarRepasse(c, { prazo, tipoChavePix, chavePix });
     res.json({ conta: contaPublica(atualizada) });
   } catch (e) {

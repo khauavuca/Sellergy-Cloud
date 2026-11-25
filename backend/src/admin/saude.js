@@ -166,10 +166,12 @@ async function situacaoGeral() {
     comTempo(() => prisma.$queryRaw`SELECT 1`),
     comTempo(() => obterRedis().ping()),
   ]);
-  const [filasInfo, whatsapp, notas] = await Promise.all([
+  const [filasInfo, whatsapp, notas, ia] = await Promise.all([
     redisPing.ok ? situacaoFilas() : Promise.resolve([]),
     postgres.ok ? situacaoWhatsapp() : Promise.resolve(null),
     postgres.ok ? notasRejeitadas24h() : Promise.resolve(null),
+    // Teto global diario da IA (services/iaLimites.js).
+    postgres.ok ? require('../services/iaLimites').situacaoTetoGlobal().catch(() => null) : Promise.resolve(null),
   ]);
   return {
     geradoEm: new Date().toISOString(),
@@ -178,6 +180,7 @@ async function situacaoGeral() {
     filas: filasInfo,
     whatsapp,
     notasRejeitadas: notas,
+    ia,
     recursos: recursos(),
     versao: versaoDoApp(),
   };
@@ -191,6 +194,7 @@ function alertasDaSaude(s) {
   const falhas = (s.filas || []).reduce((t, f) => t + (f.contagem?.failed || 0), 0);
   if (falhas) alertas.push(`${falhas} tarefa(s) com falha nas filas`);
   if (s.whatsapp?.qrCode?.desconectados) alertas.push(`${s.whatsapp.qrCode.desconectados} WhatsApp por QR Code desconectado(s)`);
+  if (s.ia?.bloqueado) alertas.push(`IA desligada para todos: teto diário de ${s.ia.teto.toLocaleString('pt-BR')} tokens atingido`);
   if (s.notasRejeitadas?.total) alertas.push(`${s.notasRejeitadas.total} nota(s) fiscal(is) com erro nas últimas 24 h`);
   if (s.recursos.sistema.memoriaUsadaPct >= 85) alertas.push(`Memória do servidor em ${s.recursos.sistema.memoriaUsadaPct}%`);
   return alertas;

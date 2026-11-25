@@ -86,3 +86,67 @@ test('excecao de rede esgota as tentativas e propaga o erro', async () => {
     global.fetch = originalFetch;
   }
 });
+
+// --- Metodo nao idempotente (POST) — nao duplica cobranca/nota/saque ---
+
+async function comFetch(fila, fn) {
+  const falso = fetchFalsoDaFila(fila);
+  const originalFetch = global.fetch;
+  global.fetch = falso.fn;
+  try {
+    return await fn(falso.chamado);
+  } finally {
+    global.fetch = originalFetch;
+  }
+}
+
+test('POST sem chave de idempotencia: 502 volta na primeira (nao repete)', async () => {
+  await comFetch([{ status: 502 }, { status: 200 }], async (chamado) => {
+    const resp = await fetchComRetentativa('http://x', { method: 'POST' }, { tentativas: 3 });
+    assert.strictEqual(resp.status, 502);
+    assert.strictEqual(chamado(), 1);
+  });
+});
+
+test('POST sem chave: erro de rede/timeout propaga na primeira', async () => {
+  await comFetch([{ erro: new Error('ECONNRESET') }, { status: 200 }], async (chamado) => {
+    await assert.rejects(() => fetchComRetentativa('http://x', { method: 'post' }, { tentativas: 3 }), /ECONNRESET/);
+    assert.strictEqual(chamado(), 1);
+  });
+});
+
+test('POST sem chave: 429 repete (o provedor recusou sem processar)', async () => {
+  await comFetch([{ status: 429 }, { status: 201 }], async (chamado) => {
+    const resp = await fetchComRetentativa('http://x', { method: 'POST' }, { tentativas: 3 });
+    assert.strictEqual(resp.status, 201);
+    assert.strictEqual(chamado(), 2);
+  });
+});
+
+test('POST com Idempotency-Key (qualquer caixa) repete em 5xx', async () => {
+  await comFetch([{ status: 503 }, { status: 200 }], async (chamado) => {
+    const resp = await fetchComRetentativa('http://x', { method: 'POST', headers: { 'Idempotency-Key': 'cob-1' } }, { tentativas: 3 });
+    assert.strictEqual(resp.status, 200);
+    assert.strictEqual(chamado(), 2);
+  });
+  await comFetch([{ status: 500 }, { status: 200 }], async (chamado) => {
+    await fetchComRetentativa('http://x', { method: 'POST', headers: { 'x-idempotency-key': 'pix-1' } }, { tentativas: 3 });
+    assert.strictEqual(chamado(), 2);
+  });
+});
+
+test('repetirNaoIdempotente: true forca a retentativa do POST', async () => {
+  await comFetch([{ status: 500 }, { status: 200 }], async (chamado) => {
+    await fetchComRetentativa('http://x', { method: 'POST' }, { tentativas: 2, repetirNaoIdempotente: true });
+    assert.strictEqual(chamado(), 2);
+  });
+});
+
+test('podeRepetir: GET/PUT/DELETE sim, POST/PATCH so com chave', () => {
+  const { podeRepetir } = require('./httpSeguro');
+  assert.strictEqual(podeRepetir({}), true);
+  assert.strictEqual(podeRepetir({ method: 'DELETE' }), true);
+  assert.strictEqual(podeRepetir({ method: 'PATCH' }), false);
+  assert.strictEqual(podeRepetir({ method: 'POST', headers: { 'Idempotency-Key': '' } }), false);
+  assert.strictEqual(podeRepetir({ method: 'POST', headers: new Headers({ 'Idempotency-Key': 'a' }) }), true);
+});

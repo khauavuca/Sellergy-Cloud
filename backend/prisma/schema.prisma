@@ -272,7 +272,10 @@ model Bot {
   //   identificadorCanal -> ex: phoneNumberId do WhatsApp / chatId do Telegram
   //   verifyTokenCanal   -> verify token usado pela Meta no GET de verificacao
   credencialCanalId  String?
-  identificadorCanal String?
+  // Unico: um numero (phoneNumberId da Meta / numero do QR Code) so pode
+  // estar em UM bot — senao outro tenant "sequestra" as mensagens dele. O
+  // indice unico do Postgres aceita varios NULL (bot sem canal).
+  identificadorCanal String?       @unique
   verifyTokenCanal   String?
   // Estado tecnico da conexao Baileys — vocabulario proprio, nao reaproveita
   // StatusBot (que e so o liga/desliga manual do tenant). Null/sem sentido
@@ -297,12 +300,16 @@ model Bot {
   // Editavel via API desde ja; a tela do cliente pra preencher isso fica pra
   // depois (fora do escopo desta rodada).
   iaPromptSistema                      String?
-  // LIMITACAO CONHECIDA: os dois campos abaixo sao por-BOT, mas a fatura e
-  // por-CLIENTE. Um cliente com 2 bots de IA ativa ganharia 2x o limite
-  // gratuito na pratica. Aceitavel enquanto quase todo tenant tem 1 bot so;
-  // revisar (mover pra agregado por Cliente) se isso passar a importar.
-  iaTokensIncluidosMes                 Int      @default(100000)
-  iaPrecoPorMilTokensExcedenteCentavos Int      @default(8)
+  // Cota de IA do plano Negocio: 2 milhoes de tokens/mes por cliente. O teto
+  // duro (services/iaLimites.js) soma o consumo de TODOS os bots do cliente
+  // no mes e compara com cota + excedente autorizado deste bot. Excedente a
+  // R$ 15 por milhao = 1,5 centavo por mil tokens (por isso Float).
+  iaTokensIncluidosMes                 Int      @default(2000000)
+  iaPrecoPorMilTokensExcedenteCentavos Float    @default(1.5)
+  // Tokens extras autorizados no mes (pacote comprado / excedente liberado).
+  // 0 = sem excedente automatico: acabou a cota, o bot volta pro menu de
+  // perguntas sem IA e o dono recebe uma notificacao.
+  iaExcedenteAutorizadoTokens          Int      @default(0)
   // Quais acoes autonomas o bot pode executar durante o atendimento (tool
   // calling da DeepSeek) — ex.: ["CATALOGO", "CONSULTAR_ESTOQUE", "COBRANCA_PIX"].
   // Configurado pelo proprio cliente (nao pelo admin). Lista vazia = so
@@ -332,6 +339,8 @@ model ConsumoIA {
   tokensExcedentes       Int       @default(0)
   valorExcedenteCentavos Int       @default(0)
   faturadoEm             DateTime?
+  // Quando o dono foi avisado de que a cota do mes acabou (1 aviso por mes).
+  cotaEsgotadaAvisadaEm  DateTime?
   criadoEm               DateTime  @default(now())
   atualizadoEm           DateTime  @updatedAt
 
@@ -341,6 +350,18 @@ model ConsumoIA {
   @@unique([botId, periodo])
   @@index([clienteId, periodo])
   @@map("consumo_ia")
+}
+
+// Consumo de IA da PLATAFORMA inteira por dia (fuso de Sao Paulo) — base do
+// teto global IA_TETO_DIARIO_TOKENS (services/iaLimites.js). Estourou: a IA
+// desliga pra todos ate o dia virar e `tetoAtingidoEm` vira alerta na Saude.
+model ConsumoIADiario {
+  dia            String    @id // "AAAA-MM-DD"
+  tokensUsados   Int       @default(0)
+  tetoAtingidoEm DateTime?
+  atualizadoEm   DateTime  @updatedAt
+
+  @@map("consumo_ia_diario")
 }
 
 model VariavelBot {
@@ -471,6 +492,11 @@ model Agendamento {
   tokenConfirmacao String?          @unique
   lembrete24hEm    DateTime?
   lembrete2hEm     DateTime?
+  // Reserva do envio do lembrete (so um worker por vez; expira sozinha se o
+  // processo cair) e tentativas seguidas sem sucesso (socket fora do ar...).
+  // lembrete24hEm/lembrete2hEm so sao gravados DEPOIS do envio dar certo.
+  lembreteReservadoAte DateTime?
+  lembreteTentativas   Int       @default(0)
   confirmadoEm     DateTime?
   // Quem confirmou: CLIENTE_WHATSAPP | CLIENTE_LINK | EQUIPE
   confirmadoPor    String?
@@ -1268,6 +1294,11 @@ model ConfiguracaoFiscal {
   proximoNumero        Int?
   certificadoValidoAte DateTime?
   certificadoTitular   String?
+  // Dados tributarios para o corpo real da nota (codigo IBGE do municipio, item
+  // da lista de servico, aliquota de ISS, CST/CSOSN, IBS/CBS...). Validado em
+  // utils/validacaoFiscal#normalizarTributacao. Opcional; o que faltar vira
+  // erro claro na emissao real.
+  tributacao           Json?
   criadoEm       DateTime       @default(now())
   atualizadoEm   DateTime       @updatedAt
 
@@ -1307,6 +1338,11 @@ model DocumentoFiscal {
 
   @@index([clienteId, status])
   @@index([clienteId, vendaId])
+  // Trava contra nota duplicada: indice unico PARCIAL criado a mao na migration
+  // 20261124234517_fiscal_documento_unico ("documentos_fiscais_vendaId_tipo_ativo_key":
+  // vendaId + tipo, so para status PENDENTE/PROCESSANDO/EMITIDA). O Prisma 5 nao
+  // descreve indice parcial aqui: se um `migrate dev` futuro gerar um DROP INDEX
+  // dele, APAGUE essa linha da migration gerada.
   @@map("documentos_fiscais")
 }
 
@@ -1959,6 +1995,8 @@ model ContaRecebimento {
   dados         Json     // dados cadastrais enviados (sem segredo)
   motivoRecusa  String?
   prazoRepasse  String   @default("PADRAO") // PADRAO | ANTECIPADO
+  // Trava do saque: ate esse horario nao sai outro saque (duplo clique/abas).
+  saqueTravadoAte DateTime?
   criadoEm      DateTime @default(now())
   atualizadoEm  DateTime @updatedAt
 

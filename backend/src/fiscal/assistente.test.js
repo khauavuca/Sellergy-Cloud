@@ -63,5 +63,39 @@ test('certificado A1: le titular, CNPJ e validade; senha errada e arquivo falso 
 
 test('envio ao emissor sem FISCAL_LIVE nao bate na rede e guarda so a referencia', async () => {
   const r = await enviarAoProvedor({ provedor: 'NUVEM_FISCAL', credencial: { dados: { accessToken: 't' } }, cnpj: '11222333000181', buffer: PFX, senha: 'senha123' });
-  assert.deepStrictEqual(r, { certificadoRef: 'NUVEM_FISCAL:empresa:11222333000181', simulado: true });
+  assert.deepStrictEqual(r, { certificadoRef: 'simulado:NUVEM_FISCAL:empresa:11222333000181', simulado: true });
+});
+
+test('certificado sem CNPJ legivel ou de outro CNPJ e recusado com mensagem clara', () => {
+  const { conferirCnpjCertificado } = require('./assistente.routes');
+  const sem = conferirCnpjCertificado(null, '11222333000181');
+  assert.strictEqual(sem.codigo, 'CERTIFICADO_SEM_CNPJ');
+  assert.match(sem.erro, /e-CNPJ/);
+  assert.strictEqual(conferirCnpjCertificado('11222333000181', '11.222.333/0001-82').codigo, 'CERTIFICADO_OUTRO_CNPJ');
+  assert.strictEqual(conferirCnpjCertificado('11222333000181', '11.222.333/0001-81'), null);
+  // O certificado de teste tem CNPJ no CN: passa na conferencia.
+  assert.strictEqual(conferirCnpjCertificado(lerCertificadoA1(PFX, 'senha123').cnpj, '11222333000181'), null);
+});
+
+test('referencia simulada: com o modo real ligado, pede o reenvio do certificado', () => {
+  const { ehRefSimulada, refSoHomologacao } = require('./certificado');
+  const { validarProntidaoProducao } = require('../utils/validacaoFiscal');
+  const base = {
+    cnpj: '11222333000181', razaoSocial: 'Lumi', regime: 'MEI', logradouro: 'Rua', numero: '1', municipio: 'SP', uf: 'SP',
+    cep: '01310100', inscricaoMunicipal: '123', serie: '1', proximoNumero: 1, provedor: 'FOCUS_NFE',
+    certificadoRef: 'simulado:FOCUS_NFE:empresa:11222333000181', credencialId: 'c1',
+  };
+  assert.strictEqual(ehRefSimulada(base.certificadoRef), true);
+  assert.strictEqual(ehRefSimulada('FOCUS_NFE:empresa:1'), false);
+  assert.strictEqual(refSoHomologacao('NUVEM_FISCAL:empresa:1:so-homologacao'), true);
+  const simulando = a.pendencias(base, { temCredencial: true, tipos: ['NFSE'], emissaoReal: false });
+  assert.strictEqual(simulando.prontoParaTeste, true);
+  const real = a.pendencias(base, { temCredencial: true, tipos: ['NFSE'], emissaoReal: true });
+  assert.strictEqual(real.prontoParaTeste, false);
+  assert.ok(real.certificado.some((p) => p.includes('reenviar')));
+  // Gate de producao tambem barra a ref simulada; NFS-e pede inscricao municipal, nao estadual.
+  const falta = validarProntidaoProducao(base, [], { tipo: 'NFSE' });
+  assert.ok(falta.some((f) => f.includes('reenviar o certificado')));
+  assert.ok(!falta.includes('inscrição estadual'));
+  assert.ok(validarProntidaoProducao({ ...base, certificadoRef: 'FOCUS_NFE:empresa:1' }, [], { tipo: 'NFCE' }).includes('inscrição estadual'));
 });

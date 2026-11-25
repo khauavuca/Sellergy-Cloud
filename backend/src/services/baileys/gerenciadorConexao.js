@@ -9,7 +9,10 @@
 //     nos erros que nao se resolvem sozinhos (sessao invalida, numero banido);
 //   - marca como lida a mensagem que o bot respondeu (como uma pessoa faria);
 //   - SAIR/PARAR vira opt-out (nunca mais recebe campanha nem automatico);
-//   - le o voto da enquete do lembrete (Confirmar / Remarcar).
+//   - le o voto da enquete do lembrete (Confirmar / Remarcar);
+//   - QR nunca escaneado: para de gerar QR depois de BAILEYS_QR_EXPIRA_MS
+//     (padrao 5 min) e marca DESCONECTADO, em vez de reconectar pra sempre;
+//   - trava por bot no iniciarPareamento: nunca dois sockets pro mesmo bot.
 //
 // Fluxo:
 //   iniciarPareamento(botId)  -> abre socket, gera QR se preciso
@@ -32,7 +35,7 @@ const {
 
 const prisma = require('../../prisma');
 const { criarAuthState, limparAuthState } = require('./authStateStore');
-const { processarMensagemRecebida } = require('../whatsappInbound');
+const { processarMensagemRecebida, CAMPOS_BOT_ATENDIMENTO } = require('../whatsappInbound');
 const { criarProvedorWhatsapp } = require('../../adapters/whatsapp');
 const envioHumano = require('./envioHumano');
 
@@ -40,7 +43,19 @@ const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'warn' });
 
 const conexoes = new Map();
 const tentativas = new Map();
+const iniciando = new Set(); // trava: iniciarPareamento em andamento por bot
+const qrDesde = new Map(); // botId -> quando apareceu o 1o QR (bot ainda nao pareado)
 const ESPERA_MAX_MS = 2 * 60 * 1000;
+
+function qrExpiraMs() {
+  const n = Number(process.env.BAILEYS_QR_EXPIRA_MS);
+  return Number.isInteger(n) && n > 0 ? n : 5 * 60 * 1000;
+}
+
+/** Regra pura: o QR esta na tela ha tempo demais sem ninguem escanear? */
+function qrAbandonado({ desde, agora = Date.now(), limiteMs = qrExpiraMs() }) {
+  return Boolean(desde) && agora - desde >= limiteMs;
+}
 
 // Desconexoes que pedem acao humana (novo QR) — reconectar so piora.
 const PRECISA_NOVO_QR = new Set([DisconnectReason.loggedOut, DisconnectReason.badSession, DisconnectReason.multideviceMismatch]);
@@ -150,10 +165,14 @@ async function registrarOptOut(clienteId, telefone) {
   });
 }
 
-async function tratarMensagemRecebida(bot, upsert) {
+async function tratarMensagemRecebida(botInicial, upsert) {
   if (upsert.type !== 'notify') return;
-  const sock = obterSocket(bot.id);
+  const sock = obterSocket(botInicial.id);
   if (!sock) return;
+  // Recarrega a cada lote: o socket vive horas e o dono pode ter desligado o
+  // bot (status OFFLINE) ou mudado a IA nesse meio tempo.
+  const bot = await prisma.bot.findUnique({ where: { id: botInicial.id }, select: { ...CAMPOS_BOT_ATENDIMENTO } })
+    .catch(() => null) || botInicial;
 
   let faqs = null;
   const adapter = criarProvedorWhatsapp('BAILEYS', { modo: 'live', socket: sock });
@@ -200,16 +219,39 @@ function agendarReconexao(botId) {
 }
 
 async function iniciarPareamento(botId) {
-  if (conexoes.has(botId)) return;
+  // Trava: dois comandos "conectar" seguidos (clique duplo, reconexao + boot)
+  // abririam dois sockets pro mesmo numero e um derrubaria o outro.
+  if (conexoes.has(botId) || iniciando.has(botId)) return;
+  iniciando.add(botId);
+  try {
+    await abrirConexao(botId);
+  } finally {
+    iniciando.delete(botId);
+  }
+}
 
-  const bot = await prisma.bot.findUnique({
-    where: { id: botId },
-    select: {
-      id: true, clienteId: true, credencialCanalId: true, provedorCanal: true,
-      iaAtiva: true, iaModelo: true, iaPromptSistema: true,
-      iaTokensIncluidosMes: true, iaPrecoPorMilTokensExcedenteCentavos: true,
-    },
-  });
+/** Grava o numero conectado como identificadorCanal (unico entre os bots). */
+async function gravarNumeroConectado(bot, numero) {
+  const dados = { statusConexaoBaileys: 'CONECTADO', qrCodeAtual: null, baileysNumeroConectado: numero, identificadorCanal: numero };
+  try {
+    await atualizarStatus(bot.id, dados);
+    return true;
+  } catch (e) {
+    if (e?.code !== 'P2002' || !numero) throw e;
+  }
+  // Numero ja esta em outro bot. Do mesmo cliente (bot antigo): libera la e
+  // grava aqui. De outro cliente: recusa e desconecta.
+  const outro = await prisma.bot.findFirst({ where: { identificadorCanal: numero, id: { not: bot.id } }, select: { id: true, clienteId: true } });
+  if (outro && outro.clienteId === bot.clienteId) {
+    await prisma.bot.update({ where: { id: outro.id }, data: { identificadorCanal: null } });
+    await atualizarStatus(bot.id, dados);
+    return true;
+  }
+  return false;
+}
+
+async function abrirConexao(botId) {
+  const bot = await prisma.bot.findUnique({ where: { id: botId }, select: { ...CAMPOS_BOT_ATENDIMENTO } });
   if (!bot || bot.provedorCanal !== 'BAILEYS' || !bot.credencialCanalId) {
     console.error(`[baileys] iniciarPareamento: bot ${botId} invalido ou sem credencial associada.`);
     return;
@@ -255,6 +297,13 @@ async function iniciarPareamento(botId) {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
+      if (!qrDesde.has(botId)) qrDesde.set(botId, Date.now());
+      if (qrAbandonado({ desde: qrDesde.get(botId) })) {
+        // Ninguem escaneou: para de gerar QR (o 'close' abaixo nao reconecta).
+        console.log(`[baileys] QR do bot ${botId} abandonado — parando o pareamento.`);
+        sock.end(undefined);
+        return;
+      }
       const qrPng = await QRCode.toDataURL(qr).catch(() => null);
       await atualizarStatus(botId, { statusConexaoBaileys: 'AGUARDANDO_QR', qrCodeAtual: qrPng });
       return;
@@ -262,10 +311,23 @@ async function iniciarPareamento(botId) {
 
     if (connection === 'open') {
       tentativas.delete(botId);
+      qrDesde.delete(botId);
       const numero = sock.user?.id?.split(':')[0] || null;
+      const gravou = await gravarNumeroConectado(bot, numero);
+      if (!gravou) {
+        console.warn(`[baileys] bot ${botId}: numero final ${String(numero || '').slice(-4)} ja conectado em outra conta — desconectando.`);
+        await desconectar(botId);
+        const { criarNotificacao } = require('../../utils/notificacoes');
+        await criarNotificacao(prisma, {
+          clienteId: bot.clienteId, tipo: 'GENERICA',
+          titulo: 'Número já usado em outra conta',
+          mensagem: 'Este número de WhatsApp já está conectado em outra conta da plataforma. Use outro número ou fale com o suporte.',
+          link: '/app/bots',
+        }).catch(() => {});
+        return;
+      }
       if (numero) await envioHumano.registrarConexao(numero);
       console.log(`[baileys] bot ${botId} conectado (final ${String(numero || '').slice(-4)}).`);
-      await atualizarStatus(botId, { statusConexaoBaileys: 'CONECTADO', qrCodeAtual: null, baileysNumeroConectado: numero, identificadorCanal: numero });
       return;
     }
 
@@ -295,6 +357,16 @@ async function iniciarPareamento(botId) {
         return;
       }
 
+      // QR nunca escaneado ha tempo demais: nao reconecta (senao gera QR pra
+      // sempre, gastando memoria/CPU da VPS com uma tela que ninguem olha).
+      if (qrAbandonado({ desde: qrDesde.get(botId) })) {
+        tentativas.delete(botId);
+        qrDesde.delete(botId);
+        await limparAuthState({ credencialId: bot.credencialCanalId, clienteId: bot.clienteId }).catch(() => {});
+        await atualizarStatus(botId, { statusConexaoBaileys: 'DESCONECTADO', qrCodeAtual: null });
+        return;
+      }
+
       await atualizarStatus(botId, { statusConexaoBaileys: 'CONECTANDO' });
       agendarReconexao(botId);
     }
@@ -304,6 +376,7 @@ async function iniciarPareamento(botId) {
 async function desconectar(botId) {
   const conexao = conexoes.get(botId);
   tentativas.delete(botId);
+  qrDesde.delete(botId);
   if (conexao?.sock) {
     await conexao.sock.logout().catch(() => {});
     conexoes.delete(botId);
@@ -334,4 +407,4 @@ async function limparEnquetesAntigas() {
   return r.count;
 }
 
-module.exports = { iniciarPareamento, desconectar, reconectarBotsPareados, obterSocket, registrarEnquete, limparEnquetesAntigas, textoDaMensagem };
+module.exports = { iniciarPareamento, desconectar, reconectarBotsPareados, obterSocket, registrarEnquete, limparEnquetesAntigas, textoDaMensagem, qrAbandonado };

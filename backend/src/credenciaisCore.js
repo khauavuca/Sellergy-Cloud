@@ -50,7 +50,8 @@ const SCHEMA_POR_TIPO = {
   ASAAS_KEY: { obrigatorios: ['apiKey'], opcionais: ['webhookSecret'] },
   PAGARME_KEY: { obrigatorios: ['secretKey'], opcionais: ['webhookSecret'] },
   FOCUS_NFE_KEY: { obrigatorios: ['token'], opcionais: [] },
-  NUVEM_FISCAL_KEY: { obrigatorios: ['accessToken'], opcionais: [] },
+  // clientId + clientSecret (opcionais): o adapter renova o token OAuth sozinho.
+  NUVEM_FISCAL_KEY: { obrigatorios: ['accessToken'], opcionais: ['clientId', 'clientSecret'] },
   // Credencial de PLATAFORMA (uma so, da Sellergy — nao do tenant). Nao passa
   // pela rota /admin/clientes/:id/credenciais como as demais; tem rota propria
   // (admin-credencial-ia.routes.js) porque nao pertence a nenhum cliente.

@@ -9,6 +9,7 @@ import { useAcaoTopo } from '../hooks/useAcaoTopo';
 import { copiarTexto } from '../components/pedidos/util';
 import pagamentosService from '../services/pagamentosService';
 import credenciaisService from '../services/credenciaisService';
+import { formatarCpfCnpj, erroCpfCnpj, limparCpfCnpj } from '../utils/cpfCnpj';
 
 // Provedores suportados + o tipo de credencial que cada um exige (espelha
 // backend/src/adapters/pagamento/index.js).
@@ -426,6 +427,7 @@ export default function PagamentosPage() {
         aberto={drawerAberto}
         onClose={() => setDrawerAberto(false)}
         onCriada={aoCriarCobranca}
+        exigeCpf={provedorSalvo === 'ASAAS'}
       />
     </Pagina>
   );
@@ -635,14 +637,16 @@ function ProvedorConfig({ form, setForm, credenciaisDoProvedor, salvando, config
 }
 
 // --- Drawer "Nova cobrança" ---
-function NovaCobrancaDrawer({ aberto, onClose, onCriada }) {
+function NovaCobrancaDrawer({ aberto, onClose, onCriada, exigeCpf = false }) {
   const toast = useToast();
-  const [form, setForm] = useState({ valor: '', metodo: 'PIX', descricao: '', origem: 'AVULSA', refId: '' });
+  const [form, setForm] = useState({ valor: '', metodo: 'PIX', descricao: '', origem: 'AVULSA', refId: '', cpfCnpj: '' });
+  const [erroCpf, setErroCpf] = useState(null);
   const [enviando, setEnviando] = useState(false);
   const [resultado, setResultado] = useState(null);
 
   const fechar = () => {
-    setForm({ valor: '', metodo: 'PIX', descricao: '', origem: 'AVULSA', refId: '' });
+    setForm({ valor: '', metodo: 'PIX', descricao: '', origem: 'AVULSA', refId: '', cpfCnpj: '' });
+    setErroCpf(null);
     setResultado(null);
     onClose();
   };
@@ -650,6 +654,11 @@ function NovaCobrancaDrawer({ aberto, onClose, onCriada }) {
   const criar = async () => {
     const valorNum = Number(form.valor);
     if (!Number.isFinite(valorNum) || valorNum <= 0) return toast.error('Informe um valor válido.');
+    // Asaas exige CPF/CNPJ de quem paga; nos outros provedores e opcional.
+    const erroDoc = erroCpfCnpj(form.cpfCnpj, exigeCpf);
+    setErroCpf(erroDoc);
+    if (erroDoc) return toast.error(erroDoc);
+    const cpfCnpj = limparCpfCnpj(form.cpfCnpj);
     setEnviando(true);
     try {
       const nova = await pagamentosService.criarCobranca({
@@ -658,11 +667,13 @@ function NovaCobrancaDrawer({ aberto, onClose, onCriada }) {
         descricao: form.descricao || undefined,
         origem: form.origem,
         refId: form.refId || undefined,
+        pagador: cpfCnpj ? { cpfCnpj } : undefined,
       });
       setResultado(nova);
       onCriada(nova);
       toast.success('Cobrança criada.');
     } catch (e) {
+      if (e.response?.data?.campos?.includes('cpfCnpj')) setErroCpf(e.response.data.erro);
       toast.error(e.response?.data?.erro || 'Falha ao criar cobrança.');
     } finally {
       setEnviando(false);
@@ -717,6 +728,17 @@ function NovaCobrancaDrawer({ aberto, onClose, onCriada }) {
             onChange={(e) => setForm({ ...form, descricao: e.target.value })}
             placeholder="Ex.: Consulta, Pedido #123"
           />
+          {exigeCpf && (
+            <Input
+              label="CPF ou CNPJ de quem paga"
+              inputMode="numeric"
+              value={form.cpfCnpj}
+              onChange={(e) => { setForm({ ...form, cpfCnpj: formatarCpfCnpj(e.target.value) }); setErroCpf(null); }}
+              placeholder="000.000.000-00"
+              error={erroCpf}
+              hint="O Asaas pede esse dado para gerar a cobrança."
+            />
+          )}
           <Button variant="primary" onClick={criar} loading={enviando} className="w-full">
             Gerar cobrança
           </Button>

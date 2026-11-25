@@ -90,7 +90,7 @@ async function enviarWhats(msg) {
  * agendamento continua valendo, sem sinal, e o motivo volta pra tela.
  * @returns {Promise<{ cobrado: boolean, motivo?: string, sinal?: object }>}
  */
-async function cobrarSinal({ agendamento, produtoId = null, pct = null, agora = new Date(), enviarWhatsapp = true }) {
+async function cobrarSinal({ agendamento, produtoId = null, pct = null, agora = new Date(), enviarWhatsapp = true, cpfCnpj = null }) {
   try {
     const clienteId = agendamento.clienteId;
     if (!(await pagamentoConfigurado(clienteId))) return { cobrado: false, motivo: 'SEM_PAGAMENTO' };
@@ -100,11 +100,16 @@ async function cobrarSinal({ agendamento, produtoId = null, pct = null, agora = 
     const expiraEm = prazoDoSinal({ agora, dataAgendamento: agendamento.data });
     if (!expiraEm) return { cobrado: false, motivo: 'MUITO_PERTO' };
 
-    const { criarCobranca } = require('../services/pagamentoService');
+    const { criarCobranca, leadPorTelefone } = require('../services/pagamentoService');
+    // Lead de quem paga (CPF pro Asaas): o do agendamento ou o achado pelo telefone.
+    const leadId = agendamento.leadId || (await leadPorTelefone(clienteId, agendamento.telefoneCliente))?.id || null;
     const cobranca = await criarCobranca({
       clienteId, origem: 'AGENDAMENTO', refId: agendamento.id, valor, metodo: 'PIX',
       descricao: `Sinal: ${agendamento.servico || 'agendamento'} em ${diaHoraTexto(agendamento.data)}`,
       vencimento: expiraEm.toISOString(),
+      // Asaas pede CPF/CNPJ: o do lead (agendamento.leadId) ou o digitado na tela.
+      leadId,
+      pagador: { nome: agendamento.nomeCliente, telefone: agendamento.telefoneCliente || undefined, cpfCnpj: cpfCnpj || undefined },
     });
 
     // Token do link publico (pra cliente acompanhar o pagamento pela pagina).
@@ -134,6 +139,8 @@ async function cobrarSinal({ agendamento, produtoId = null, pct = null, agora = 
       },
     };
   } catch (e) {
+    if (e?.codigo === 'PAGADOR_SEM_CPF') return { cobrado: false, motivo: 'SEM_CPF' };
+    if (e?.codigo === 'CPF_CNPJ_INVALIDO') return { cobrado: false, motivo: 'CPF_INVALIDO' };
     console.error('[sinal] cobrar', e?.message);
     return { cobrado: false, motivo: 'FALHA_COBRANCA' };
   }

@@ -12,6 +12,7 @@ import {
 import Modal from '../components/Modal';
 import { useAcaoTopo } from '../hooks/useAcaoTopo';
 import { formatarTelefoneBR } from '../utils/formatTelefone';
+import { formatarCpfCnpj, erroCpfCnpj, limparCpfCnpj } from '../utils/cpfCnpj';
 
 const fmtBRL = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtData = (d) => new Date(d).toLocaleDateString('pt-BR');
@@ -424,6 +425,7 @@ export default function PacotesPage() {
       <ModalVender
         isOpen={modalVender.open} modelo={modalVender.modelo} cliente={modalVender.cliente}
         pagamentoConfigurado={!!config?.pagamentoConfigurado}
+        exigeCpf={!!config?.pagamentoExigeCpf}
         onClose={() => setModalVender({ open: false, modelo: null, cliente: null })}
         onVendido={() => { setModalVender({ open: false, modelo: null, cliente: null }); recarregarTudo(); }}
       />
@@ -561,15 +563,22 @@ function ModalVender(props) {
   return <ModalVenderConteudo {...props} />;
 }
 
-function ModalVenderConteudo({ isOpen, modelo, cliente, pagamentoConfigurado, onClose, onVendido }) {
+function ModalVenderConteudo({ isOpen, modelo, cliente, pagamentoConfigurado, exigeCpf = false, onClose, onVendido }) {
   const toast = useToast();
-  const [form, setForm] = useState(() => ({ nome: cliente?.nome || '', telefone: cliente?.telefone ? formatarTelefoneBR(cliente.telefone) : '', forma: 'CAIXA', metodoPagamento: 'PIX', parcelas: '1' }));
+  const [form, setForm] = useState(() => ({ nome: cliente?.nome || '', telefone: cliente?.telefone ? formatarTelefoneBR(cliente.telefone) : '', forma: 'CAIXA', metodoPagamento: 'PIX', parcelas: '1', cpfCnpj: '' }));
   const [erros, setErros] = useState([]);
   const [salvando, setSalvando] = useState(false);
   const [pix, setPix] = useState(null);
 
+  // Asaas pede CPF/CNPJ de quem paga o Pix. Opcional na tela: se a cliente ja
+  // tem CPF na ficha, o servidor usa esse; sem nenhum, volta pedindo o campo.
+  const pedeCpf = form.forma === 'PIX' && exigeCpf;
   const vender = async (e) => {
     e.preventDefault();
+    if (pedeCpf && erroCpfCnpj(form.cpfCnpj, false)) {
+      setErros(['cpfCnpj']);
+      return;
+    }
     setSalvando(true);
     setErros([]);
     try {
@@ -577,6 +586,7 @@ function ModalVenderConteudo({ isOpen, modelo, cliente, pagamentoConfigurado, on
         modeloId: modelo.id, nome: form.nome, telefone: form.telefone, forma: form.forma,
         metodoPagamento: form.forma === 'CAIXA' ? form.metodoPagamento : undefined,
         parcelas: form.forma === 'PIX' ? Number(form.parcelas) : 1,
+        cpfCnpj: pedeCpf && form.cpfCnpj ? limparCpfCnpj(form.cpfCnpj) : undefined,
       });
       if (r.data.venda) {
         toast.success(`Pacote vendido · Venda #${r.data.venda.numero} (${fmtBRL(r.data.venda.valor)}) no caixa.`);
@@ -637,6 +647,17 @@ function ModalVenderConteudo({ isOpen, modelo, cliente, pagamentoConfigurado, on
           <Select label="Forma de pagamento" value={form.metodoPagamento} onChange={(e) => setForm({ ...form, metodoPagamento: e.target.value })} placeholder="" options={[{ value: 'PIX', label: 'Pix' }, { value: 'DINHEIRO', label: 'Dinheiro' }, { value: 'CARTAO_CREDITO', label: 'Cartão de crédito' }, { value: 'CARTAO_DEBITO', label: 'Cartão de débito' }]} error={erro('metodoPagamento')} />
         ) : (
           <Select label="Parcelas" value={form.parcelas} onChange={(e) => setForm({ ...form, parcelas: e.target.value })} placeholder="" options={Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: i === 0 ? `À vista (${fmtBRL(modelo.preco)})` : `${i + 1}× de ${fmtBRL(modelo.preco / (i + 1))}` }))} error={erro('parcelas')} hint={Number(form.parcelas) > 1 ? `A 1ª parcela (${fmtBRL(parcela)}) sai agora; as outras, uma por mês, depois que a anterior é paga.` : undefined} />
+        )}
+        {pedeCpf && (
+          <Input
+            label="CPF ou CNPJ de quem paga"
+            inputMode="numeric"
+            value={form.cpfCnpj}
+            onChange={(e) => setForm({ ...form, cpfCnpj: formatarCpfCnpj(e.target.value) })}
+            placeholder="000.000.000-00"
+            error={erros.includes('cpfCnpj') ? (erroCpfCnpj(form.cpfCnpj, true) || 'Confira este campo') : undefined}
+            hint="O Asaas pede esse dado. Se a cliente já tem CPF na ficha, pode deixar em branco."
+          />
         )}
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" className="min-h-[44px]" onClick={onClose}>Cancelar</Button>

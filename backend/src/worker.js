@@ -29,6 +29,31 @@ const conexao = criarConexaoRedis({ paraWorker: true });
 
 const consumidores = [];
 
+// Queda do Redis nao pode derrubar o processo: Worker sem listener de 'error'
+// vira excecao nao tratada. Aqui todo consumidor ganha log de erro (com
+// intervalo minimo, pra nao inundar o log enquanto o Redis volta) e de job
+// que falhou. As conexoes ioredis ja tem handler (filas/index.js).
+const ultimoErroPorFila = new Map();
+function vigiarConsumidor(worker, nome) {
+  worker.on('error', (err) => {
+    const agora = Date.now();
+    if (agora - (ultimoErroPorFila.get(nome) || 0) < 30_000) return;
+    ultimoErroPorFila.set(nome, agora);
+    console.error(`[worker:${nome}] erro no consumidor (segue tentando):`, err?.message);
+  });
+  if (worker.listenerCount('failed') === 0) {
+    worker.on('failed', (job, err) => {
+      console.error(`[worker:${nome}] job ${job?.id} falhou (tentativa ${job?.attemptsMade ?? '?'}):`, err?.message);
+    });
+  }
+  consumidores.push(worker);
+  return worker;
+}
+
+process.on('unhandledRejection', (motivo) => {
+  console.error('[worker] promessa rejeitada sem tratamento:', motivo?.message || motivo);
+});
+
 // CAMPANHA-DISPARO — envia a mensagem (template Meta) de 1 lead por job.
 // concurrency baixa + limiter conservador pra nao estourar rate limit da
 // Meta em campanhas grandes.
@@ -44,7 +69,7 @@ const workerCampanha = new Worker(
 workerCampanha.on('failed', (job, err) => {
   console.error(`[worker:${NOME_FILA_CAMPANHA}] job ${job?.id} falhou:`, err?.message);
 });
-consumidores.push(workerCampanha);
+vigiarConsumidor(workerCampanha, NOME_FILA_CAMPANHA);
 
 // CAMPANHA-DISPARO-BAILEYS — cada job pede a vez ao "envio humano" (cota
 // diaria com aquecimento, horario comercial, disjuntor de falhas). Se nao e a
@@ -69,7 +94,7 @@ const workerCampanhaBaileys = new Worker(
 workerCampanhaBaileys.on('failed', (job, err) => {
   console.error(`[worker:${NOME_FILA_CAMPANHA_BAILEYS}] job ${job?.id} falhou:`, err?.message);
 });
-consumidores.push(workerCampanhaBaileys);
+vigiarConsumidor(workerCampanhaBaileys, NOME_FILA_CAMPANHA_BAILEYS);
 
 // BAILEYS-COMANDO — backend (rota HTTP) manda "conectar"/"desconectar" pra cá,
 // que é o único processo que segura a conexão Baileys de verdade (ver
@@ -89,7 +114,7 @@ const workerBaileysComando = new Worker(
 workerBaileysComando.on('failed', (job, err) => {
   console.error(`[worker:${NOME_FILA_BAILEYS_COMANDO}] job ${job?.id} falhou:`, err?.message);
 });
-consumidores.push(workerBaileysComando);
+vigiarConsumidor(workerBaileysComando, NOME_FILA_BAILEYS_COMANDO);
 
 // AVISO-PLATAFORMA — WhatsApp do proprio Sellergy pros clientes (gerado
 // pela API, ex.: webhook de pagamento). Envio direto daqui, onde o socket vive.
@@ -105,7 +130,7 @@ const workerAvisoPlataforma = new Worker(
 workerAvisoPlataforma.on('failed', (job, err) => {
   console.error(`[worker:${NOME_FILA_AVISO_PLATAFORMA}] job ${job?.id} falhou:`, err?.message);
 });
-consumidores.push(workerAvisoPlataforma);
+vigiarConsumidor(workerAvisoPlataforma, NOME_FILA_AVISO_PLATAFORMA);
 
 // WHATSAPP-TENANT — mensagem do negocio pro cliente final gerada na API.
 const workerWhatsappTenant = new Worker(
@@ -121,7 +146,7 @@ const workerWhatsappTenant = new Worker(
 workerWhatsappTenant.on('failed', (job, err) => {
   console.error(`[worker:${NOME_FILA_WHATSAPP_TENANT}] job ${job?.id} falhou:`, err?.message);
 });
-consumidores.push(workerWhatsappTenant);
+vigiarConsumidor(workerWhatsappTenant, NOME_FILA_WHATSAPP_TENANT);
 
 // Rotinas da fase 2 (encaixe que expira, sinal nao pago, pacote vencido...).
 const pararRotinasFase2 = require('./agenda/rotinasFase2').iniciar();
@@ -135,8 +160,33 @@ gerenciadorConexaoBaileys.reconectarBotsPareados()
 // Fase 1: lembrete/confirmacao de agendamento (a cada 5 min — precisa rodar
 // AQUI porque o socket do canal QR Code so existe neste processo) e a rotina
 // diaria das assinaturas (faturas, atraso, aviso de fim de teste).
-const pararLembretes = require('./agenda/lembretes').iniciarCicloLembretes();
-const pararAssinaturas = require('./assinatura/cobranca').iniciarRotinaAssinaturas();
+// As duas com trava entre processos (utils/travaRotina): com 2 instancias do
+// worker, so uma manda o lembrete / gera a fatura. A logica interna continua
+// em agenda/lembretes.js e assinatura/cobranca.js; aqui so o agendamento
+// (mesmo ciclo de iniciarCicloLembretes / iniciarRotinaAssinaturas).
+const { iniciarIntervaloComTrava, agendarDiarioComTrava } = require('./utils/travaRotina');
+const pararLembretes = iniciarIntervaloComTrava({
+  nome: 'lembretes',
+  intervaloMs: 5 * 60 * 1000,
+  primeiraEmMs: 15 * 1000, // primeira passada logo depois do boot
+  rodar: async () => {
+    const r = await require('./agenda/lembretes').processarLembretes();
+    if (r?.enviados || r?.falhas || r?.puladosPorCota) console.log('[lembretes]', JSON.stringify(r));
+  },
+});
+const pararAssinaturas = agendarDiarioComTrava({
+  nome: 'assinaturas',
+  hora: 9,
+  rodar: async () => {
+    try {
+      const r = await require('./assinatura/cobranca').processarAssinaturas();
+      console.log('[assinaturas]', JSON.stringify(r));
+      await gerenciadorConexaoBaileys.limparEnquetesAntigas().catch(() => {});
+    } catch (e) {
+      console.error('[assinaturas] rotina falhou:', e?.message);
+    }
+  },
+});
 
 console.log(`[worker] iniciado · filas: ${NOME_FILA_CAMPANHA}, ${NOME_FILA_CAMPANHA_BAILEYS}, ${NOME_FILA_BAILEYS_COMANDO}, ${NOME_FILA_AVISO_PLATAFORMA}`);
 

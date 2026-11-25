@@ -90,7 +90,9 @@ function validarConfiguracao(corpo = {}, { tipos = ['NFSE', 'NFCE'] } = {}) {
  * O que falta, por passo. Usado pela tela (bolinhas dos passos) e pra
  * liberar a nota de teste e a ativacao.
  */
-function pendencias(config, { temCredencial = false, tipos = ['NFSE', 'NFCE'], agora = new Date() } = {}) {
+function pendencias(config, {
+  temCredencial = false, tipos = ['NFSE', 'NFCE'], agora = new Date(), emissaoReal = false,
+} = {}) {
   const c = config || {};
   const empresa = [];
   if (!validarCnpj(c.cnpj)) empresa.push('CNPJ');
@@ -103,6 +105,8 @@ function pendencias(config, { temCredencial = false, tipos = ['NFSE', 'NFCE'], a
   const certificado = [];
   if (!c.certificadoRef) certificado.push('certificado A1');
   else if (c.certificadoValidoAte && new Date(c.certificadoValidoAte).getTime() <= agora.getTime()) certificado.push('certificado válido (o atual venceu)');
+  // Gravado com FISCAL_LIVE desligado: o .pfx nunca chegou no emissor.
+  else if (emissaoReal && String(c.certificadoRef).startsWith('simulado:')) certificado.push('reenviar o certificado A1 (o atual foi registrado em modo simulado)');
 
   const configuracao = [];
   if (!c.serie) configuracao.push('série');

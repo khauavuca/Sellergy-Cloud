@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Testes das integrações · Sellergy</title>
+<style>
+  :root {
+    --fundo: #F4F5F2; --cartao: #FFFFFF; --texto: #15171A; --suave: #5E6662; --borda: #E3E5E1;
+    --verde: #136F4D; --verde-claro: #E3F1EA; --amarelo: #FDF1DC; --amarelo-texto: #7A4B00;
+    --vermelho-claro: #FDE7DD; --vermelho-texto: #9A3412; --azul-claro: #EEF4FB; --azul-texto: #1F4E79;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fundo: #0E1311; --cartao: #161C19; --texto: #EEF2EF; --suave: #A3ADA8; --borda: #2A332F;
+      --verde: #3DBE8B; --verde-claro: #14281F; --amarelo: #2B2210; --amarelo-texto: #F2C46B;
+      --vermelho-claro: #2E1A14; --vermelho-texto: #F4A585; --azul-claro: #142233; --azul-texto: #9DB8DC;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fundo); color: var(--texto); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--cartao); border-bottom: 1px solid var(--borda); }
+  .topo { max-width: 1000px; margin: 0 auto; padding: 14px 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  h1 { margin: 0; font-size: 19px; }
+  .barra { flex: 1 1 220px; height: 10px; background: var(--borda); border-radius: 5px; overflow: hidden; }
+  .barra > div { height: 100%; background: var(--verde); width: 0; transition: width .2s; }
+  .placar { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .acoes { display: flex; gap: 8px; flex-wrap: wrap; }
+  button, .botao { font: inherit; font-size: 13px; font-weight: 600; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--borda); background: var(--cartao); color: var(--texto); cursor: pointer; }
+  button:hover { border-color: var(--verde); }
+  main { max-width: 1000px; margin: 0 auto; padding: 16px; }
+  .aviso { background: var(--azul-claro); color: var(--azul-texto); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+  .aviso strong { color: inherit; }
+  details.grupo { background: var(--cartao); border: 1px solid var(--borda); border-radius: 12px; margin-bottom: 12px; }
+  details.grupo > summary { list-style: none; cursor: pointer; padding: 14px 16px; display: flex; gap: 10px; align-items: center; }
+  details.grupo > summary::-webkit-details-marker { display: none; }
+  details.grupo > summary h2 { margin: 0; font-size: 16px; flex: 1; }
+  .contagem { font-size: 13px; font-weight: 700; padding: 2px 10px; border-radius: 12px; background: var(--amarelo); color: var(--amarelo-texto); white-space: nowrap; }
+  .contagem.ok { background: var(--verde-claro); color: var(--verde); }
+  .seta { transition: transform .2s; color: var(--suave); }
+  details[open] > summary .seta { transform: rotate(90deg); }
+  .prep { margin: 0 16px 10px; padding: 10px 12px; border-radius: 8px; background: var(--fundo); font-size: 14px; color: var(--suave); }
+  .prep b { color: var(--texto); }
+  .caso { border-top: 1px solid var(--borda); padding: 12px 16px; display: grid; grid-template-columns: 26px 1fr; gap: 10px; }
+  .caso input[type=checkbox] { width: 20px; height: 20px; margin-top: 2px; accent-color: var(--verde); cursor: pointer; }
+  .caso.feito .titulo { text-decoration: line-through; color: var(--suave); }
+  .titulo { font-weight: 650; margin: 0; }
+  .passos { margin: 6px 0 0; padding-left: 18px; color: var(--texto); }
+  .passos li { margin: 2px 0; }
+  .espera { margin-top: 6px; font-size: 14px; background: var(--verde-claro); color: var(--verde); padding: 6px 10px; border-radius: 8px; }
+  .cuidado { margin-top: 6px; font-size: 14px; background: var(--vermelho-claro); color: var(--vermelho-texto); padding: 6px 10px; border-radius: 8px; }
+  .nota { margin-top: 8px; width: 100%; min-height: 34px; font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--borda); border-radius: 8px; background: var(--fundo); color: var(--texto); resize: vertical; }
+  code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; background: var(--fundo); padding: 1px 5px; border-radius: 4px; word-break: break-all; }
+  .esconder-feitos .caso.feito { display: none; }
+  footer { max-width: 1000px; margin: 0 auto; padding: 8px 16px 40px; color: var(--suave); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="topo">
+    <h1>Testes das integrações</h1>
+    <div class="barra" aria-hidden="true"><div id="progresso"></div></div>
+    <span class="placar" id="placar">0 de 0</span>
+    <div class="acoes">
+      <button type="button" id="soPendentes">Mostrar só o que falta</button>
+      <button type="button" id="abrirTudo">Abrir tudo</button>
+      <button type="button" id="limpar">Zerar marcações</button>
+    </div>
+  </div>
+</header>
+
+<main id="lista">
+  <div class="aviso">
+    <strong>Como usar:</strong> faça um caso de cada vez, de cima pra baixo. Marque a caixinha quando funcionar.
+    Se der errado, escreva o que aconteceu no campo de anotação e me mande. As marcações ficam salvas neste navegador.
+    <br><strong>Regra de ouro:</strong> use sempre conta de teste, chip de teste e dinheiro de mentira (sandbox). Nada de cliente real.
+  </div>
+</main>
+
+<footer>Sellergy Cloud · roteiro de testes das integrações · atualizado em 24/11/2026</footer>
+
+<script>
+// Cada grupo: titulo, preparo (o que precisa antes) e casos { t: titulo, p: passos, e: o que deve acontecer, c: cuidado }
+const GRUPOS = [
+  {
+    id: 'base', titulo: '0. Antes de tudo',
+    prep: 'Só precisa do seu computador ligado com o Docker aberto.',
+    casos: [
+      { t: 'Servidor de pé', p: ['Abra o Docker Desktop.', 'No navegador, abra <code>https://api.sellergycloud.com/saude</code>.'], e: 'Aparece um texto com "status":"ok".' },
+      { t: 'Túnel ligado', p: ['Abra <code>https://sellergycloud.com</code> e faça login com uma conta de teste.'], e: 'Entra no sistema sem erro.' },
+      { t: 'Conta de teste separada', p: ['Crie (ou use) um negócio de teste só pra isso.', 'Cadastre 2 clientes de mentira com o SEU celular e o de alguém de confiança.'], e: 'Você tem um negócio e clientes de teste, sem dados de gente real.' },
+      { t: 'Me avisar antes de ligar os modos reais', p: ['Me diga qual grupo vai testar. Eu ligo a chave certa no servidor (ex.: envio real do WhatsApp) e desligo depois.'], e: 'Cada teste roda só com a chave daquele grupo ligada.', c: 'Não ligue tudo de uma vez.' },
+    ]
+  },
+  {
+    id: 'mensalidade', titulo: '1. Mensalidade (você recebendo dos clientes) · Asaas sandbox',
+    prep: '<b>Já está pronto no servidor.</b> No painel do Asaas sandbox: Integrações → Webhooks → endereço <code>https://api.sellergycloud.com/webhooks/assinatura/asaas</code>, com o mesmo token que está no servidor e os eventos de cobrança marcados.',
+    casos: [
+      { t: 'Assinar um plano', p: ['No negócio de teste, abra Meu plano.', 'Clique em Assinar, escolha Pix e informe um CPF de teste válido.'], e: 'Aparece a fatura e o link pra pagar.' },
+      { t: 'Pagar a fatura', p: ['No painel do Asaas sandbox, ache a cobrança e marque como paga (ou pague com o Pix de teste).'], e: 'Em até 1 minuto, Meu plano mostra a fatura como paga e a assinatura ativa.' },
+      { t: 'Aviso repetido não duplica', p: ['No painel do Asaas, reenvie o mesmo aviso (webhook) da cobrança paga.'], e: 'Nada muda no sistema. Não cria outra fatura nem outro pagamento.' },
+      { t: 'Fatura vencida', p: ['No Asaas sandbox, crie/force uma cobrança vencida para esse cliente.'], e: 'O sistema mostra a fatura atrasada e o aviso de pagamento em Meu plano.' },
+      { t: 'Cancelar assinatura', p: ['Em Meu plano, clique em Cancelar e informe o motivo.'], e: 'A assinatura aparece cancelada no Asaas e a conta fica só para consulta.' },
+      { t: 'Pagar com cartão de teste', p: ['Assine de novo escolhendo cartão.', 'Use o cartão de teste que o Asaas mostra na documentação.'], e: 'Pagamento confirmado e plano ativo.' },
+    ]
+  },
+  {
+    id: 'subconta', titulo: '2. Conta de recebimento do lojista (subconta Asaas)',
+    prep: 'Usa a mesma chave da plataforma. Se o Asaas pedir, solicite a liberação de "criação de subcontas" na sua conta sandbox.',
+    casos: [
+      { t: 'Abrir a conta', p: ['Abra Conta de recebimento.', 'Preencha com um CNPJ e CPF de teste válidos e uma chave Pix aleatória.'], e: 'A conta aparece "em análise".' },
+      { t: 'Conta aprovada', p: ['No sandbox do Asaas, aprove a subconta (ou espere).', 'Clique em Atualizar status.'], e: 'A conta fica "ativa" e aparecem saldo, extrato e taxas.' },
+      { t: 'Receber um Pix pela subconta', p: ['Em Pagamentos, crie uma cobrança Pix de R$ 5 para um cliente que tenha CPF.', 'Pague no sandbox.'], e: 'A cobrança vira paga e o valor entra no saldo da subconta.' },
+      { t: 'Sacar', p: ['Na Conta de recebimento, peça um saque de R$ 1.'], e: 'O saque aparece no extrato. Clicar duas vezes rápido não faz dois saques.' },
+      { t: 'Trocar a chave Pix', p: ['Tente trocar a chave Pix de saque.'], e: 'O sistema pede sua senha (ou o código de 2 etapas) antes de trocar.' },
+    ]
+  },
+  {
+    id: 'cobrancas', titulo: '3. Cobranças do lojista (Pix, link, sinal, pacote)',
+    prep: 'Eu ligo o modo real de pagamento (sandbox). Teste primeiro com a subconta Asaas; depois, se quiser, com Mercado Pago e Pagar.me em conta de teste.',
+    casos: [
+      { t: 'Cobrança sem CPF pede o CPF', p: ['Em Pagamentos, crie um Pix para um cliente sem CPF cadastrado.'], e: 'O sistema pede o CPF/CNPJ antes de gerar. Com CPF inválido, avisa o erro.' },
+      { t: 'Cobrança rápida (tela Hoje)', p: ['Na tela Hoje, use o Cobrar rápido com R$ 10.'], e: 'Aparece o Pix. Depois de pagar no sandbox, mostra "pago".' },
+      { t: 'Sinal de agendamento', p: ['Crie um agendamento com sinal Pix.', 'Pague o sinal no sandbox.'], e: 'O agendamento mostra o sinal pago.' },
+      { t: 'Venda de pacote', p: ['Venda um pacote com cobrança Pix e pague no sandbox.'], e: 'O pacote aparece como pago e as sessões liberadas.' },
+      { t: 'Botão "Atualizar" da cobrança', p: ['Em Pagamentos, abra uma cobrança paga e clique em Atualizar situação.'], e: 'A situação fica igual à do Asaas, sem duplicar a venda.' },
+      { t: 'Aviso falso não marca como pago', p: ['(Eu faço esse) mando um aviso falso pro endereço de pagamento sem as credenciais certas.'], e: 'A cobrança continua pendente.' },
+      { t: 'Mercado Pago (opcional)', p: ['Conecte uma conta de teste do Mercado Pago em Pagamentos.', 'Gere um Pix e um link de pagamento, e pague com o usuário de teste.'], e: 'Os dois viram "pago" sozinhos.' },
+      { t: 'Pagar.me (opcional)', p: ['Conecte uma chave de teste do Pagar.me.', 'No painel do Pagar.me, cadastre o aviso <code>https://api.sellergycloud.com/webhooks/pagamento/pagarme</code>.', 'Gere um Pix e pague.'], e: 'A cobrança vira "pago".' },
+    ]
+  },
+  {
+    id: 'qr', titulo: '4. WhatsApp pelo QR Code (número do negócio)',
+    prep: '<b>Use um chip de teste, nunca o número principal.</b> Eu ligo o envio real do QR Code no servidor.',
+    casos: [
+      { t: 'Conectar o número', p: ['Abra Bots e conexão.', 'Clique em Conectar no cartão do QR Code e leia o QR com o celular do chip de teste.'], e: 'O cartão mostra "Conectado" e o número.' },
+      { t: 'QR só aparece pra você', p: ['Com outro usuário de OUTRO negócio logado em outra aba, gere o QR de novo.'], e: 'O outro negócio não recebe nem vê o seu QR.' },
+      { t: 'Cliente manda "oi"', p: ['Do seu celular pessoal, mande "oi" pro número de teste.'], e: 'O número responde com o menu, depois de mostrar "digitando...".' },
+      { t: 'Mandar "SAIR"', p: ['Do celular pessoal, mande "SAIR".'], e: 'O número para de mandar mensagens automáticas pra você.' },
+      { t: 'Reiniciar e continuar conectado', p: ['Me peça pra reiniciar o servidor.', 'Volte em Bots.'], e: 'Continua conectado, sem pedir QR de novo.' },
+      { t: 'Desconectar', p: ['Clique em Desconectar.'], e: 'O cartão mostra desconectado e o celular sai do aparelho conectado.' },
+      { t: 'Robô não fica em loop', p: ['Mande mensagens seguidas (mais de 20 em 1 hora) do mesmo celular.'], e: 'Depois do limite, o número para de responder automaticamente a esse celular.' },
+    ]
+  },
+  {
+    id: 'meta', titulo: '5. WhatsApp oficial (Meta)',
+    prep: 'Em developers.facebook.com: crie um app de negócio, adicione o produto WhatsApp e anote o número de teste, o "Phone Number ID", o token e o "App Secret". Cadastre até 5 celulares que vão receber. Me mande o App Secret pelo jeito seguro que combinarmos (não por aqui) pra eu colocar no servidor. <b>Quem paga as mensagens é a conta Meta do próprio cliente.</b>',
+    casos: [
+      { t: 'Ligar o endereço de avisos na Meta', p: ['Em Bots e conexão, no passo a passo do oficial, preencha o Phone Number ID, a credencial e gere um "verify token".', 'Na Meta, em Configuração do WhatsApp, coloque o endereço <code>https://api.sellergycloud.com/webhooks/whatsapp</code> e o mesmo verify token. Marque "messages".'], e: 'A Meta mostra o endereço como verificado.' },
+      { t: 'Cliente manda "oi"', p: ['De um celular cadastrado, mande "oi" pro número de teste.'], e: 'Recebe o menu de resposta.' },
+      { t: 'Mensagem falsa é recusada', p: ['(Eu faço esse) mando um aviso sem a assinatura da Meta.'], e: 'O sistema recusa e não responde nada.' },
+      { t: 'Número de outro negócio', p: ['Em outro negócio de teste, tente cadastrar o mesmo Phone Number ID.'], e: 'O sistema não deixa e avisa que o número já está em uso.' },
+      { t: 'Mandar "SAIR" no oficial', p: ['Do celular cadastrado, mande "SAIR".'], e: 'Esse celular sai das campanhas.' },
+      { t: 'Campanha de teste', p: ['Em Campanhas, crie uma campanha com o modelo <code>hello_world</code> (já aprovado na Meta).', 'Dispare para os celulares de teste.'], e: 'As mensagens chegam e a tela mostra quantas foram enviadas.' },
+    ]
+  },
+  {
+    id: 'lembretes', titulo: '6. Lembretes e confirmações de horário',
+    prep: 'Precisa de um WhatsApp conectado (QR Code ou oficial). No oficial, o modelo de lembrete precisa estar aprovado na Meta.',
+    casos: [
+      { t: 'Lembrete da véspera', p: ['Crie um agendamento pra amanhã, daqui a umas 23 horas, com o seu celular.', 'Espere até 5 minutos.'], e: 'Chega o lembrete com as opções de confirmar ou remarcar.' },
+      { t: 'Confirmar pelo WhatsApp', p: ['Responda "1" (ou toque em Confirmar).'], e: 'Na Agenda, o horário fica "confirmado".' },
+      { t: 'Responder "não" não cancela', p: ['Em outro agendamento, responda só "não".'], e: 'O horário NÃO é cancelado. O sistema pergunta se quer remarcar.' },
+      { t: 'Remarcar pelo WhatsApp', p: ['Responda "2" (ou toque em Remarcar).'], e: 'O horário fica livre e você é avisado.' },
+      { t: 'Lembrete depois de reiniciar', p: ['Me peça pra reiniciar o servidor perto da hora de um lembrete.'], e: 'O lembrete sai mesmo assim (não se perde).' },
+      { t: 'Cota do plano', p: ['Veja em Configurações → Lembretes quantos lembretes foram usados no mês.'], e: 'O número bate com o que saiu.' },
+    ]
+  },
+  {
+    id: 'ia', titulo: '7. Atendimento com IA (DeepSeek)',
+    prep: 'Crie conta em platform.deepseek.com, coloque um crédito pequeno (US$ 2 já sobra) e me mande a chave pelo jeito seguro. Eu cadastro como admin e ligo a IA com um teto baixo. Só o plano Negócio tem IA.',
+    casos: [
+      { t: 'IA responde', p: ['Em Bots, ligue a IA e escreva o texto do seu negócio.', 'Do celular, pergunte o preço de um serviço.'], e: 'A resposta usa o preço certo do seu catálogo.' },
+      { t: 'IA marca horário', p: ['Peça pra marcar um horário.'], e: 'A IA oferece horários livres de verdade e o agendamento aparece na Agenda.' },
+      { t: 'Consumo aparece', p: ['Abra Bots e veja o consumo do mês.'], e: 'Mostra quanto da cota já foi usado.' },
+      { t: 'Cota acaba e o bot volta pro menu', p: ['(Eu baixo a cota pra um valor pequeno) Converse até passar da cota.'], e: 'O bot volta a responder com o menu, sem IA, e você recebe um aviso no sistema.' },
+      { t: 'Bot desligado não responde', p: ['Desligue "Responder sozinho".', 'Mande uma mensagem.'], e: 'Ninguém responde automaticamente.' },
+      { t: 'Gasto real bate', p: ['No painel da DeepSeek, veja o gasto do dia de teste.'], e: 'Ficou em centavos de dólar.' },
+    ]
+  },
+  {
+    id: 'fiscal', titulo: '8. Nota fiscal (homologação, sem valor fiscal)',
+    prep: 'Crie conta na Focus NFe e pegue o token de homologação. Cadastre a empresa e o certificado A1 no próprio painel da Focus. Me mande o token pelo jeito seguro. <b>Nunca clique em "Ativar" com o modo real ligado</b> — isso passa a emitir de verdade.',
+    casos: [
+      { t: 'Passo a passo de configuração', p: ['Abra Configurar nota fiscal e preencha os 4 passos com os dados da empresa de teste.'], e: 'Todos os passos ficam "feito", menos o de ativar.' },
+      { t: 'Certificado errado é recusado', p: ['Tente enviar um certificado de outro CNPJ (ou senha errada).'], e: 'O sistema recusa e explica o motivo.' },
+      { t: 'Nota de teste', p: ['(Eu ligo o modo real de homologação) Clique em Emitir nota de teste.'], e: 'A nota volta "autorizada" em homologação. Se der erro, a mensagem diz o que faltou (ex.: produto sem NCM).' },
+      { t: 'Nota de serviço (clínica/salão)', p: ['Emita uma nota de serviço de teste.', 'Clique em Sincronizar.'], e: 'A nota aparece autorizada e com PDF.' },
+      { t: 'Nota de produto (loja)', p: ['Emita uma NFC-e de teste com um produto que tenha NCM.'], e: 'Autorizada, com PDF e XML pra baixar.' },
+      { t: 'Não duplica', p: ['Clique duas vezes rápido em emitir a mesma venda.'], e: 'Sai só uma nota.' },
+      { t: 'Cancelar com motivo', p: ['Cancele uma nota com um motivo curto (menos de 15 letras).', 'Depois com um motivo maior.'], e: 'Com motivo curto, o sistema não deixa. Com motivo certo, cancela.' },
+      { t: 'Limite de notas do plano', p: ['Veja em Meu plano quantas notas o plano permite no mês.'], e: 'Mostra o limite e quantas já foram usadas.' },
+    ]
+  },
+  {
+    id: 'arquivos', titulo: '9. Imagens e arquivos',
+    prep: 'Nada pra configurar: já roda no seu computador.',
+    casos: [
+      { t: 'Foto de produto', p: ['Cadastre um produto com foto.'], e: 'A foto aparece na lista e no catálogo.' },
+      { t: 'Arquivo perigoso é barrado', p: ['Renomeie um arquivo qualquer (.exe ou .pdf) pra .jpg e tente subir como foto.'], e: 'O sistema recusa.' },
+      { t: 'Catálogo em PDF', p: ['Em Configurações → Catálogo, gere o PDF.'], e: 'O PDF abre com os produtos e fotos.' },
+      { t: 'Logo do negócio', p: ['Em Configurações → Dados e marca, troque a logo.'], e: 'A logo nova aparece no menu.' },
+    ]
+  },
+  {
+    id: 'rotinas', titulo: '10. Rotinas automáticas (rodam sozinhas)',
+    prep: 'Elas rodam no servidor no horário certo. Aqui é só conferir o resultado.',
+    casos: [
+      { t: 'Caixa fecha sozinho', p: ['Deixe um caixa aberto e confira no dia seguinte (depois de meia-noite).'], e: 'O caixa aparece fechado, com o resumo.' },
+      { t: 'Aviso de devolução', p: ['Faça uma venda com aluguel que vence amanhã.'], e: 'O cliente recebe o aviso no WhatsApp, com o número certo (com 55).' },
+      { t: 'Régua de cobrança', p: ['Com uma fatura de mensalidade vencendo em 3 dias, espere as 9h.'], e: 'O negócio recebe o aviso no sistema (e no WhatsApp, se o número do Sellergy estiver conectado).' },
+      { t: 'Servidor aguenta o Redis cair', p: ['(Eu faço esse) paro o Redis por 1 minuto e ligo de novo.'], e: 'O sistema volta a funcionar sozinho, sem precisar reiniciar.' },
+    ]
+  },
+  {
+    id: 'custos', titulo: '11. Conferir os custos (depois de uma semana de teste)',
+    prep: 'Serve pra confirmar que as contas do documento de custos batem com a realidade.',
+    casos: [
+      { t: 'Gasto da IA', p: ['Veja no painel da DeepSeek quanto gastou na semana.', 'Divida pelo número de respostas.'], e: 'Fica perto de R$ 0,003 a R$ 0,012 por resposta.' },
+      { t: 'Gasto da Meta', p: ['No Gerenciador de Negócios da Meta, veja o gasto com mensagens.'], e: 'Lembrete perto de R$ 0,035 cada; campanha perto de R$ 0,32 cada.' },
+      { t: 'Taxas do Asaas', p: ['No extrato do Asaas sandbox, veja as taxas cobradas.'], e: 'Pix perto de R$ 1,99; cartão perto de 3% + R$ 0,49.' },
+      { t: 'Nota fiscal', p: ['No painel da Focus, veja quantas notas foram contadas.'], e: 'Bate com as notas emitidas no sistema.' },
+      { t: 'Memória do servidor', p: ['(Eu faço esse) vejo quanto de memória cada número conectado por QR Code usa.'], e: 'Dá pra saber quantos clientes cabem na VPS antes de precisar aumentar.' },
+    ]
+  },
+];
+
+const CHAVE = 'sellergy-testes-integracoes-v1';
+let salvo = {};
+try { salvo = JSON.parse(localStorage.getItem(CHAVE) || '{}'); } catch { salvo = {}; }
+const gravar = () => { try { localStorage.setItem(CHAVE, JSON.stringify(salvo)); } catch {} };
+
+const lista = document.getElementById('lista');
+GRUPOS.forEach((g) => {
+  const det = document.createElement('details');
+  det.className = 'grupo';
+  det.dataset.grupo = g.id;
+  const sum = document.createElement('summary');
+  sum.innerHTML = `<span class="seta" aria-hidden="true">▶</span><h2></h2><span class="contagem"></span>`;
+  sum.querySelector('h2').textContent = g.titulo;
+  det.appendChild(sum);
+  const prep = document.createElement('div');
+  prep.className = 'prep';
+  prep.innerHTML = `<b>Antes:</b> ${g.prep}`;
+  det.appendChild(prep);
+  g.casos.forEach((c, i) => {
+    const id = `${g.id}-${i}`;
+    const linha = document.createElement('div');
+    linha.className = 'caso';
+    const marca = document.createElement('input');
+    marca.type = 'checkbox';
+    marca.id = id;
+    marca.checked = Boolean(salvo[id]?.ok);
+    const corpo = document.createElement('div');
+    corpo.innerHTML = `<label class="titulo" for="${id}"></label>
+      <ol class="passos">${c.p.map((p) => `<li>${p}</li>`).join('')}</ol>
+      <div class="espera"><b>Deve acontecer:</b> ${c.e}</div>
+      ${c.c ? `<div class="cuidado"><b>Cuidado:</b> ${c.c}</div>` : ''}`;
+    corpo.querySelector('.titulo').textContent = c.t;
+    const nota = document.createElement('textarea');
+    nota.className = 'nota';
+    nota.placeholder = 'Anotação (o que aconteceu, se deu erro)';
+    nota.setAttribute('aria-label', `Anotação: ${c.t}`);
+    nota.value = salvo[id]?.nota || '';
+    nota.addEventListener('input', () => { salvo[id] = { ...(salvo[id] || {}), nota: nota.value }; gravar(); });
+    corpo.appendChild(nota);
+    marca.addEventListener('change', () => {
+      salvo[id] = { ...(salvo[id] || {}), ok: marca.checked };
+      gravar();
+      atualizar();
+    });
+    linha.append(marca, corpo);
+    det.appendChild(linha);
+  });
+  lista.appendChild(det);
+});
+
+function atualizar() {
+  let total = 0, feitos = 0;
+  document.querySelectorAll('details.grupo').forEach((det) => {
+    const caixas = det.querySelectorAll('input[type=checkbox]');
+    let f = 0;
+    caixas.forEach((cx) => { cx.closest('.caso').classList.toggle('feito', cx.checked); if (cx.checked) f++; });
+    total += caixas.length; feitos += f;
+    const tag = det.querySelector('.contagem');
+    tag.textContent = `${f} de ${caixas.length}`;
+    tag.classList.toggle('ok', f === caixas.length);
+  });
+  document.getElementById('placar').textContent = `${feitos} de ${total}`;
+  document.getElementById('progresso').style.width = total ? `${(feitos / total) * 100}%` : '0';
+}
+atualizar();
+// Abre o primeiro grupo que ainda tem coisa pra fazer.
+const primeiro = [...document.querySelectorAll('details.grupo')].find((d) => d.querySelector('input:not(:checked)'));
+if (primeiro) primeiro.open = true;
+
+document.getElementById('soPendentes').addEventListener('click', (ev) => {
+  const on = document.body.classList.toggle('esconder-feitos');
+  ev.target.textContent = on ? 'Mostrar tudo' : 'Mostrar só o que falta';
+});
+document.getElementById('abrirTudo').addEventListener('click', (ev) => {
+  const grupos = document.querySelectorAll('details.grupo');
+  const abrir = [...grupos].some((d) => !d.open);
+  grupos.forEach((d) => { d.open = abrir; });
+  ev.target.textContent = abrir ? 'Fechar tudo' : 'Abrir tudo';
+});
+document.getElementById('limpar').addEventListener('click', () => {
+  if (!confirm('Apagar todas as marcações e anotações?')) return;
+  salvo = {}; gravar(); location.reload();
+});
+</script>
+</body>
+</html>

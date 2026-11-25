@@ -83,7 +83,7 @@ test('interpretar resposta: botoes, 1/2 e palavras curtas', () => {
   assert.deepEqual(interpretarResposta({ texto: ' 1 ' }), { acao: 'CONFIRMAR', token: null });
   assert.deepEqual(interpretarResposta({ texto: 'Sim!' }), { acao: 'CONFIRMAR', token: null });
   assert.deepEqual(interpretarResposta({ texto: '2' }), { acao: 'REMARCAR', token: null });
-  assert.deepEqual(interpretarResposta({ texto: 'Não' }), { acao: 'REMARCAR', token: null });
+  assert.deepEqual(interpretarResposta({ texto: 'Não' }), { acao: 'NEGATIVA_AMBIGUA', token: null }); // "não" sozinho não cancela
 });
 
 test('conversa normal nao vira confirmacao', () => {

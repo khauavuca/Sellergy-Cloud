@@ -215,10 +215,15 @@ app.get('/saude', (req, res) => {
 io.on('connection', (socket) => {
   console.log('Novo cliente conectado:', socket.id, 'usuario:', socket.usuario?.id);
 
+  // Sala do negocio (tenant): eventos de bot (bot_atualizado/criado/deletado)
+  // vao so pra quem e do mesmo cliente — nunca io.emit global. Admin da
+  // plataforma entra na sala "admins".
+  if (ehAdmin(socket.usuario)) socket.join('admins');
+  else if (socket.usuario?.clienteId) socket.join(`cliente:${socket.usuario.clienteId}`);
+
   // Sala por bot — usada SO pelo pareamento Baileys (QR code + status), que
-  // precisa ficar restrito a quem e dono do bot. Ao contrario dos demais
-  // eventos deste arquivo (io.emit global, aceitavel pra "nome do bot
-  // mudou"), transmitir um QR code escaneavel pra qualquer sessao logada de
+  // precisa ficar restrito a quem e dono do bot. Transmitir um QR code
+  // escaneavel pra qualquer sessao logada de
   // QUALQUER tenant seria uma falha real de isolamento — quem escanear
   // primeiro pareia. Por isso valida o dono do bot antes de entrar na sala.
   socket.on('join_bot', async (botId) => {

@@ -106,6 +106,7 @@ O webhook do tenant (`POST /webhooks/pagamento/:provedor`) **nunca aplica o stat
 | Variável | Para quê | Produção |
 |---|---|---|
 | `PAGAMENTO_LIVE` | `true` liga a cobrança de verdade no PSP do tenant (sem ela: fixture) | `true` |
+| `PAGAMENTO_WEBHOOK_SIMULADO` | Só em dev: `1` deixa o webhook de pagamento aplicar o status com o provedor em modo simulado (fixture). Sem ela, o webhook responde 200 e não aplica nada fora do modo `live`, porque a consulta simulada diz "pago" para qualquer id e a API local fica exposta pelo túnel. Ignorada com `NODE_ENV=production` | deixar vazio |
 | `PAGAMENTO_AMBIENTE_PADRAO` | `producao` ou `sandbox`, para credenciais sem `ambiente` | `producao` (ou vazio) |
 | `API_URL_PUBLICA` | URL https da API. Usada para cadastrar os webhooks da subconta e o `notification_url` do Mercado Pago | `https://api.sellergycloud.com` |
 | `ASAAS_PLATAFORMA_BASE_URL` | Troca a URL do Asaas da plataforma (só para teste com o Asaas simulado) | deixar vazio |

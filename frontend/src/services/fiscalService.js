@@ -33,8 +33,8 @@ export async function sincronizar(id) {
   return r.data;
 }
 
-export async function cancelar(id, motivo) {
-  const r = await api.post(`/fiscal/documentos/${id}/cancelar`, { motivo });
+export async function cancelar(id, motivo, { confirmarForaDoPrazo = false } = {}) {
+  const r = await api.post(`/fiscal/documentos/${id}/cancelar`, { motivo, confirmarForaDoPrazo });
   return r.data;
 }
 

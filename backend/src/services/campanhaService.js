@@ -6,6 +6,7 @@ const prisma = require('../prisma');
 const { criarProvedorWhatsapp } = require('../adapters/whatsapp');
 const { carregarCredencialDecifrada } = require('../credenciais');
 const { obterSocket } = require('./baileys/gerenciadorConexao');
+const { telefoneParaWhatsapp } = require('./whatsappDoTenant');
 
 // Marca 1 envio como falho + soma no contador da campanha.
 async function marcarFalha(envio, motivo) {
@@ -53,6 +54,16 @@ async function processarEnvioCampanha(campanhaEnvioId) {
     return marcarFalha(envio, 'Nenhum bot com WhatsApp conectado.');
   }
 
+  // Lead.telefone fica sem o 55 (DDD + numero): o WhatsApp exige o DDI.
+  const para = telefoneParaWhatsapp(envio.lead.telefone);
+  if (!para || para.length < 12) return marcarFalha(envio, 'Telefone do lead invalido.');
+
+  // Quem respondeu SAIR/PARAR (no QR Code OU no oficial) nao recebe campanha.
+  const optOut = await prisma.optOutWhatsapp.findUnique({
+    where: { clienteId_telefone: { clienteId: envio.campanha.clienteId, telefone: para } },
+  }).catch(() => null);
+  if (optOut) return marcarFalha(envio, 'Contato pediu para não receber mensagens (SAIR).');
+
   let resultado;
   if (bot.provedorCanal === 'BAILEYS' && process.env.CAMPANHA_CANAL_NAO_OFICIAL === 'bloqueado') {
     // Interruptor de emergencia do operador (ex.: onda de banimentos).
@@ -62,12 +73,6 @@ async function processarEnvioCampanha(campanhaEnvioId) {
     // Sem template no WhatsApp Web: a mensagem da campanha e o texto que sai,
     // com variacao {a|b} e todo o "envio humano" (ver envioHumano.js). O
     // espacamento e a cota diaria ja foram reservados no worker antes daqui.
-    const { telefoneParaWhatsapp } = require('./whatsappDoTenant');
-    const para = telefoneParaWhatsapp(envio.lead.telefone);
-    const optOut = await prisma.optOutWhatsapp.findUnique({
-      where: { clienteId_telefone: { clienteId: envio.campanha.clienteId, telefone: para } },
-    }).catch(() => null);
-    if (optOut) return marcarFalha(envio, 'Contato pediu para não receber mensagens (SAIR).');
     const socket = obterSocket(bot.id);
     if (!socket) throw new Error('WhatsApp Web nao esta conectado no momento.'); // retry do BullMQ
     const adapter = criarProvedorWhatsapp('BAILEYS', { modo: 'live', socket });
@@ -86,7 +91,7 @@ async function processarEnvioCampanha(campanhaEnvioId) {
     const adapter = criarProvedorWhatsapp('META_CLOUD', {
       credencial: { dados: { accessToken: token } }, identificadorCanal: bot.identificadorCanal, modo: 'live',
     });
-    resultado = await adapter.enviarTemplate({ para: envio.lead.telefone, nomeTemplate: envio.campanha.nomeTemplate, idioma: 'pt_BR' });
+    resultado = await adapter.enviarTemplate({ para, nomeTemplate: envio.campanha.nomeTemplate, idioma: 'pt_BR' });
   }
 
   if (!resultado.ok) {

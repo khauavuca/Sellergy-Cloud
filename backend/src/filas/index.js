@@ -16,12 +16,26 @@ const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 // Producer e Worker exigem opcoes de connection diferentes:
 //  - Producer: aceita defaults
 //  - Worker  : exige `maxRetriesPerRequest: null` (BullMQ usa BLOCKING commands)
+//
+// Toda conexao sai com listener de 'error': sem ele, uma queda do Redis vira
+// excecao nao tratada e derruba o processo (API ou worker). O ioredis segue
+// reconectando sozinho; o log e limitado a 1 a cada 30 s por processo.
+let ultimoErroRedis = 0;
+function logarErroRedis(err) {
+  const agora = Date.now();
+  if (agora - ultimoErroRedis < 30_000) return;
+  ultimoErroRedis = agora;
+  console.error('[redis] conexao com problema (reconectando):', err?.message || err);
+}
+
 function criarConexaoRedis({ paraWorker = false } = {}) {
-  return new IORedis(REDIS_URL, {
+  const conexao = new IORedis(REDIS_URL, {
     maxRetriesPerRequest: paraWorker ? null : 3,
     enableReadyCheck: !paraWorker,
     lazyConnect: false,
   });
+  conexao.on('error', logarErroRedis);
+  return conexao;
 }
 
 // ==========================================
@@ -43,6 +57,7 @@ function obterFilaCampanhaDisparo() {
         removeOnFail: 1000,
       },
     });
+    filaCampanhaDisparo.on('error', logarErroRedis);
   }
   return filaCampanhaDisparo;
 }
@@ -77,6 +92,7 @@ function obterFilaCampanhaDisparoBaileys() {
         removeOnFail: 1000,
       },
     });
+    filaCampanhaDisparoBaileys.on('error', logarErroRedis);
   }
   return filaCampanhaDisparoBaileys;
 }
@@ -99,6 +115,7 @@ function obterFilaAvisoPlataforma() {
       connection: criarConexaoRedis(),
       defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 30_000 }, removeOnComplete: 200, removeOnFail: 200 },
     });
+    filaAvisoPlataforma.on('error', logarErroRedis);
   }
   return filaAvisoPlataforma;
 }
@@ -133,6 +150,7 @@ function obterFilaBaileysComando() {
       connection: criarConexaoRedis(),
       defaultJobOptions: { attempts: 1, removeOnComplete: 20, removeOnFail: 20 },
     });
+    filaBaileysComando.on('error', logarErroRedis);
   }
   return filaBaileysComando;
 }
@@ -154,6 +172,7 @@ function obterFilaWhatsappTenant() {
       connection: criarConexaoRedis(),
       defaultJobOptions: { attempts: 4, backoff: { type: 'exponential', delay: 20_000 }, removeOnComplete: 500, removeOnFail: 500 },
     });
+    filaWhatsappTenant.on('error', logarErroRedis);
   }
   return filaWhatsappTenant;
 }

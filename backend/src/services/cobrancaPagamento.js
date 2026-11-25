@@ -133,7 +133,7 @@ async function aplicarEfeitoConfirmacao(cobranca) {
     // Nunca propaga: o pagamento ja foi confirmado (fato consumado, Cobranca
     // ja esta PAGO) — deixar isso derrubar o webhook so faria o PSP re-tentar
     // uma entrega que, por ser idempotente (ver aplicarStatusCobranca), nunca
-    // mais chamaria este codigo de novo (jaPago vira true). Melhor logar alto
+    // mais chamaria este codigo de novo (a linha ja esta PAGO). Melhor logar alto
     // e avisar o tenant pra registrar na mao do que perder o rastro.
     console.error(`[pagamento] falha ao registrar venda automatica da cobranca ${cobranca.id}:`, erro?.message || erro);
     await criarNotificacaoTenant(prisma, {
@@ -146,38 +146,68 @@ async function aplicarEfeitoConfirmacao(cobranca) {
   }
 }
 
-// Aplica um status na Cobranca de forma IDEMPOTENTE. O efeito de confirmacao so
-// dispara na PRIMEIRA vez que a cobranca vira PAGO (webhook duplicado nao
-// reprocessa). Nao "rebaixa" um PAGO/ESTORNADO de volta a PENDENTE.
-async function aplicarStatusCobranca(cobranca, novoStatus, pagoEm) {
-  const TERMINAIS = new Set(['PAGO', 'ESTORNADO', 'CANCELADO', 'EXPIRADO']);
-  const jaPago = cobranca.status === 'PAGO';
+// De quais status cada status pode vir. Regras:
+// - PAGO so vem de PENDENTE/EXPIRADO/CANCELADO (Pix pago depois de vencer
+//   ainda e dinheiro na conta) — nunca de ESTORNADO (estorno nao "despaga" e
+//   nao reexecuta a baixa);
+// - PAGO nao volta para PENDENTE/EXPIRADO/CANCELADO (evento atrasado/fora de
+//   ordem); de PAGO so sai para ESTORNADO (estorno ou chargeback);
+// - ESTORNADO e final.
+const ORIGENS_PERMITIDAS = Object.freeze({
+  PAGO: ['PENDENTE', 'EXPIRADO', 'CANCELADO'],
+  ESTORNADO: ['PENDENTE', 'EXPIRADO', 'CANCELADO', 'PAGO'],
+  EXPIRADO: ['PENDENTE'],
+  CANCELADO: ['PENDENTE', 'EXPIRADO'],
+  PENDENTE: ['EXPIRADO'],
+});
 
-  // Ja em estado terminal e o novo nao acrescenta nada -> no-op (idempotencia).
-  if (TERMINAIS.has(cobranca.status) && cobranca.status === novoStatus) {
-    return prisma.cobranca.findUnique({ where: { id: cobranca.id }, select: CAMPOS_COBRANCA });
-  }
-  // Nao deixa um PAGO voltar pra PENDENTE por evento atrasado/fora de ordem.
-  if (jaPago && novoStatus === 'PENDENTE') {
-    return prisma.cobranca.findUnique({ where: { id: cobranca.id }, select: CAMPOS_COBRANCA });
-  }
+/** A transicao de -> para e permitida? (mesmo status = nao, nada a fazer) */
+function transicaoPermitida(de, para) {
+  return (ORIGENS_PERMITIDAS[para] || []).includes(de);
+}
+
+// Aplica um status na Cobranca de forma IDEMPOTENTE e sem corrida: a escrita e
+// condicional (updateMany com o status de origem permitido no where), entao
+// dois webhooks simultaneos (ou webhook + "Atualizar" manual) nao rodam a
+// baixa duas vezes — so quem mudou a linha (count === 1) dispara o efeito.
+async function aplicarStatusCobranca(cobranca, novoStatus, pagoEm) {
+  const atual = () => prisma.cobranca.findUnique({ where: { id: cobranca.id }, select: CAMPOS_COBRANCA });
+  if (!ORIGENS_PERMITIDAS[novoStatus]) return atual();
 
   const data = { status: novoStatus };
   if (novoStatus === 'PAGO') data.pagoEm = pagoEm ? new Date(pagoEm) : new Date();
 
-  const atualizada = await prisma.cobranca.update({
-    where: { id: cobranca.id },
-    data,
-    select: CAMPOS_COBRANCA,
-  });
+  // Estorno de algo ja PAGO tenta primeiro so a partir de PAGO, pra saber
+  // (pelo count, sem confiar no objeto em memoria) se precisa avisar.
+  let estornouPago = false;
+  if (novoStatus === 'ESTORNADO') {
+    const r0 = await prisma.cobranca.updateMany({ where: { id: cobranca.id, status: 'PAGO' }, data });
+    estornouPago = r0.count === 1;
+  }
+  if (!estornouPago) {
+    const r = await prisma.cobranca.updateMany({
+      where: { id: cobranca.id, status: { in: ORIGENS_PERMITIDAS[novoStatus] } },
+      data,
+    });
+    if (r.count !== 1) return atual(); // ja estava assim, ou transicao proibida
+  }
 
-  if (novoStatus === 'PAGO' && !jaPago) {
-    // Passa o registro COMPLETO (nao o CAMPOS_COBRANCA, que nao inclui
-    // clienteId/itensPendentes) pro efeito de confirmacao precisar deles.
+  if (novoStatus === 'PAGO') {
+    // Registro COMPLETO (CAMPOS_COBRANCA nao inclui clienteId/itensPendentes).
     const completa = await prisma.cobranca.findUnique({ where: { id: cobranca.id } });
     await aplicarEfeitoConfirmacao(completa);
+  } else if (estornouPago) {
+    // Estorno/chargeback de algo ja baixado: nao desfaz sozinho (venda,
+    // caixa, sinal), avisa o negocio pra conferir.
+    await criarNotificacaoTenant(prisma, {
+      clienteId: cobranca.clienteId,
+      tipo: 'GENERICA',
+      titulo: 'Pagamento estornado',
+      mensagem: `A cobranca ${String(cobranca.id).slice(0, 8)} (R$ ${Number(cobranca.valor).toFixed(2)}) foi estornada ou contestada no provedor. Confira a venda e o caixa.`,
+      link: '/app/pagamentos',
+    }).catch((e) => console.error('[pagamento] falha ao notificar estorno', e?.message));
   }
-  return atualizada;
+  return atual();
 }
 
-module.exports = { aplicarStatusCobranca, aplicarEfeitoConfirmacao, registrarVendaDoBot, CAMPOS_COBRANCA };
+module.exports = { aplicarStatusCobranca, aplicarEfeitoConfirmacao, registrarVendaDoBot, transicaoPermitida, CAMPOS_COBRANCA };

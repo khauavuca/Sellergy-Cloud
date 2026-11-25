@@ -15,6 +15,7 @@ import {
   Pagina, FaixaNumeros, Numero, ColunasPagina, Painel, LinhaInfo, BarraFerramentas, AbasPilula,
 } from '../components/ui';
 import { useAcaoTopo } from '../hooks/useAcaoTopo';
+import { useAuthStore } from '../store/auth.store';
 import {
   fmtBRL, mascaraCnpj, mascaraCpf, mascaraTelefone, mascaraCep, erroDaApi,
 } from '../components/pedidos/util';
@@ -283,6 +284,11 @@ function ContaAtiva({ conta, st, onMudou }) {
   const [enviandoSaque, setEnviandoSaque] = useState(false);
   const [repasse, setRepasse] = useState(null);
   const [salvandoRepasse, setSalvandoRepasse] = useState(false);
+  // Trocar a chave Pix pede a senha (ou o codigo de 2 etapas, se ligado).
+  const usuario = useAuthStore((st) => st.user);
+  const com2Etapas = usuario?.totpAtivo === true;
+  const [confirmacao, setConfirmacao] = useState('');
+  const [erroConfirmacao, setErroConfirmacao] = useState(null);
   const campoSaque = useRef(null);
 
   const carregar = useCallback(() => api.get('/conta-recebimento/financeiro')
@@ -345,13 +351,24 @@ function ContaAtiva({ conta, st, onMudou }) {
 
   const salvarRepasse = async (e) => {
     e.preventDefault();
+    if (trocouChave && !confirmacao.trim()) {
+      setErroConfirmacao(com2Etapas ? 'Digite o código do app autenticador.' : 'Digite sua senha.');
+      return;
+    }
     setSalvandoRepasse(true);
+    setErroConfirmacao(null);
     try {
-      await api.put('/conta-recebimento/repasse', repasse);
+      await api.put('/conta-recebimento/repasse', {
+        ...repasse,
+        ...(trocouChave ? (com2Etapas ? { codigo: confirmacao.trim() } : { senha: confirmacao }) : {}),
+      });
       toast.success('Repasse atualizado.');
       setRepasse(null);
+      setConfirmacao('');
       onMudou();
     } catch (err) {
+      const d = err.response?.data;
+      if (d?.codigo === 'CONFIRMACAO_INVALIDA' || d?.codigo === 'CONFIRMACAO_NECESSARIA') setErroConfirmacao(d.erro);
       toast.error(erroDaApi(err, 'Não foi possível salvar.'));
     } finally {
       setSalvandoRepasse(false);
@@ -368,6 +385,7 @@ function ContaAtiva({ conta, st, onMudou }) {
 
   const rep = conta.dados?.repasse || {};
   const neg = conta.dados?.negocio || {};
+  const trocouChave = Boolean(repasse) && (repasse.tipoChavePix !== (rep.tipoChavePix || 'CNPJ') || String(repasse.chavePix || '').trim() !== String(rep.chavePix || ''));
   const tipoChave = TIPOS_CHAVE.find((t) => t.value === rep.tipoChavePix)?.label || rep.tipoChavePix;
   const prazo = PRAZOS.find((o) => o.value === conta.prazoRepasse) || PRAZOS[0];
 
@@ -507,7 +525,7 @@ function ContaAtiva({ conta, st, onMudou }) {
         </Painel>
       </ColunasPagina>
 
-      <Modal isOpen={repasse !== null} onClose={() => !salvandoRepasse && setRepasse(null)} title="Alterar repasse" size="md">
+      <Modal isOpen={repasse !== null} onClose={() => { if (!salvandoRepasse) { setRepasse(null); setConfirmacao(''); setErroConfirmacao(null); } }} title="Alterar repasse" size="md">
         {repasse && (
           <form onSubmit={salvarRepasse} className="space-y-4">
             <fieldset className="space-y-2">
@@ -521,6 +539,19 @@ function ContaAtiva({ conta, st, onMudou }) {
             </fieldset>
             <Select label="Tipo da chave Pix" aria-label="Tipo da chave Pix" value={repasse.tipoChavePix} onChange={(e) => setRepasse({ ...repasse, tipoChavePix: e.target.value })} options={TIPOS_CHAVE} placeholder="" />
             <Input label="Chave Pix" aria-label="Chave Pix" value={repasse.chavePix} onChange={(e) => setRepasse({ ...repasse, chavePix: e.target.value })} hint="No nome do mesmo CNPJ da conta." />
+            {trocouChave && (
+              <Input
+                label={com2Etapas ? 'Código do app autenticador' : 'Sua senha'}
+                aria-label={com2Etapas ? 'Código do app autenticador' : 'Sua senha'}
+                type={com2Etapas ? 'text' : 'password'}
+                inputMode={com2Etapas ? 'numeric' : undefined}
+                autoComplete={com2Etapas ? 'one-time-code' : 'current-password'}
+                value={confirmacao}
+                onChange={(e) => { setConfirmacao(e.target.value); setErroConfirmacao(null); }}
+                error={erroConfirmacao}
+                hint="A chave Pix é para onde vai o dinheiro dos saques. Confirme que é você."
+              />
+            )}
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setRepasse(null)} disabled={salvandoRepasse}>Voltar</Button>
               <Button type="submit" loading={salvandoRepasse}>Salvar</Button>

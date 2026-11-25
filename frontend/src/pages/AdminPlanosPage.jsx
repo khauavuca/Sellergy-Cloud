@@ -13,6 +13,7 @@ const LIMITES = [
   { chave: 'usuarios', rotulo: 'Usuários' },
   { chave: 'profissionais', rotulo: 'Profissionais' },
   { chave: 'lembretesMes', rotulo: 'Lembretes por mês' },
+  { chave: 'notasMes', rotulo: 'Notas fiscais por mês' },
 ];
 
 const NOME_RECURSO = {

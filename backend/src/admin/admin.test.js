@@ -78,7 +78,8 @@ test('margem por cliente e margem bruta com custos fixos', () => {
   const b = r.linhas.find((l) => l.clienteId === 'b');
   assert.equal(b.paga, Math.round((59 * 12 * 0.8 / 12) * 100) / 100); // anual dividido por 12
   assert.equal(b.custo, 10.01); // 41 * 0.01 + 96 * 0.1
-  assert.deepEqual(b.acimaDoLimite.map((x) => x.limite), ['usuarios']); // 3 de 2
+  // 96 notas no Essencial (teto notasMes 0) e 3 usuarios de 2.
+  assert.deepEqual(b.acimaDoLimite.map((x) => x.limite), ['notasMes', 'usuarios']);
   const c = r.linhas.find((l) => l.clienteId === 'c');
   assert.equal(c.paga, 0);
   assert.equal(c.margemPct, null);

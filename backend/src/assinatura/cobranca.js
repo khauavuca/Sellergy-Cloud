@@ -283,7 +283,33 @@ async function estenderTeste(clienteId, dias = 7, agora = new Date()) {
 }
 
 /**
+ * Qual fatura local recebe uma cobranca do Asaas. PURA (testavel).
+ * - Achou pelo id da cobranca -> atualiza essa.
+ * - Senao, a do mes (competencia): sem id externo -> adota; com OUTRO id:
+ *   evento de cancelamento/estorno (de outra cobranca) nao mexe nela; fatura
+ *   ja paga nao e trocada; cobranca nova paga (ou fatura do mes cancelada)
+ *   passa a ser a da fatura; o resto e ignorado.
+ * - Sem fatura no mes -> cria.
+ * @returns {{acao:'atualizar'|'criar'|'ignorar', fatura:Object|null, motivo?:string}}
+ */
+function escolherFatura({ porId, porCompetencia, status }) {
+  if (porId) return { acao: 'atualizar', fatura: porId };
+  if (!porCompetencia) return { acao: 'criar', fatura: null };
+  if (!porCompetencia.cobrancaExternaId) {
+    // Paga a mao (sem id) e chega o cancelamento da cobranca do Asaas: nao despaga.
+    if (porCompetencia.status === 'PAGA' && status === 'CANCELADA') return { acao: 'ignorar', fatura: porCompetencia, motivo: 'fatura do mes ja paga' };
+    return { acao: 'atualizar', fatura: porCompetencia };
+  }
+  if (status === 'CANCELADA') return { acao: 'ignorar', fatura: porCompetencia, motivo: 'cancelamento de outra cobranca do mes' };
+  if (porCompetencia.status === 'PAGA') return { acao: 'ignorar', fatura: porCompetencia, motivo: 'fatura do mes ja paga por outra cobranca' };
+  if (status === 'PAGA' || porCompetencia.status === 'CANCELADA') return { acao: 'atualizar', fatura: porCompetencia };
+  return { acao: 'ignorar', fatura: porCompetencia, motivo: 'fatura do mes ja ligada a outra cobranca' };
+}
+
+/**
  * Espelha uma cobranca do Asaas como fatura local (cria ou atualiza).
+ * Devolve a fatura + `statusAnterior` (e `ignorada: true` quando a cobranca
+ * nao mexeu em nada) pra quem chama saber se ela acabou de ser paga.
  * @param {string} clienteId
  * @param {{ id: string, value: number, dueDate: string, status: string, invoiceUrl?: string, billingType?: string, paymentDate?: string }} pg
  */
@@ -295,24 +321,34 @@ async function sincronizarCobranca(clienteId, pg) {
       : ['REFUNDED', 'DELETED', 'CANCELLED', 'CANCELED'].includes(pg.status) ? 'CANCELADA'
         : 'ABERTA';
 
-  const existente = await prisma.faturaAssinatura.findFirst({
-    where: { OR: [{ cobrancaExternaId: pg.id }, { clienteId, competencia }] },
-  });
+  // Casa primeiro pelo id da cobranca; so pela competencia quando a fatura do
+  // mes ainda nao tem id externo (ver escolherFatura).
+  const porId = await prisma.faturaAssinatura.findFirst({ where: { clienteId, cobrancaExternaId: pg.id } });
+  const porCompetencia = porId ? null : await prisma.faturaAssinatura.findFirst({ where: { clienteId, competencia } });
+  const escolha = escolherFatura({ porId, porCompetencia, status });
+  if (escolha.acao === 'ignorar') {
+    console.warn(`[assinatura/fatura] cobranca ${pg.id} (${pg.status}) ignorada: ${escolha.motivo} (cliente=${clienteId}, competencia=${competencia}).`);
+    return { ...escolha.fatura, ignorada: true, statusAnterior: escolha.fatura.status };
+  }
+  const existente = escolha.fatura;
   const dados = {
     valor: Number(pg.value), vencimento, cobrancaExternaId: pg.id,
     linkPagamento: pg.invoiceUrl || null, formaPagamento: pg.billingType || null,
   };
   if (existente) {
-    // Nunca "despaga": PAGA so sai por estorno (CANCELADA).
-    const novoStatus = existente.status === 'PAGA' && status !== 'CANCELADA' ? 'PAGA' : status;
-    return prisma.faturaAssinatura.update({
+    // Nunca "despaga": PAGA so sai por estorno (REFUNDED) desta mesma cobranca.
+    const estornoDela = pg.status === 'REFUNDED' && existente.cobrancaExternaId === pg.id;
+    const novoStatus = existente.status === 'PAGA' && !estornoDela ? 'PAGA' : status;
+    const fatura = await prisma.faturaAssinatura.update({
       where: { id: existente.id },
       data: { ...dados, status: novoStatus, pagaEm: novoStatus === 'PAGA' ? (existente.pagaEm || new Date(pg.paymentDate || Date.now())) : null },
     });
+    return { ...fatura, statusAnterior: existente.status };
   }
-  return prisma.faturaAssinatura.create({
+  const fatura = await prisma.faturaAssinatura.create({
     data: { clienteId, competencia, ...dados, status, pagaEm: status === 'PAGA' ? new Date(pg.paymentDate || Date.now()) : null },
   });
+  return { ...fatura, statusAnterior: null };
 }
 
 // ---------- regua ----------
@@ -447,6 +483,7 @@ module.exports = {
   registrarDescontoTemporario,
   reverterDescontosVencidos,
   sincronizarCobranca,
+  escolherFatura,
   rodarRegua,
   diasEntre,
   processarAssinaturas,

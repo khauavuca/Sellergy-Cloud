@@ -2,7 +2,7 @@
 // Montado em /hoje (src/index.js). Frente C da fase 2.
 //
 //   GET  /hoje                 -> vendeu hoje, a receber, saldo do caixa, horarios e avisos
-//   POST /hoje/cobrar          -> { centavos, descricao? } gera Pix avulso (criarCobranca)
+//   POST /hoje/cobrar          -> { centavos, descricao?, cpfCnpj? } gera Pix avulso (criarCobranca; Asaas pede cpfCnpj)
 //   GET  /hoje/cobrancas/:id   -> status do Pix (a tela consulta a cada poucos segundos)
 //
 // So dona/ADMINISTRADOR: a tela mostra dinheiro do negocio.
@@ -13,6 +13,7 @@ const middlewareAutenticacao = require('../middlewares/auth.middleware');
 const { requerTenant, requerPapelPrivilegiado, requerModuloLiberado } = require('../middlewares/permissoes.middleware');
 const { helpers: caixa } = require('../controllers/CaixaController');
 const { criarCobranca } = require('../services/pagamentoService');
+const { exigeCpfCnpj } = require('../services/pagadorCobranca');
 const { intervaloDoDia, valorDosCentavos, ROTULO_STATUS_AGENDA, arred } = require('../hoje/regras');
 
 const roteador = express.Router();
@@ -57,7 +58,7 @@ roteador.get('/', async (req, res) => {
         orderBy: { criadoEm: 'desc' },
         take: 6,
       }),
-      prisma.configuracaoPagamento.findUnique({ where: { clienteId }, select: { ativo: true } }),
+      prisma.configuracaoPagamento.findUnique({ where: { clienteId }, select: { ativo: true, provedor: true } }),
     ]);
 
     const saldo = sessao ? await caixa.calcularSaldoEsperado(sessao.id) : null;
@@ -82,6 +83,8 @@ roteador.get('/', async (req, res) => {
       },
       avisos,
       pagamentoConfigurado: Boolean(configPagamento?.ativo) && modulos.PAGAMENTOS === true,
+      // Asaas pede CPF/CNPJ de quem paga: o "Cobrar rapido" mostra o campo.
+      pagamentoExigeCpf: Boolean(configPagamento?.ativo) && exigeCpfCnpj(configPagamento?.provedor),
     });
   } catch (e) {
     console.error('[hoje/resumo]', e);
@@ -98,12 +101,19 @@ roteador.post('/cobrar', requerModuloLiberado('PAGAMENTOS'), async (req, res) =>
     const descricao = typeof req.body?.descricao === 'string' && req.body.descricao.trim()
       ? req.body.descricao.trim().slice(0, 80)
       : 'Cobrança rápida';
-    const cobranca = await criarCobranca({ clienteId: req.usuario.clienteId, origem: 'AVULSA', refId: 'COBRANCA_RAPIDA', valor, metodo: 'PIX', descricao });
+    const cpfCnpj = typeof req.body?.cpfCnpj === 'string' ? req.body.cpfCnpj : undefined;
+    const cobranca = await criarCobranca({
+      clienteId: req.usuario.clienteId, origem: 'AVULSA', refId: 'COBRANCA_RAPIDA', valor, metodo: 'PIX', descricao,
+      pagador: cpfCnpj ? { cpfCnpj } : undefined,
+    });
     const resposta = Object.fromEntries(Object.keys(CAMPOS_PIX).map((k) => [k, cobranca[k] ?? null]));
     return res.status(201).json({ ...resposta, qrCodeBase64: cobranca.qrCodeBase64 || null });
   } catch (e) {
     if (e.status === 400 && /nao configurado|inativo/i.test(e.message)) {
       return res.status(400).json({ erro: 'Configure o recebimento por Pix antes de cobrar.', codigo: 'PAGAMENTO_NAO_CONFIGURADO' });
+    }
+    if (e.codigo === 'PAGADOR_SEM_CPF' || e.codigo === 'CPF_CNPJ_INVALIDO') {
+      return res.status(422).json({ erro: e.message, codigo: e.codigo, campos: e.campos });
     }
     if (e.status) return res.status(e.status >= 500 ? 502 : e.status).json({ erro: 'O provedor de pagamento não respondeu. Tente de novo.' });
     console.error('[hoje/cobrar]', e);

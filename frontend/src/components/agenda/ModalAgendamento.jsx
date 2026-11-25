@@ -5,6 +5,7 @@ import api from '../../services/api';
 import Modal from '../Modal';
 import { Input, Textarea, Select, Combobox, Badge, Button, LinhaInfo } from '../ui';
 import { formatarTelefoneBR } from '../../utils/formatTelefone';
+import { formatarCpfCnpj, erroCpfCnpj, limparCpfCnpj } from '../../utils/cpfCnpj';
 import { STATUS_LABELS, fmtBRL, fmtHora } from './agendaUtils';
 
 // Modal de novo agendamento / edição. Visual do mockup NovoAgendamento:
@@ -81,6 +82,9 @@ function ModalAgendamentoConteudo({ isOpen, onClose, ag, inicial, variacoes = []
   const [pre, setPre] = useState(null);
   const [usarPacote, setUsarPacote] = useState(true);
   const [cobrarSinal, setCobrarSinal] = useState(true);
+  // Asaas pede CPF/CNPJ de quem paga o sinal quando a cliente ainda nao tem.
+  const [cpfSinal, setCpfSinal] = useState('');
+  const [erroCpfSinal, setErroCpfSinal] = useState(null);
   const telDigitos = (form.telefoneCliente || '').replace(/\D/g, '');
   const produtoIdSel = variacaoSel?.produto?.id || '';
   useEffect(() => {
@@ -99,6 +103,7 @@ function ModalAgendamentoConteudo({ isOpen, onClose, ag, inicial, variacoes = []
   const vaiUsarPacote = !!pacoteDoServico && usarPacote;
   const sinalInfo = pre?.sinal && produtoIdSel && pre.sinal.valor > 0 ? pre.sinal : null;
   const vaiCobrarSinal = !ag && !vaiUsarPacote && !!sinalInfo?.pagamentoConfigurado && cobrarSinal;
+  const pedeCpfSinal = vaiCobrarSinal && !!sinalInfo?.exigeCpf && !sinalInfo?.cpfCadastrado;
 
   // Especialistas do seletor: os do serviço escolhido; sem serviço re-selecionado
   // (edição), cai pra lista geral pra manter/trocar o profissional.
@@ -172,6 +177,11 @@ function ModalAgendamentoConteudo({ isOpen, onClose, ag, inicial, variacoes = []
       alert('Escolha o especialista que vai atender.');
       return;
     }
+    if (pedeCpfSinal) {
+      const erroDoc = erroCpfCnpj(cpfSinal, true);
+      setErroCpfSinal(erroDoc);
+      if (erroDoc) return;
+    }
     const dataCompleta = new Date(`${form.data}T${form.hora}`);
     onSalvar({
       ...form,
@@ -183,6 +193,7 @@ function ModalAgendamentoConteudo({ isOpen, onClose, ag, inicial, variacoes = []
         produtoId: produtoIdSel || null,
         pacoteClienteId: vaiUsarPacote ? pacoteDoServico.id : null,
         cobrarSinal: vaiCobrarSinal,
+        cpfCnpj: pedeCpfSinal ? limparCpfCnpj(cpfSinal) : undefined,
       }),
     });
   };
@@ -386,6 +397,17 @@ function ModalAgendamentoConteudo({ isOpen, onClose, ag, inicial, variacoes = []
                       Este serviço pede sinal de {sinalInfo.pct}% ({fmtBRL(sinalInfo.valor)}), mas o recebimento por Pix não está configurado. O horário será marcado sem sinal. Configure em <Link to="/app/pagamentos" className="font-semibold underline">Pagamentos</Link>.
                     </p>
                   ))}
+                  {pedeCpfSinal && (
+                    <Input
+                      label="CPF ou CNPJ de quem paga o sinal"
+                      inputMode="numeric"
+                      value={cpfSinal}
+                      onChange={(e) => { setCpfSinal(formatarCpfCnpj(e.target.value)); setErroCpfSinal(null); }}
+                      placeholder="000.000.000-00"
+                      error={erroCpfSinal}
+                      hint="O Asaas pede esse dado. Fica salvo na ficha da cliente."
+                    />
+                  )}
                 </div>
               </section>
             )}

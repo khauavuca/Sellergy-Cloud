@@ -10,6 +10,8 @@ const {
 const { MODELOS_VALIDOS } = require('../adapters/ia/deepseek');
 const { REGISTRO: FERRAMENTAS_VALIDAS } = require('../services/iaFerramentas');
 const { periodoAtual } = require('../services/iaRouter');
+const { avaliarCota, consumoDoClienteNoMes, situacaoTetoGlobal } = require('../services/iaLimites');
+const { emitirEventoBot } = require('../services/eventosBot');
 const { enfileirarComandoBaileys } = require('../filas');
 const { cifrarPayload } = require('../cripto/cofreCredenciais');
 
@@ -47,6 +49,7 @@ const camposBotPublicos = {
   iaPromptSistema: true,
   iaTokensIncluidosMes: true,
   iaPrecoPorMilTokensExcedenteCentavos: true,
+  iaExcedenteAutorizadoTokens: true,
   acoesPermitidas: true,
   criadoEm: true,
   atualizadoEm: true,
@@ -57,7 +60,10 @@ const TAM_MAX_PROMPT_IA = 4000;
 // Valida os campos de IA vindos do body. Retorna { data } com so o que veio
 // definido, ou { erro }.
 function validarCamposIA(body) {
-  const { iaAtiva, iaModelo, iaPromptSistema, iaTokensIncluidosMes, iaPrecoPorMilTokensExcedenteCentavos, acoesPermitidas } = body;
+  const {
+    iaAtiva, iaModelo, iaPromptSistema, iaTokensIncluidosMes, iaPrecoPorMilTokensExcedenteCentavos,
+    iaExcedenteAutorizadoTokens, acoesPermitidas,
+  } = body;
   const data = {};
 
   if (iaAtiva !== undefined) {
@@ -85,9 +91,15 @@ function validarCamposIA(body) {
     data.iaTokensIncluidosMes = n;
   }
   if (iaPrecoPorMilTokensExcedenteCentavos !== undefined) {
+    // Centavos por mil tokens, com fracao (R$ 15/milhao = 1,5).
     const n = Number(iaPrecoPorMilTokensExcedenteCentavos);
-    if (!Number.isInteger(n) || n < 0) return { erro: 'iaPrecoPorMilTokensExcedenteCentavos deve ser inteiro >= 0.' };
-    data.iaPrecoPorMilTokensExcedenteCentavos = n;
+    if (!Number.isFinite(n) || n < 0) return { erro: 'iaPrecoPorMilTokensExcedenteCentavos deve ser numero >= 0.' };
+    data.iaPrecoPorMilTokensExcedenteCentavos = Math.round(n * 10000) / 10000;
+  }
+  if (iaExcedenteAutorizadoTokens !== undefined) {
+    const n = Number(iaExcedenteAutorizadoTokens);
+    if (!Number.isInteger(n) || n < 0) return { erro: 'iaExcedenteAutorizadoTokens deve ser inteiro >= 0.' };
+    data.iaExcedenteAutorizadoTokens = n;
   }
   if (acoesPermitidas !== undefined) {
     if (!Array.isArray(acoesPermitidas) || !acoesPermitidas.every((a) => typeof a === 'string')) {
@@ -184,20 +196,40 @@ roteador.get('/:id/consumo-ia', requerPermissao('BOTS', 'visualizar'), async (re
   try {
     const bot = await prisma.bot.findFirst({
       where: { id: req.params.id, ...filtroTenant(req) },
-      select: { id: true, iaTokensIncluidosMes: true },
+      select: {
+        id: true, clienteId: true, iaTokensIncluidosMes: true,
+        iaPrecoPorMilTokensExcedenteCentavos: true, iaExcedenteAutorizadoTokens: true,
+      },
     });
     if (!bot) return res.status(404).json({ erro: 'Bot nao encontrado' });
 
     const periodo = periodoAtual();
-    const consumo = await prisma.consumoIA.findUnique({
-      where: { botId_periodo: { botId: bot.id, periodo } },
-      select: { tokensUsados: true, tokensExcedentes: true, valorExcedenteCentavos: true },
+    const [consumo, usadoCliente, global] = await Promise.all([
+      prisma.consumoIA.findUnique({
+        where: { botId_periodo: { botId: bot.id, periodo } },
+        select: { tokensUsados: true, tokensExcedentes: true, valorExcedenteCentavos: true },
+      }),
+      consumoDoClienteNoMes(bot.clienteId, periodo),
+      situacaoTetoGlobal().catch(() => ({ bloqueado: false })),
+    ]);
+    // A cota e por cliente (soma dos bots) — e o que decide se a IA responde.
+    const cota = avaliarCota({
+      usadoMes: usadoCliente,
+      tokensIncluidosMes: bot.iaTokensIncluidosMes,
+      excedenteAutorizado: bot.iaExcedenteAutorizadoTokens,
     });
 
     res.json({
       periodo,
       tokensUsados: consumo?.tokensUsados || 0,
+      tokensUsadosCliente: usadoCliente,
       tokensIncluidosMes: bot.iaTokensIncluidosMes,
+      excedenteAutorizadoTokens: bot.iaExcedenteAutorizadoTokens,
+      limiteTokens: cota.limite,
+      tokensRestantes: cota.restante,
+      cotaEsgotada: cota.esgotada,
+      iaPausadaNaPlataforma: Boolean(global.bloqueado),
+      precoPorMilhaoCentavos: Math.round(bot.iaPrecoPorMilTokensExcedenteCentavos * 1000),
       tokensExcedentes: consumo?.tokensExcedentes || 0,
       valorExcedenteCentavos: consumo?.valorExcedenteCentavos || 0,
     });
@@ -243,6 +275,13 @@ roteador.put('/:id', requerPermissao('BOTS', 'editar'), async (req, res) => {
 
     const { data: dadosIA, erro: erroIA } = validarCamposIA(req.body || {});
     if (erroIA) return res.status(400).json({ erro: erroIA });
+    // Cota, preco do excedente e pacote extra sao regra comercial: so o
+    // admin da plataforma muda. O dono do negocio nao aumenta a propria cota.
+    if (!ehAdmin(req.usuario)) {
+      delete dadosIA.iaTokensIncluidosMes;
+      delete dadosIA.iaPrecoPorMilTokensExcedenteCentavos;
+      delete dadosIA.iaExcedenteAutorizadoTokens;
+    }
 
     const bot = await prisma.bot.update({
       where: { id },
@@ -250,7 +289,7 @@ roteador.put('/:id', requerPermissao('BOTS', 'editar'), async (req, res) => {
       select: camposBotPublicos,
     });
 
-    if (req.io) req.io.emit('bot_atualizado', bot);
+    emitirEventoBot(req.io, 'bot_atualizado', bot.clienteId, bot);
 
     res.json(bot);
   } catch (erro) {
@@ -284,7 +323,7 @@ roteador.patch('/:id/status', requerPermissao('BOTS', 'editar'), async (req, res
       select: camposBotPublicos,
     });
 
-    if (req.io) req.io.emit('bot_atualizado', bot);
+    emitirEventoBot(req.io, 'bot_atualizado', bot.clienteId, bot);
     res.json(bot);
   } catch (erro) {
     console.error('[bots/status]', erro);
@@ -298,12 +337,12 @@ roteador.delete('/:id', requerPermissao('BOTS', 'excluir'), async (req, res) => 
 
     const existente = await prisma.bot.findFirst({
       where: { id, ...filtroTenant(req) },
-      select: { id: true }
+      select: { id: true, clienteId: true }
     });
     if (!existente) return res.status(404).json({ erro: 'Bot nao encontrado' });
 
     await prisma.bot.delete({ where: { id } });
-    if (req.io) req.io.emit('bot_deletado', id);
+    emitirEventoBot(req.io, 'bot_deletado', existente.clienteId, id);
     res.json({ message: 'Bot excluido com sucesso' });
   } catch (error) {
     console.error('[bots/delete]', error);
@@ -352,7 +391,7 @@ roteador.post('/:id/duplicate', requerPermissao('BOTS', 'criar'), async (req, re
       }
     });
 
-    if (req.io) req.io.emit('bot_criado', botCompleto);
+    emitirEventoBot(req.io, 'bot_criado', botCompleto.clienteId, botCompleto);
 
     res.status(201).json(botCompleto);
   } catch (error) {
@@ -398,7 +437,23 @@ roteador.patch('/:id/canal', requerPermissao('BOTS', 'editar'), async (req, res)
       }
     }
     if (identificadorCanal !== undefined) {
-      data.identificadorCanal = identificadorCanal ? String(identificadorCanal).trim() : null;
+      const valor = identificadorCanal ? String(identificadorCanal).trim() : '';
+      data.identificadorCanal = valor || null;
+      if (data.identificadorCanal) {
+        // Um numero so pode estar em um bot: sem isso, outro cliente poderia
+        // cadastrar o phoneNumberId de alguem e receber as mensagens dele.
+        const emUso = await prisma.bot.findFirst({
+          where: { identificadorCanal: data.identificadorCanal, id: { not: bot.id } },
+          select: { id: true, clienteId: true },
+        });
+        if (emUso) {
+          return res.status(409).json({
+            erro: emUso.clienteId === bot.clienteId
+              ? 'Este número já está ligado a outro bot do seu negócio. Desconecte lá primeiro.'
+              : 'Este número de WhatsApp já está em uso em outra conta.',
+          });
+        }
+      }
     }
     if (verifyTokenCanal !== undefined) {
       data.verifyTokenCanal = verifyTokenCanal ? String(verifyTokenCanal).trim() : null;
@@ -415,6 +470,8 @@ roteador.patch('/:id/canal', requerPermissao('BOTS', 'editar'), async (req, res)
     });
     res.json(atualizado);
   } catch (erro) {
+    // Corrida entre a checagem e o update: o indice unico do banco segura.
+    if (erro?.code === 'P2002') return res.status(409).json({ erro: 'Este número de WhatsApp já está em uso em outra conta.' });
     console.error('[bots/canal]', erro);
     res.status(500).json({ erro: 'Erro ao configurar canal.' });
   }

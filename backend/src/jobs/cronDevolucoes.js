@@ -5,9 +5,11 @@
 // lembreteEnviadoEm null) cuja dataDevolucao esta dentro da janela de aviso
 // configurada (Cliente.diasAvisoDevolucao). Pra cada uma:
 //   - cria notificacao na plataforma (tipo DEVOLUCAO_PROXIMA) — canal garantido;
-//   - tenta mandar WhatsApp pro cliente final (best-effort: a Meta bloqueia
-//     mensagem livre se a ultima conversa foi ha mais de 24h — o alerta na
-//     plataforma acima e o que sempre funciona);
+//   - tenta mandar WhatsApp pro cliente final pelo canal do tenant (oficial
+//     ou QR Code — services/whatsappDoTenant.js), com o 55 no numero e
+//     respeitando quem pediu SAIR (best-effort: a Meta bloqueia mensagem
+//     livre se a ultima conversa foi ha mais de 24h, e o QR Code so existe no
+//     processo do worker — o alerta na plataforma acima e o que sempre funciona);
 //   - marca lembreteEnviadoEm pra nao avisar de novo no proximo tick.
 //
 // setTimeout encadeado (mesma estrategia do cronRelatorioMensal/cronCaixaDiario
@@ -15,8 +17,7 @@
 
 const prisma = require('../prisma');
 const { criarNotificacaoTenant } = require('../utils/notificacoes');
-const { enviarTexto } = require('../services/whatsappCloud');
-const { carregarCredencialDecifrada } = require('../credenciais');
+const { canalWhatsappDoTenant, telefoneParaWhatsapp } = require('../services/whatsappDoTenant');
 const { reabrirLeadSeFechado } = require('../services/etapaLeadAuto');
 
 const TZ = 'America/Sao_Paulo';
@@ -44,7 +45,23 @@ function limiteJanelaAviso(diasAvisoDevolucao, agora = new Date()) {
   return limite;
 }
 
-async function processarTenant(tenant) {
+/** Manda o aviso por WhatsApp (best-effort). Nunca lanca. */
+async function enviarAvisoWhatsapp({ canal, clienteId, telefone, texto }) {
+  if (!canal?.ok || !telefone) return { ok: false, motivo: canal?.motivo || 'SEM_TELEFONE' };
+  const para = telefoneParaWhatsapp(telefone);
+  if (!para || para.length < 12) return { ok: false, motivo: 'TELEFONE_INVALIDO' };
+  const optOut = await prisma.optOutWhatsapp.findUnique({ where: { clienteId_telefone: { clienteId, telefone: para } } }).catch(() => null);
+  if (optOut) return { ok: false, motivo: 'OPT_OUT' };
+  try {
+    const r = await canal.adapter.enviarTexto({ para, texto, tipo: 'lembrete' });
+    return r?.ok ? { ok: true, para } : { ok: false, motivo: r?.erro || 'FALHA_ENVIO' };
+  } catch (e) {
+    console.error('[cronDevolucoes] falha ao mandar WhatsApp', e?.message);
+    return { ok: false, motivo: 'FALHA_ENVIO' };
+  }
+}
+
+async function processarTenant(tenant, { obterCanal = canalWhatsappDoTenant } = {}) {
   const limite = limiteJanelaAviso(tenant.diasAvisoDevolucao);
   const pendentes = await prisma.devolucao.findMany({
     where: {
@@ -60,17 +77,9 @@ async function processarTenant(tenant) {
   });
   if (pendentes.length === 0) return { avisos: 0 };
 
-  // Bot/credencial do tenant — best-effort pro WhatsApp. Sem bot configurado
-  // (ou sem token), so o alerta na plataforma acontece — ja e util sozinho.
-  const bot = await prisma.bot.findFirst({
-    where: { clienteId: tenant.id, identificadorCanal: { not: null } },
-    select: { identificadorCanal: true, credencialCanalId: true },
-  });
-  let tokenWhatsapp = null;
-  if (bot?.credencialCanalId) {
-    const cred = await carregarCredencialDecifrada({ credencialId: bot.credencialCanalId, clienteId: tenant.id }).catch(() => null);
-    tokenWhatsapp = cred?.dados?.token || cred?.dados?.accessToken || null;
-  }
+  // Canal do tenant (oficial ou QR Code) — best-effort. Sem canal, so o
+  // alerta na plataforma acontece — ja e util sozinho.
+  const canal = await obterCanal(tenant.id).catch(() => ({ ok: false, motivo: 'ERRO_CANAL' }));
 
   let avisos = 0;
   for (const d of pendentes) {
@@ -86,14 +95,12 @@ async function processarTenant(tenant) {
         dados: { devolucaoId: d.id, vendaId: d.vendaId },
       });
 
-      if (bot?.identificadorCanal && tokenWhatsapp && d.lead?.telefone) {
-        await enviarTexto({
-          phoneNumberId: bot.identificadorCanal,
-          token: tokenWhatsapp,
-          para: d.lead.telefone,
-          texto: `Olá${d.lead.nome ? `, ${d.lead.nome}` : ''}! Passando pra lembrar que a devolução de "${nomeProduto}" é em ${dataFmt}. Qualquer dúvida, é só chamar por aqui.`,
-        }).catch((e) => console.error('[cronDevolucoes] falha ao mandar WhatsApp', e?.message));
-      }
+      await enviarAvisoWhatsapp({
+        canal,
+        clienteId: tenant.id,
+        telefone: d.lead?.telefone,
+        texto: `Olá${d.lead?.nome ? `, ${d.lead.nome}` : ''}! Passando pra lembrar que a devolução de "${nomeProduto}" é em ${dataFmt}. Qualquer dúvida, é só chamar por aqui.`,
+      });
 
       await prisma.devolucao.update({ where: { id: d.id }, data: { lembreteEnviadoEm: new Date() } });
 
@@ -139,7 +146,10 @@ function agendar() {
   const horas = (ms / 1000 / 60 / 60).toFixed(2);
   console.log(`[cronDevolucoes] Próxima execução em ~${horas}h`);
   setTimeout(async () => {
-    await executar();
+    // Trava entre processos: com 2 instancias da API, so uma avisa.
+    const { comTrava } = require('../utils/travaRotina');
+    await comTrava('cron-devolucoes', executar, { ttlMs: 15 * 60_000, manterPorMs: 60 * 60_000 })
+      .catch((e) => console.error('[cronDevolucoes] trava:', e?.message));
     agendar();
   }, ms);
 }
@@ -149,4 +159,4 @@ function iniciar() {
   agendar();
 }
 
-module.exports = { iniciar, executar, limiteJanelaAviso };
+module.exports = { iniciar, executar, limiteJanelaAviso, processarTenant, enviarAvisoWhatsapp };

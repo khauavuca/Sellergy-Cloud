@@ -18,6 +18,7 @@ const { carregarPassos } = require('../onboarding/passos');
 const { slugBase } = require('../onboarding/cadastro');
 const { configLembreteEfetiva, contarLembretesDoMes } = require('../agenda/lembretes');
 const { limiteDo } = require('../planos/recursos');
+const { contarNotasDoMes } = require('../fiscal/limiteNotas');
 const rateLimit = require('express-rate-limit');
 const { assinarPlano, cancelarAssinatura } = require('../assinatura/cobranca');
 const { validarDocumento } = require('../utils/validacaoFiscal');
@@ -47,9 +48,10 @@ roteador.get('/resumo', async (req, res) => {
 
     const situacao = situacaoAssinatura(cliente);
     const plano = planosPublicos().find((p) => p.codigo === situacao.planoEfetivo);
-    const [inicio, lembretesNoMes] = await Promise.all([
+    const [inicio, lembretesNoMes, notasNoMes] = await Promise.all([
       carregarPassos(clienteId),
       contarLembretesDoMes(clienteId),
+      contarNotasDoMes(clienteId),
     ]);
 
     res.json({
@@ -75,6 +77,9 @@ roteador.get('/resumo', async (req, res) => {
       uso: {
         lembretesNoMes,
         lembretesLimite: limiteDo(cliente, 'lembretesMes'),
+        // Notas fiscais do mes (teto do plano: limite notasMes).
+        notasNoMes,
+        notasLimite: limiteDo(cliente, 'notasMes'),
       },
     });
   } catch (e) {

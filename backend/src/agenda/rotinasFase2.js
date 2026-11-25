@@ -21,16 +21,16 @@ function carregarTarefas() {
   return tarefas;
 }
 
+// Cada tarefa roda com trava entre processos (utils/travaRotina): com 2
+// instancias do worker, so uma executa cada rodada.
 function iniciar() {
-  const timers = carregarTarefas().map((t) => {
-    let rodando = false;
-    return setInterval(async () => {
-      if (rodando) return;
-      rodando = true;
-      try { await t.rodar(); } catch (e) { console.error(`[rotinas:${t.nome}]`, e?.message); } finally { rodando = false; }
-    }, t.intervaloMs);
-  });
-  return () => timers.forEach(clearInterval);
+  const { iniciarIntervaloComTrava } = require('../utils/travaRotina');
+  const paradas = carregarTarefas().map((t) => iniciarIntervaloComTrava({
+    nome: `fase2:${t.nome}`,
+    intervaloMs: t.intervaloMs,
+    rodar: t.rodar,
+  }));
+  return () => paradas.forEach((parar) => parar());
 }
 
 module.exports = { iniciar, carregarTarefas };

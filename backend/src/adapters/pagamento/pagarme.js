@@ -3,6 +3,10 @@
 // Base: https://api.pagar.me/core/v5. Pix: POST /orders (payments[].payment_method='pix').
 // Webhook: { type:'charge.paid'|..., data:{...} } + assinatura X-Hub-Signature
 // (sha256=<HMAC>) com o segredo do endpoint.
+// Link de pagamento: a Cobranca guarda o id do LINK, mas o webhook charge.*
+// traz o id da CHARGE. O `code` (= id da Cobranca, enviado como refExterna)
+// volta no pedido/charge e liga o evento de volta (ver webhooks.routes.js).
+// POST leva Idempotency-Key (= id da Cobranca): retentativa nao duplica.
 
 const crypto = require('crypto');
 const { ProvedorPagamento, STATUS } = require('./ProvedorPagamento');
@@ -33,13 +37,22 @@ function statusDoEvento(tipo, dataStatus) {
   return normalizarStatus(dataStatus);
 }
 
+// code do pedido (= refExterna) numa charge/evento: no proprio objeto, no
+// pedido ou em metadata.
+function referenciaDe(d) {
+  const ref = d?.order?.code || d?.code || d?.metadata?.code || d?.order?.metadata?.code;
+  return ref ? String(ref) : undefined;
+}
+
 class PagarmeAdapter extends ProvedorPagamento {
   static get provedor() { return 'PAGARME'; }
 
   get _secretKey() { return this.credencial?.dados?.secretKey || this.credencial?.dados?.apiKey; }
-  _headers() {
+  _headers(idempotencyKey) {
     const b64 = Buffer.from(`${this._secretKey}:`, 'utf8').toString('base64');
-    return { Authorization: `Basic ${b64}` };
+    const h = { Authorization: `Basic ${b64}` };
+    if (idempotencyKey) h['Idempotency-Key'] = idempotencyKey;
+    return h;
   }
 
   async criarCobrancaPix({ valor, descricao, refExterna, pagador }) {
@@ -47,7 +60,7 @@ class PagarmeAdapter extends ProvedorPagamento {
     const req = {
       url: `${BASE}/orders`,
       metodo: 'POST',
-      headers: this._headers(),
+      headers: this._headers(`pix-${refExterna}`),
       corpo: {
         code: refExterna,
         items: [{ amount: centavos, description: descricao, quantity: 1 }],
@@ -86,7 +99,7 @@ class PagarmeAdapter extends ProvedorPagamento {
     const req = {
       url: `${BASE}/paymentlinks`,
       metodo: 'POST',
-      headers: this._headers(),
+      headers: this._headers(`link-${refExterna}`),
       corpo: {
         name: descricao,
         type: 'order',
@@ -108,10 +121,16 @@ class PagarmeAdapter extends ProvedorPagamento {
     };
   }
 
-  async consultarStatus(provedorCobrancaId) {
-    const req = { url: `${BASE}/charges/${provedorCobrancaId}`, headers: this._headers() };
-    const raw = await this._executar(req, () => ({ id: provedorCobrancaId, status: 'paid', paid_at: new Date().toISOString() }));
-    return { status: normalizarStatus(raw.status), pagoEm: raw.paid_at || undefined };
+  /**
+   * Consulta uma CHARGE pelo id. `refExterna` = code do pedido/charge (id da
+   * Cobranca), pra quem casou o webhook pela referencia conferir.
+   * @param {string} id  id da charge
+   * @param {{refExterna?:string}} [opts]  so pro fixture ecoar a referencia
+   */
+  async consultarStatus(id, { refExterna } = {}) {
+    const req = { url: `${BASE}/charges/${encodeURIComponent(id)}`, headers: this._headers() };
+    const raw = await this._executar(req, () => ({ id, status: 'paid', paid_at: new Date().toISOString(), code: refExterna }));
+    return { status: normalizarStatus(raw.status), pagoEm: raw.paid_at || undefined, refExterna: referenciaDe(raw) };
   }
 
   async estornar(provedorCobrancaId) {
@@ -135,10 +154,14 @@ class PagarmeAdapter extends ProvedorPagamento {
   parsearWebhook({ body }) {
     if (!body || !body.type || !body.data) return null;
     const d = body.data;
-    const id = d.id; // charge id (eventos charge.*)
+    const id = d.id; // charge id (eventos charge.*); order id (order.*)
     if (!id) return null;
+    // order.*: a consulta e por charge — usa a 1a charge do pedido.
+    const chargeId = String(body.type).startsWith('order.') ? (d.charges?.[0]?.id || id) : id;
     return {
       provedorCobrancaId: String(id),
+      pagamentoId: String(chargeId),
+      refExterna: referenciaDe(d),
       status: statusDoEvento(body.type, d.status),
       pagoEm: d.paid_at || undefined,
       evento: body.type,

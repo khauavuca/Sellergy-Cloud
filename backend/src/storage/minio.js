@@ -112,15 +112,47 @@ async function pingar() {
 // PRE-SIGNED URLs (acesso autenticado a objetos do bucket privado)
 // =====================================================================
 // Cache em memoria pra evitar regerar a mesma URL N vezes na mesma sessao.
-// Chave: key do objeto. Valor: { url, expiraEm (timestamp ms) }.
-// Quando a URL ainda tem >5min de vida, reusa.
+// Chave: key do objeto + expiraEm pedido (quem pede 1 h nunca recebe a URL de
+// 24 h, e vice-versa). Valor: { url, expiraEm (timestamp ms) }.
+// Limitado: no maximo LIMITE_CACHE_URLS entradas (sai a mais antiga) e as
+// vencidas sao varridas a cada ~VARREDURA_MS. Reusa so se a URL ainda tem
+// pelo menos metade da vida pedida (e nunca menos de 5 min).
 const cacheUrlsAssinadas = new Map();
 const TTL_PRE_SIGNED_SEGUNDOS = 60 * 60 * 24; // 24h
 const MARGEM_REUSO_MS = 5 * 60 * 1000; // 5min — se a URL expira em <5min, regera
+const LIMITE_CACHE_URLS = Number(process.env.STORAGE_CACHE_URLS_MAX) || 5000;
+const VARREDURA_MS = 10 * 60 * 1000;
+let ultimaVarredura = Date.now();
+
+function varrerCacheUrls(agora = Date.now()) {
+  for (const [k, v] of cacheUrlsAssinadas) if (v.expiraEm <= agora + MARGEM_REUSO_MS) cacheUrlsAssinadas.delete(k);
+  ultimaVarredura = agora;
+}
+
+function lerCacheUrl(chave, expiraEmSeg, agora = Date.now()) {
+  const c = cacheUrlsAssinadas.get(chave);
+  if (!c) return null;
+  const minimo = Math.max(MARGEM_REUSO_MS, (expiraEmSeg * 1000) / 2);
+  if (c.expiraEm - agora > minimo) return c.url;
+  cacheUrlsAssinadas.delete(chave);
+  return null;
+}
+
+function gravarCacheUrl(chave, url, expiraEmSeg, agora = Date.now()) {
+  // URL curta (<= 10 min) nao vale cache: reusar quase sempre ficaria abaixo da margem.
+  if (expiraEmSeg * 1000 <= 2 * MARGEM_REUSO_MS) return;
+  if (agora - ultimaVarredura > VARREDURA_MS) varrerCacheUrls(agora);
+  cacheUrlsAssinadas.delete(chave); // reinsere no fim (mais nova)
+  cacheUrlsAssinadas.set(chave, { url, expiraEm: agora + expiraEmSeg * 1000 });
+  while (cacheUrlsAssinadas.size > LIMITE_CACHE_URLS) {
+    cacheUrlsAssinadas.delete(cacheUrlsAssinadas.keys().next().value);
+  }
+}
 
 /**
  * Gera uma URL temporaria assinada pra ler um objeto do bucket privado.
- * Cacheia em memoria — chamadas repetidas pra mesma key reusam a URL.
+ * Cacheia em memoria — chamadas repetidas pra mesma key (e mesmo expiraEm)
+ * reusam a URL.
  *
  * @param {string} key — caminho dentro do bucket (ex.: "produtos/<clienteId>/abc.jpg")
  * @param {object} [opts]
@@ -129,21 +161,16 @@ const MARGEM_REUSO_MS = 5 * 60 * 1000; // 5min — se a URL expira em <5min, reg
  */
 async function urlAssinada(key, { expiraEm = TTL_PRE_SIGNED_SEGUNDOS } = {}) {
   if (!key) return null;
+  const segundos = Number(expiraEm) > 0 ? Math.floor(Number(expiraEm)) : TTL_PRE_SIGNED_SEGUNDOS;
+  const chaveCache = `${key}|${segundos}`;
 
-  const agora = Date.now();
-  const cache = cacheUrlsAssinadas.get(key);
-  if (cache && cache.expiraEm - agora > MARGEM_REUSO_MS) {
-    return cache.url;
-  }
+  const doCache = lerCacheUrl(chaveCache, segundos);
+  if (doCache) return doCache;
 
   const command = new GetObjectCommand({ Bucket: BUCKET, Key: key });
   // Assina com o cliente PUBLICO -> a URL aponta pro host que o navegador acessa.
-  const url = await getSignedUrl(clientePublico, command, { expiresIn: expiraEm });
-
-  cacheUrlsAssinadas.set(key, {
-    url,
-    expiraEm: agora + expiraEm * 1000,
-  });
+  const url = await getSignedUrl(clientePublico, command, { expiresIn: segundos });
+  gravarCacheUrl(chaveCache, url, segundos);
   return url;
 }
 
@@ -228,6 +255,8 @@ module.exports = {
   chaveDeUrl,
   pingar,
   urlAssinada,
+  // Expostos para teste do cache de URLs assinadas.
+  _cacheUrls: { cacheUrlsAssinadas, lerCacheUrl, gravarCacheUrl, varrerCacheUrls, LIMITE_CACHE_URLS },
   assinarSeFor,
   transformarUrlsAssinadas,
   garantirBucket,

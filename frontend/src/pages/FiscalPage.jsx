@@ -112,7 +112,7 @@ export default function FiscalPage() {
   const [sincronizando, setSincronizando] = useState(null);
   const [form, setForm] = useState({
     provedor: '', credencialId: '', ambiente: 'HOMOLOGACAO',
-    cnpj: '', regime: '', inscricao: '', csc: '', serie: '', ativo: true,
+    cnpj: '', regime: '', inscricao: '', csc: '', serie: '', ativo: false,
     // Dados do emitente
     razaoSocial: '', nomeFantasia: '', inscricaoMunicipal: '', cnae: '',
     emailEmitente: '', telefoneEmitente: '',
@@ -150,7 +150,7 @@ export default function FiscalPage() {
           inscricao: cfg.inscricao || '',
           csc: cfg.csc || '',
           serie: cfg.serie || '',
-          ativo: cfg.ativo ?? true,
+          ativo: cfg.ativo ?? false,
           razaoSocial: cfg.razaoSocial || '',
           nomeFantasia: cfg.nomeFantasia || '',
           inscricaoMunicipal: cfg.inscricaoMunicipal || '',
@@ -279,14 +279,27 @@ export default function FiscalPage() {
     if (!cancelando) return;
     if (motivo.trim().length < 15) return toast.error('Escreva o motivo com pelo menos 15 caracteres.');
     setEnviandoCancel(true);
-    try {
-      const atualizado = await fiscalService.cancelar(cancelando.id, motivo.trim());
+    const enviar = async (confirmarForaDoPrazo) => {
+      const atualizado = await fiscalService.cancelar(cancelando.id, motivo.trim(), { confirmarForaDoPrazo });
       setDocumentos((lista) => lista.map((d) => (d.id === cancelando.id ? { ...d, ...atualizado } : d)));
-      toast.success('Pedido de cancelamento enviado.');
+      toast.success(atualizado?.aviso ? `Pedido de cancelamento enviado. ${atualizado.aviso}` : 'Pedido de cancelamento enviado.');
       setCancelando(null);
       setMotivo('');
+    };
+    try {
+      await enviar(false);
     } catch (e) {
-      toast.error(e.response?.data?.erro || 'Falha ao cancelar a nota.');
+      const dados = e.response?.data;
+      // NFC-e fora do prazo comum da SEFAZ: pergunta antes de tentar mesmo assim.
+      if (dados?.codigo === 'FORA_DO_PRAZO' && window.confirm(dados.erro)) {
+        try {
+          await enviar(true);
+        } catch (e2) {
+          toast.error(e2.response?.data?.erro || 'Falha ao cancelar a nota.');
+        }
+      } else if (dados?.codigo !== 'FORA_DO_PRAZO') {
+        toast.error(dados?.erro || 'Falha ao cancelar a nota.');
+      }
     } finally {
       setEnviandoCancel(false);
     }

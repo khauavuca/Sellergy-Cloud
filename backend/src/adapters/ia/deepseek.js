@@ -19,8 +19,31 @@
 const { ProvedorIA } = require('./ProvedorIA');
 
 const BASE = 'https://api.deepseek.com';
-const MODELOS_VALIDOS = new Set(['deepseek-v4-flash', 'deepseek-v4-pro']);
+// NOME DO MODELO (nov/2026): o codigo nasceu com "deepseek-v4-flash", mas
+// fontes de nov/2026 citam "deepseek-flash" (e "deepseek-v4-pro") — o nome
+// do flash pode ter sido aposentado/renomeado. Por isso:
+//   - os dois nomes do flash sao aceitos no Bot.iaModelo;
+//   - IA_MODELO_PADRAO (env) troca o nome REAL mandado pra API em todo bot
+//     da familia flash (e no modelo invalido), sem migrar o banco. Ex.:
+//     IA_MODELO_PADRAO=deepseek-flash se a API recusar "deepseek-v4-flash".
+//   - pro e respeitado como esta.
+const MODELOS_FLASH = new Set(['deepseek-v4-flash', 'deepseek-flash']);
+const MODELOS_VALIDOS = new Set([...MODELOS_FLASH, 'deepseek-v4-pro']);
 const MODELO_PADRAO = 'deepseek-v4-flash';
+
+/** Nome do modelo padrao: IA_MODELO_PADRAO (se for um nome deepseek valido) ou o fixo. */
+function modeloPadrao(env = process.env) {
+  const v = String(env.IA_MODELO_PADRAO || '').trim();
+  return /^deepseek-[a-z0-9.-]{1,40}$/.test(v) ? v : MODELO_PADRAO;
+}
+
+/** Regra pura: qual nome vai pra API. */
+function resolverModelo(modelo, env = process.env) {
+  const temEnv = Boolean(String(env.IA_MODELO_PADRAO || '').trim());
+  if (MODELOS_FLASH.has(modelo)) return temEnv ? modeloPadrao(env) : modelo;
+  if (MODELOS_VALIDOS.has(modelo)) return modelo;
+  return modeloPadrao(env);
+}
 
 /**
  * Normaliza o payload cru da DeepSeek pro formato que o resto do sistema usa.
@@ -65,11 +88,11 @@ class DeepSeekAdapter extends ProvedorIA {
    * `tools` no formato OpenAI: [{ type:'function', function:{ name, description, parameters } }].
    * Omitido/vazio = chat comum, sem ferramentas.
    */
-  async responder({ mensagens, modelo = MODELO_PADRAO, temperatura = 0.7, maxTokens, tools }) {
+  async responder({ mensagens, modelo, temperatura = 0.7, maxTokens, tools }) {
     if (!Array.isArray(mensagens) || mensagens.length === 0) {
       throw Object.assign(new Error('mensagens nao pode ser vazio.'), { status: 400, codigo: 'IA_SEM_MENSAGENS' });
     }
-    const modeloUsado = MODELOS_VALIDOS.has(modelo) ? modelo : MODELO_PADRAO;
+    const modeloUsado = resolverModelo(modelo);
     // Clampa pro range documentado (0-2) em vez de deixar a API rejeitar —
     // um valor fora da faixa vindo de configuracao antiga nao deve quebrar o bot.
     const temp = Math.min(2, Math.max(0, Number(temperatura) || 0.7));
@@ -103,4 +126,7 @@ class DeepSeekAdapter extends ProvedorIA {
 module.exports = DeepSeekAdapter;
 module.exports.MODELOS_VALIDOS = MODELOS_VALIDOS;
 module.exports.MODELO_PADRAO = MODELO_PADRAO;
+module.exports.MODELOS_FLASH = MODELOS_FLASH;
+module.exports.modeloPadrao = modeloPadrao;
+module.exports.resolverModelo = resolverModelo;
 module.exports.normalizarResposta = normalizarResposta;
