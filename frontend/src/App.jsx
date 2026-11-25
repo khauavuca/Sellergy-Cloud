@@ -69,6 +69,7 @@ const AdminComunicadosPage = lazy(() => import('./pages/AdminComunicadosPage'));
 const AdminUsoPage = lazy(() => import('./pages/AdminUsoPage'));
 const AdminEquipePage = lazy(() => import('./pages/AdminEquipePage'));
 const AdminPlanosPage = lazy(() => import('./pages/AdminPlanosPage'));
+const AdminIntegracoesPage = lazy(() => import('./pages/AdminIntegracoesPage'));
 
 // Bots do tenant: tela real BotsClientePage (conexao + FAQ), Frente 4.
 // `RelatoriosClientePlaceholder` removido — agora usa RelatoriosPage real.
@@ -229,6 +230,7 @@ export default function App() {
             <Route path="/admin/uso" element={<AdminUsoPage />} />
             <Route path="/admin/equipe" element={<AdminEquipePage />} />
             <Route path="/admin/planos" element={<AdminPlanosPage />} />
+            <Route path="/admin/integracoes" element={<AdminIntegracoesPage />} />
             <Route path="/admin/configuracoes/perfil" element={<PerfilPage />} />
           </Route>
 

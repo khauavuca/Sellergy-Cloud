@@ -184,7 +184,7 @@ export default function ModalIntegracoes({ isOpen, onClose, cliente }) {
                             </div>
                             {t.tipo === 'WHATSAPP_CLOUD_TOKEN' && (
                               <div className="text-[11px] text-[var(--text-muted)]">
-                                O número do canal (phoneNumberId) e o verify token ficam na tela do bot, não aqui.
+                                Use o token e o segredo do app do próprio cliente na Meta (Configurações do app › Básico). Sem o segredo, o bot não recebe as mensagens. O número do canal (phoneNumberId) e o verify token ficam na tela do bot.
                               </div>
                             )}
                             <div className="flex justify-end gap-2">

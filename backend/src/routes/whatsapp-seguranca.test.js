@@ -27,7 +27,8 @@ stubModulo('../middlewares/permissoes.middleware', {
 stubModulo('../filas', { enfileirarComandoBaileys: async () => {} });
 
 const credenciais = require('../credenciais');
-credenciais.carregarCredencialDecifrada = async () => ({ dados: { accessToken: 'tok' } });
+let credAtual = { dados: { accessToken: 'tok' } };
+credenciais.carregarCredencialDecifrada = async () => credAtual;
 const adapters = require('../adapters/whatsapp');
 const enviados = [];
 adapters.criarProvedorWhatsapp = () => ({ enviarTexto: async (m) => { enviados.push(m); return { ok: true }; } });
@@ -66,10 +67,20 @@ const postarWebhook = (corpo, cabecalhos = {}) => fetch(`${base}/webhooks/whatsa
   method: 'POST', headers: { 'content-type': 'application/json', ...cabecalhos }, body: corpo,
 });
 
+test('webhook: numero que nao e de nenhum bot recebe 200 e nada e processado', async () => {
+  let consultouBot = false;
+  prisma.bot.findFirst = async () => { consultouBot = true; return null; };
+  prisma.bot.findMany = async () => [];
+  assert.equal((await postarWebhook(corpoMeta('oi'))).status, 200);
+  await new Promise((ok) => setTimeout(ok, 20));
+  assert.equal(consultouBot, false);
+});
+
 test('webhook: POST sem assinatura ou com assinatura errada e recusado', async () => {
   process.env.WHATSAPP_APP_SECRET = SEGREDO;
   let consultouBot = false;
   prisma.bot.findFirst = async () => { consultouBot = true; return null; };
+  prisma.bot.findMany = async () => [{ identificadorCanal: 'PNID1', clienteId: 'c1', credencialCanalId: 'cr1' }];
   const corpo = corpoMeta('oi');
   assert.equal((await postarWebhook(corpo)).status, 401);
   assert.equal((await postarWebhook(corpo, { 'x-hub-signature-256': `sha256=${'0'.repeat(64)}` })).status, 401);
@@ -82,6 +93,8 @@ test('webhook: sem segredo em producao recusa; em dev so com a chave explicita',
   delete process.env.WHATSAPP_APP_SECRET;
   const nodeEnv = process.env.NODE_ENV;
   prisma.bot.findFirst = async () => null;
+  prisma.bot.update = async () => ({});
+  prisma.bot.findMany = async () => [{ identificadorCanal: 'PNID1', clienteId: 'c1', credencialCanalId: 'cr1' }];
   try {
     process.env.NODE_ENV = 'production';
     process.env.WHATSAPP_WEBHOOK_SEM_ASSINATURA = '1';
@@ -99,11 +112,16 @@ test('webhook: sem segredo em producao recusa; em dev so com a chave explicita',
 
 test('webhook: GET de verificacao (hub.challenge) continua funcionando', async () => {
   prisma.bot.findFirst = async ({ where }) => (where.verifyTokenCanal === 'vt-ok' ? { id: 'b1' } : null);
+  const confirmados = [];
+  prisma.bot.update = async ({ where, data }) => { confirmados.push({ id: where.id, data }); return {}; };
   const ok = await fetch(`${base}/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=vt-ok&hub.challenge=123`);
   assert.equal(ok.status, 200);
   assert.equal(await ok.text(), '123');
   const ruim = await fetch(`${base}/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=errado&hub.challenge=1`);
   assert.equal(ruim.status, 403);
+  // So o verify token certo marca o webhook como confirmado.
+  assert.equal(confirmados.length, 1);
+  assert.ok(confirmados[0].data.webhookConfirmadoEm instanceof Date);
 });
 
 test('webhook assinado: "SAIR" no canal oficial grava opt-out e nao chama o bot', async () => {
@@ -111,6 +129,7 @@ test('webhook assinado: "SAIR" no canal oficial grava opt-out e nao chama o bot'
   const optOuts = [];
   let faqConsultada = false;
   prisma.bot.findFirst = async () => ({ id: 'b1', clienteId: 'c1', status: 'ONLINE', iaAtiva: false, credencialCanalId: 'cr1', provedorCanal: 'META_CLOUD' });
+  prisma.bot.findMany = async () => [{ identificadorCanal: 'PNID1', clienteId: 'c1', credencialCanalId: 'cr1' }];
   prisma.faq.findMany = async () => { faqConsultada = true; return []; };
   prisma.optOutWhatsapp.upsert = async ({ create }) => { optOuts.push(create); return create; };
   prisma.bot.update = async () => ({});
@@ -124,6 +143,25 @@ test('webhook assinado: "SAIR" no canal oficial grava opt-out e nao chama o bot'
   assert.match(enviados[0].texto, /não vai mais receber/);
   assert.equal(faqConsultada, true); // FAQ carregada 1x por lote, mas o bot nao respondeu
   delete process.env.WHATSAPP_APP_SECRET;
+});
+
+test('webhook: numero com segredo proprio do cliente so passa assinado com ELE', async () => {
+  process.env.WHATSAPP_APP_SECRET = SEGREDO; // reserva de outro app: nao vale pra este cliente
+  credAtual = { dados: { accessToken: 'tok', appSecret: 'segredo-do-cliente' } };
+  let processou = 0;
+  prisma.bot.findMany = async () => [{ identificadorCanal: 'PNID1', clienteId: 'c1', credencialCanalId: 'cr1' }];
+  prisma.bot.findFirst = async () => { processou += 1; return null; };
+  try {
+    const corpo = corpoMeta('oi');
+    assert.equal((await postarWebhook(corpo, { 'x-hub-signature-256': assinar(corpo) })).status, 401);
+    const certo = `sha256=${crypto.createHmac('sha256', 'segredo-do-cliente').update(corpo).digest('hex')}`;
+    assert.equal((await postarWebhook(corpo, { 'x-hub-signature-256': certo })).status, 200);
+    await new Promise((ok) => setTimeout(ok, 30));
+    assert.equal(processou, 1);
+  } finally {
+    credAtual = { dados: { accessToken: 'tok' } };
+    delete process.env.WHATSAPP_APP_SECRET;
+  }
 });
 
 // ---------------- PATCH /bots/:id/canal ----------------
@@ -220,4 +258,89 @@ test('GET /bots: admin filtra por ?clienteId; dono fica no proprio negocio', asy
   usuarioAtual = { id: 'u1', perfil: 'DONO', clienteId: 'c1' };
   await fetch(`${base}/bots?clienteId=c9`);
   assert.deepEqual(filtros[1], { clienteId: 'c1' });
+});
+
+// ---------------- PUT /bots/:id/canal/oficial (app do proprio cliente) ----------------
+
+const TOKEN_META = `EAAG${'t'.repeat(100)}`;
+const SEGREDO_APP = 'f'.repeat(32);
+const putOficial = (corpo) => fetch(`${base}/bots/b1/canal/oficial`, {
+  method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(corpo),
+});
+
+function stubOficial({ bot, credExistente = null, numeroEmUso = null }) {
+  const gravado = { cred: null, bot: null };
+  prisma.bot.findFirst = async ({ where }) => {
+    if (where.identificadorCanal) return numeroEmUso;
+    if (where.clienteId && where.clienteId !== bot.clienteId) return null;
+    return bot;
+  };
+  prisma.credencial.findFirst = async () => (credExistente ? { id: credExistente.id } : null);
+  credAtual = credExistente ? { dados: credExistente.dados } : { dados: { accessToken: 'tok' } };
+  prisma.$transaction = async (fn) => fn({
+    credencial: {
+      update: async ({ where, data }) => { gravado.cred = { modo: 'update', id: where.id, data }; return { id: where.id }; },
+      create: async ({ data }) => { gravado.cred = { modo: 'create', data }; return { id: 'cr-novo' }; },
+    },
+    bot: { update: async ({ data }) => { gravado.bot = data; return { id: bot.id, ...data }; } },
+  });
+  return gravado;
+}
+
+test('oficial: primeira vez sem o segredo do app explica o que falta', async () => {
+  usuarioAtual = { id: 'u1', perfil: 'DONO', clienteId: 'c1' };
+  stubOficial({ bot: { id: 'b1', clienteId: 'c1', credencialCanalId: null, identificadorCanal: null, verifyTokenCanal: null } });
+  const r = await putOficial({ identificadorCanal: '1290672074119010', accessToken: TOKEN_META });
+  assert.equal(r.status, 400);
+  const j = await r.json();
+  assert.equal(j.campo, 'appSecret');
+  assert.match(j.erro, /segredo do app/);
+});
+
+test('oficial: com os 3 dados cria a credencial, liga o oficial e gera o verify token', async () => {
+  usuarioAtual = { id: 'u1', perfil: 'DONO', clienteId: 'c1' };
+  const g = stubOficial({ bot: { id: 'b1', clienteId: 'c1', credencialCanalId: null, identificadorCanal: null, verifyTokenCanal: null } });
+  const r = await putOficial({ identificadorCanal: ' 1290672074119010 ', accessToken: TOKEN_META, appSecret: SEGREDO_APP });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.conferidoNaMeta, false); // envio real desligado nos testes
+  assert.equal(g.cred.modo, 'create');
+  assert.equal(g.cred.data.tipo, 'WHATSAPP_CLOUD_TOKEN');
+  assert.equal(g.cred.data.clienteId, 'c1');
+  assert.ok(!JSON.stringify(g.cred.data).includes(TOKEN_META), 'token nunca vai em claro pro banco');
+  assert.equal(g.bot.provedorCanal, 'META_CLOUD');
+  assert.equal(g.bot.credencialCanalId, 'cr-novo');
+  assert.equal(g.bot.identificadorCanal, '1290672074119010');
+  assert.match(g.bot.verifyTokenCanal, /^sellergy-/);
+  assert.equal(g.bot.webhookConfirmadoEm, null);
+});
+
+test('oficial: so trocando o numero mantem token e segredo e o verify token', async () => {
+  usuarioAtual = { id: 'u1', perfil: 'DONO', clienteId: 'c1' };
+  const g = stubOficial({
+    bot: { id: 'b1', clienteId: 'c1', credencialCanalId: 'cr1', identificadorCanal: '1290672074119010', verifyTokenCanal: 'vt-antigo' },
+    credExistente: { id: 'cr1', dados: { accessToken: TOKEN_META, appSecret: SEGREDO_APP } },
+  });
+  const r = await putOficial({ identificadorCanal: '1290672074119011' });
+  assert.equal(r.status, 200);
+  assert.equal(g.cred.modo, 'update');
+  assert.equal(g.cred.id, 'cr1');
+  assert.equal(g.bot.verifyTokenCanal, 'vt-antigo');
+  assert.equal(g.bot.webhookConfirmadoEm, null); // numero mudou: espera a Meta confirmar de novo
+});
+
+test('oficial: numero de outra conta da 409 e nada e gravado; bot de outro negocio da 404', async () => {
+  usuarioAtual = { id: 'u1', perfil: 'DONO', clienteId: 'c1' };
+  const g = stubOficial({
+    bot: { id: 'b1', clienteId: 'c1', credencialCanalId: null, identificadorCanal: null, verifyTokenCanal: null },
+    numeroEmUso: { clienteId: 'c2' },
+  });
+  const r = await putOficial({ identificadorCanal: '1290672074119010', accessToken: TOKEN_META, appSecret: SEGREDO_APP });
+  assert.equal(r.status, 409);
+  assert.equal(g.cred, null);
+  assert.equal(g.bot, null);
+
+  usuarioAtual = { id: 'u9', perfil: 'DONO', clienteId: 'c9' };
+  stubOficial({ bot: { id: 'b1', clienteId: 'c1', credencialCanalId: null, identificadorCanal: null, verifyTokenCanal: null } });
+  assert.equal((await putOficial({ identificadorCanal: '1290672074119010', accessToken: TOKEN_META, appSecret: SEGREDO_APP })).status, 404);
 });

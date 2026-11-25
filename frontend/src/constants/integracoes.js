@@ -3,7 +3,7 @@
 // aqui só damos nome amigável.
 
 export const ROTULO_INTEGRACAO = {
-  WHATSAPP_CLOUD_TOKEN: { nome: 'WhatsApp Cloud API', desc: 'Atendimento automático (menu / FAQ)' },
+  WHATSAPP_CLOUD_TOKEN: { nome: 'WhatsApp Cloud API', desc: 'App do próprio cliente na Meta: token e segredo do app' },
   MERCADO_PAGO_KEY: { nome: 'Mercado Pago', desc: 'Cobrança Pix e link de pagamento' },
   ASAAS_KEY: { nome: 'Asaas', desc: 'Cobrança Pix, boleto e cartão' },
   PAGARME_KEY: { nome: 'Pagar.me', desc: 'Cobrança Pix e cartão' },
@@ -17,6 +17,7 @@ export const ROTULO_CAMPO = {
   secretKey: 'Secret key',
   token: 'Token',
   webhookSecret: 'Webhook secret',
+  appSecret: 'Segredo do app (App Secret)',
 };
 
 // Ordem de exibição das seções.

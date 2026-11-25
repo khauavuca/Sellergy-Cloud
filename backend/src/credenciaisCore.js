@@ -45,7 +45,9 @@ const CATEGORIA_POR_TIPO = {
 // nenhum efeito real. O identificador que de fato importa pro roteamento —
 // qual numero pertence a qual bot — vive em Bot.identificadorCanal.
 const SCHEMA_POR_TIPO = {
-  WHATSAPP_CLOUD_TOKEN: { obrigatorios: ['accessToken'], opcionais: [] },
+  // appSecret: segredo do app DO CLIENTE na Meta; confere a assinatura do
+  // webhook (cada cliente usa o proprio app). Ver assinaturaWebhookMeta.js.
+  WHATSAPP_CLOUD_TOKEN: { obrigatorios: ['accessToken'], opcionais: ['appSecret'] },
   MERCADO_PAGO_KEY: { obrigatorios: ['accessToken'], opcionais: ['webhookSecret'] },
   ASAAS_KEY: { obrigatorios: ['apiKey'], opcionais: ['webhookSecret'] },
   PAGARME_KEY: { obrigatorios: ['secretKey'], opcionais: ['webhookSecret'] },

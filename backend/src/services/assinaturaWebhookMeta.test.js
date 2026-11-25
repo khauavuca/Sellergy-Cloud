@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
-const { assinaturaValida, conferirWebhookMeta } = require('./assinaturaWebhookMeta');
+const { assinaturaValida, conferirWebhookMeta, conferirWebhookMetaPorNumero } = require('./assinaturaWebhookMeta');
 
 const SEGREDO = 'segredo-do-app';
 const corpo = Buffer.from(JSON.stringify({ entry: [{ changes: [] }] }));
@@ -41,4 +41,30 @@ test('sem segredo em dev: so aceita com WHATSAPP_WEBHOOK_SEM_ASSINATURA=1', () =
     conferirWebhookMeta({ corpoCru: corpo, env: { NODE_ENV: 'development', WHATSAPP_WEBHOOK_SEM_ASSINATURA: '1' } }),
     { ok: true, modo: 'SEM_ASSINATURA_DEV' },
   );
+});
+
+test('por numero: cada numero confere com o segredo do proprio cliente', () => {
+  const segredosPorNumero = new Map([['PN_A', 'segredo-a'], ['PN_B', 'segredo-b']]);
+  // Cliente A assina com o segredo dele: passa so o numero dele, nunca o de B.
+  const r = conferirWebhookMetaPorNumero({ corpoCru: corpo, cabecalho: assinar(corpo, 'segredo-a'), segredosPorNumero, env: { NODE_ENV: 'production' } });
+  assert.deepEqual([...r.aceitos], ['PN_A']);
+  assert.deepEqual(r.recusados, ['PN_B']);
+});
+
+test('por numero: cliente sem segredo usa o de reserva; sem nenhum, so passa em dev com a chave', () => {
+  const segredosPorNumero = new Map([['PN_A', null]]);
+  const comReserva = conferirWebhookMetaPorNumero({ corpoCru: corpo, cabecalho: assinar(corpo), segredosPorNumero, env: { WHATSAPP_APP_SECRET: SEGREDO, NODE_ENV: 'production' } });
+  assert.deepEqual([...comReserva.aceitos], ['PN_A']);
+  const prod = conferirWebhookMetaPorNumero({ corpoCru: corpo, cabecalho: undefined, segredosPorNumero, env: { NODE_ENV: 'production', WHATSAPP_WEBHOOK_SEM_ASSINATURA: '1' } });
+  assert.equal(prod.aceitos.size, 0);
+  assert.deepEqual(prod.semSegredo, ['PN_A']);
+  const dev = conferirWebhookMetaPorNumero({ corpoCru: corpo, cabecalho: undefined, segredosPorNumero, env: { NODE_ENV: 'development', WHATSAPP_WEBHOOK_SEM_ASSINATURA: '1' } });
+  assert.deepEqual([...dev.aceitos], ['PN_A']);
+  assert.equal(dev.modo, 'SEM_ASSINATURA_DEV');
+});
+
+test('por numero: o segredo do cliente vale mesmo com reserva diferente configurada', () => {
+  const segredosPorNumero = new Map([['PN_A', 'segredo-a']]);
+  const r = conferirWebhookMetaPorNumero({ corpoCru: corpo, cabecalho: assinar(corpo, SEGREDO), segredosPorNumero, env: { WHATSAPP_APP_SECRET: SEGREDO } });
+  assert.equal(r.aceitos.size, 0);
 });

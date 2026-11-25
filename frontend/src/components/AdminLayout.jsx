@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Users, ShieldCheck, CreditCard, LifeBuoy, Activity, Megaphone, Gauge, Tags, ScrollText
+  LayoutDashboard, Users, ShieldCheck, CreditCard, LifeBuoy, Activity, Megaphone, Gauge, Tags, ScrollText, Plug
 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import { useAuthStore } from '../store/auth.store';
@@ -38,6 +38,7 @@ const SECTIONS = [
   {
     titulo: 'Sistema',
     items: [
+      { to: '/admin/integracoes', label: 'Integrações', icon: Plug, acao: null },
       { to: '/admin/equipe', label: 'Equipe e auditoria', icon: ScrollText, acao: 'equipe.gerenciar' },
     ],
   },
@@ -53,6 +54,7 @@ const TITULOS = {
   '/admin/suporte': { titulo: 'Suporte', breadcrumb: 'Operação' },
   '/admin/comunicados': { titulo: 'Comunicados', breadcrumb: 'Operação' },
   '/admin/saude': { titulo: 'Saúde do sistema', breadcrumb: 'Operação' },
+  '/admin/integracoes': { titulo: 'Integrações', breadcrumb: 'Sistema' },
   '/admin/equipe': { titulo: 'Equipe e auditoria', breadcrumb: 'Sistema' },
   '/admin/configuracoes/perfil': { titulo: 'Meu perfil', breadcrumb: 'Sistema' },
 };

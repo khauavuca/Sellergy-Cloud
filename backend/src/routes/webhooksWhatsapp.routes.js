@@ -16,13 +16,16 @@
 // nao colidirem no mesmo arquivo. Montado em /webhooks no index.js.
 //
 // SEGURANCA: todo POST precisa da assinatura X-Hub-Signature-256 (HMAC-SHA256
-// do corpo cru com WHATSAPP_APP_SECRET) — ver services/assinaturaWebhookMeta.js.
+// do corpo cru com o App Secret). Cada cliente usa o app DELE na Meta, entao a
+// conferencia e por numero: cada phone_number_id do corpo so e processado se a
+// assinatura bater com o appSecret da credencial do cliente dono do numero
+// (WHATSAPP_APP_SECRET fica de reserva) — ver services/assinaturaWebhookMeta.js.
 // O corpo cru vem de req.rawBody (express.json com verify, no index.js).
 
 const express = require('express');
 const prisma = require('../prisma');
 const { processarMensagemRecebida, CAMPOS_BOT_ATENDIMENTO } = require('../services/whatsappInbound');
-const { conferirWebhookMeta } = require('../services/assinaturaWebhookMeta');
+const { conferirWebhookMetaPorNumero } = require('../services/assinaturaWebhookMeta');
 const { ehPedidoDeSaida } = require('../services/baileys/envioHumano');
 const { carregarCredencialDecifrada } = require('../credenciais');
 const { criarProvedorWhatsapp } = require('../adapters/whatsapp');
@@ -46,6 +49,9 @@ roteador.get('/whatsapp', async (req, res) => {
       select: { id: true },
     });
     if (!bot) return res.sendStatus(403);
+    // A tela do bot mostra "webhook confirmado" a partir daqui.
+    await prisma.bot.update({ where: { id: bot.id }, data: { webhookConfirmadoEm: new Date() } })
+      .catch((e) => console.error('[webhook/whatsapp verify stats]', e?.message));
     return res.status(200).send(String(challenge ?? ''));
   } catch (e) {
     console.error('[webhook/whatsapp verify]', e);
@@ -64,13 +70,63 @@ async function registrarOptOut(clienteId, telefone) {
   });
 }
 
-// POST — recebe eventos. Confere a assinatura ANTES de tudo; depois ack 200
-// imediato (a Meta re-tenta se demorar) e processa sem bloquear a resposta.
+/** phone_number_ids citados no corpo (ainda nao confiavel: so serve pra achar o segredo de cada um). */
+function numerosDoCorpo(corpo) {
+  const numeros = new Set();
+  for (const entry of corpo?.entry || []) {
+    for (const mudanca of entry?.changes || []) {
+      const id = mudanca?.value?.metadata?.phone_number_id;
+      if (id && typeof id !== 'object') numeros.add(String(id).slice(0, 64));
+    }
+  }
+  return [...numeros].slice(0, 50);
+}
+
+/** phone_number_id -> appSecret do cliente dono (null se a credencial nao tiver). So numeros conhecidos. */
+async function segredosDosNumeros(numeros) {
+  const mapa = new Map();
+  if (numeros.length === 0) return mapa;
+  const bots = await prisma.bot.findMany({
+    where: { identificadorCanal: { in: numeros }, provedorCanal: 'META_CLOUD' },
+    select: { identificadorCanal: true, clienteId: true, credencialCanalId: true },
+  });
+  for (const b of bots) {
+    let segredo = null;
+    if (b.credencialCanalId) {
+      const cred = await carregarCredencialDecifrada({ credencialId: b.credencialCanalId, clienteId: b.clienteId }).catch(() => null);
+      segredo = typeof cred?.dados?.appSecret === 'string' && cred.dados.appSecret.trim() ? cred.dados.appSecret.trim() : null;
+    }
+    // Mesmo numero em mais de um bot (nao deveria): fica o primeiro segredo achado.
+    if (!mapa.get(b.identificadorCanal)) mapa.set(b.identificadorCanal, segredo);
+  }
+  return mapa;
+}
+
+// POST — recebe eventos. Confere a assinatura ANTES de processar; depois ack
+// 200 imediato (a Meta re-tenta se demorar) e processa sem bloquear a resposta.
 roteador.post('/whatsapp', async (req, res) => {
-  const conferencia = conferirWebhookMeta({ corpoCru: req.rawBody, cabecalho: req.get('x-hub-signature-256') });
-  if (!conferencia.ok) {
-    console.warn(`[webhook/whatsapp] POST recusado: ${conferencia.motivo}`);
-    return res.sendStatus(conferencia.status);
+  const cabecalho = req.get('x-hub-signature-256');
+  let segredosPorNumero;
+  try {
+    segredosPorNumero = await segredosDosNumeros(numerosDoCorpo(req.body));
+  } catch (e) {
+    console.error('[webhook/whatsapp segredos]', e?.message || e);
+    return res.sendStatus(500);
+  }
+
+  // Nenhum numero ligado a bot no corpo (numero trocado/removido, evento sem
+  // numero): nada a processar. Responde 200 e ignora — com erro a Meta
+  // reenvia sem parar e acaba desligando o webhook do app do cliente.
+  if (segredosPorNumero.size === 0) return res.sendStatus(200);
+
+  const conferencia = conferirWebhookMetaPorNumero({ corpoCru: req.rawBody, cabecalho, segredosPorNumero });
+  if (conferencia.aceitos.size === 0) {
+    const status = conferencia.recusados.length > 0 ? 401 : 503;
+    console.warn(`[webhook/whatsapp] POST recusado: ${status === 401 ? 'ASSINATURA_INVALIDA' : 'SEGREDO_NAO_CONFIGURADO'}`);
+    return res.sendStatus(status);
+  }
+  if (conferencia.recusados.length || conferencia.semSegredo.length) {
+    console.warn(`[webhook/whatsapp] numeros ignorados: ${conferencia.recusados.length} com assinatura errada, ${conferencia.semSegredo.length} sem segredo`);
   }
 
   res.sendStatus(200);
@@ -82,6 +138,7 @@ roteador.post('/whatsapp', async (req, res) => {
         const phoneNumberId = value.metadata?.phone_number_id;
         const mensagens = value.messages || [];
         if (!phoneNumberId || mensagens.length === 0) continue;
+        if (!conferencia.aceitos.has(String(phoneNumberId))) continue;
 
         const bot = await prisma.bot.findFirst({
           where: { identificadorCanal: String(phoneNumberId), provedorCanal: 'META_CLOUD' },
@@ -140,7 +197,7 @@ roteador.post('/whatsapp', async (req, res) => {
         // Estatistica leve do bot (best-effort, nao bloqueia).
         prisma.bot.update({
           where: { id: bot.id },
-          data: { totalMensagens: { increment: mensagens.length }, ultimaAtividadeEm: new Date() },
+          data: { totalMensagens: { increment: mensagens.length }, ultimaAtividadeEm: new Date(), webhookConfirmadoEm: new Date() },
         }).catch((e) => console.error('[webhook/whatsapp stats]', e?.message));
       }
     }

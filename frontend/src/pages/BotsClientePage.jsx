@@ -13,7 +13,6 @@ import PainelBotAtendimento from '../components/bots/PainelBotAtendimento';
 import PainelPerguntasBot from '../components/bots/PainelPerguntasBot';
 import { useAcaoTopo } from '../hooks/useAcaoTopo';
 import api, { urlPublica } from '../services/api';
-import credenciaisService from '../services/credenciaisService';
 import faqService from '../services/faqService';
 import { useAuthStore } from '../store/auth.store';
 
@@ -46,7 +45,6 @@ const ID_PASSO_OFICIAL = 'passo-oficial';
 //      consumo), igual nos dois modos.
 // IA e menu de perguntas nao coexistem em runtime (ver
 // webhooksWhatsapp.routes.js: com iaAtiva, o FAQ nem e consultado).
-const TIPO_CRED_WHATSAPP = 'WHATSAPP_CLOUD_TOKEN';
 
 const TAM_MAX_PROMPT_IA = 4000;
 
@@ -80,22 +78,12 @@ function tempoRelativo(dataIso) {
   return `há ${Math.floor(diff / 86400)} dias`;
 }
 
-function gerarVerifyToken() {
-  let s = '';
-  const arr = new Uint8Array(16);
-  (window.crypto || window.msCrypto).getRandomValues(arr);
-  for (const b of arr) s += b.toString(16).padStart(2, '0');
-  return s;
-}
-
 export default function BotsClientePage() {
   const toast = useToast();
   const { user } = useAuthStore();
   const [bot, setBot] = useState(null);
-  const [credenciais, setCredenciais] = useState([]);
   const [faqs, setFaqs] = useState([]);
   const [carregando, setCarregando] = useState(true);
-  const [salvandoCanal, setSalvandoCanal] = useState(false);
   // Modo escolhido enquanto nao conectou: 'OFICIAL' | 'QR' | 'ESCOLHER'
   // (pediu pra ver a escolha de novo). null = retoma o que estava em andamento.
   const [modoEscolhido, setModoEscolhido] = useState(null);
@@ -103,7 +91,6 @@ export default function BotsClientePage() {
   const [trocandoModo, setTrocandoModo] = useState(false);
   // Conectado no oficial: abre os dados tecnicos (passo a passo) sob demanda.
   const [verDadosOficial, setVerDadosOficial] = useState(false);
-  const [conexao, setConexao] = useState({ credencialCanalId: '', identificadorCanal: '', verifyTokenCanal: '' });
   const [conectandoBaileys, setConectandoBaileys] = useState(false);
   const [desconectandoBaileys, setDesconectandoBaileys] = useState(false);
   const [statusBaileys, setStatusBaileys] = useState({ statusConexaoBaileys: null, qrCodeAtual: null, baileysNumeroConectado: null });
@@ -116,23 +103,14 @@ export default function BotsClientePage() {
   const carregar = async () => {
     setCarregando(true);
     try {
-      const [bots, creds, listaFaq] = await Promise.all([
+      const [bots, listaFaq] = await Promise.all([
         api.get('/bots').then((r) => r.data).catch(() => []),
-        credenciaisService.listar().catch(() => []),
         faqService.listar().catch(() => []),
       ]);
       const b = Array.isArray(bots) ? bots[0] : null;
       setBot(b || null);
-      setCredenciais(creds || []);
       setFaqs(listaFaq || []);
       if (b) {
-        setConexao({
-          // No provedor BAILEYS esse campo guarda a sessao do WhatsApp Web, nao
-          // o token da Meta: nao pre-preenche o passo a passo do oficial com ela.
-          credencialCanalId: (b.provedorCanal || 'META_CLOUD') === 'META_CLOUD' ? (b.credencialCanalId || '') : '',
-          identificadorCanal: b.identificadorCanal || '',
-          verifyTokenCanal: b.verifyTokenCanal || '',
-        });
         setIaForm({
           iaPromptSistema: b.iaPromptSistema || '',
           acoesPermitidas: Array.isArray(b.acoesPermitidas) ? b.acoesPermitidas : [],
@@ -216,7 +194,6 @@ export default function BotsClientePage() {
       .catch(() => setConsumoIA(null));
   }, [bot?.id, bot?.iaAtiva]);
 
-  const credsWhatsapp = credenciais.filter((c) => c.tipo === TIPO_CRED_WHATSAPP);
   const online = bot?.status === 'ONLINE';
   // Rota compartilhada por todos os bots (nao tem segmento de botId) — quem
   // identifica o bot e o verify token (na verificacao) e o phoneNumberId (nas
@@ -240,30 +217,14 @@ export default function BotsClientePage() {
     }
   };
 
-  const salvarCanal = async () => {
-    if (!bot) return;
-    setSalvandoCanal(true);
-    try {
-      // Trocando do QR Code pro oficial: solta o WhatsApp Web antes, pra o
-      // bot nao ficar com dois numeros respondendo.
-      if (bot.provedorCanal === 'BAILEYS' && statusBaileys.statusConexaoBaileys === 'CONECTADO') {
-        await desconectarBaileys({ semPerguntar: true });
-      }
-      const r = await api.patch(`/bots/${bot.id}/canal`, {
-        canal: 'WHATSAPP',
-        provedorCanal: 'META_CLOUD',
-        credencialCanalId: conexao.credencialCanalId || null,
-        identificadorCanal: conexao.identificadorCanal.trim() || null,
-        verifyTokenCanal: conexao.verifyTokenCanal.trim() || null,
-      });
-      setBot((b) => ({ ...b, ...r.data }));
-      toast.success('Conexão salva.');
-    } catch (e) {
-      toast.error(e.response?.data?.erro || 'Falha ao salvar conexão.');
-    } finally {
-      setSalvandoCanal(false);
+  // Antes de salvar o oficial: se o bot estava no QR Code conectado, solta o
+  // WhatsApp Web, pra nao ficar com dois numeros respondendo.
+  const antesDeSalvarOficial = async () => {
+    if (bot?.provedorCanal === 'BAILEYS' && statusBaileys.statusConexaoBaileys === 'CONECTADO') {
+      await desconectarBaileys({ semPerguntar: true });
     }
   };
+  const aoSalvarOficial = (novo) => setBot((b) => ({ ...b, ...novo }));
 
   const alternarStatus = async () => {
     if (!bot) return;
@@ -354,7 +315,7 @@ export default function BotsClientePage() {
 
   // Topo: sem bot, cria; conectado, atalho pras conversas.
   const conectadoTopo = !!bot && (
-    ((bot.provedorCanal || 'META_CLOUD') === 'META_CLOUD' && !!bot.identificadorCanal && !!bot.credencialCanalId && !!bot.verifyTokenCanal)
+    ((bot.provedorCanal || 'META_CLOUD') === 'META_CLOUD' && !!bot.identificadorCanal && !!bot.credencialCanalId && !!bot.verifyTokenCanal && !!bot.webhookConfirmadoEm)
     || (bot.provedorCanal === 'BAILEYS' && statusBaileys.statusConexaoBaileys === 'CONECTADO')
   );
   useAcaoTopo(
@@ -406,7 +367,9 @@ export default function BotsClientePage() {
   // O bot usa um provedor por vez: salvar o oficial volta pra META_CLOUD;
   // conectar por QR troca pra BAILEYS (ver bots.routes.js).
   const ehOficial = (bot.provedorCanal || 'META_CLOUD') === 'META_CLOUD';
-  const oficialConfigurado = ehOficial && !!bot.identificadorCanal && !!bot.credencialCanalId && !!bot.verifyTokenCanal;
+  // Conectado de verdade so quando a Meta confirmou o webhook: antes disso o
+  // passo a passo continua aberto no passo do webhook.
+  const oficialConfigurado = ehOficial && !!bot.identificadorCanal && !!bot.credencialCanalId && !!bot.verifyTokenCanal && !!bot.webhookConfirmadoEm;
   const stBaileys = statusBaileys.statusConexaoBaileys;
   const baileysConectado = !ehOficial && stBaileys === 'CONECTADO';
   const conectado = oficialConfigurado || baileysConectado;
@@ -572,14 +535,10 @@ export default function BotsClientePage() {
             key={bot.id}
             id={ID_PASSO_OFICIAL}
             bot={bot}
-            conexao={conexao}
-            setConexao={setConexao}
-            credsWhatsapp={credsWhatsapp}
             urlWebhook={urlWebhook}
             copiar={copiar}
-            gerarVerifyToken={gerarVerifyToken}
-            salvarCanal={async () => { await salvarCanal(); setTrocandoModo(false); setModoEscolhido(null); }}
-            salvandoCanal={salvandoCanal}
+            antesDeSalvar={antesDeSalvarOficial}
+            onSalvo={(novo) => { aoSalvarOficial(novo); if (novo.webhookConfirmadoEm) { setTrocandoModo(false); setModoEscolhido(null); } }}
           />
         )}
       </Pagina>
@@ -606,7 +565,7 @@ export default function BotsClientePage() {
             <span className="w-2 h-2 rounded-full bg-[var(--success)] flex-shrink-0" aria-hidden="true" />
             <strong>Conectado</strong>
             <span className="text-xs text-[var(--text-muted)] [overflow-wrap:anywhere]">
-              · {modoAtual === 'OFICIAL' ? `Phone Number ID ${bot.identificadorCanal}` : numeroQr}
+              · {modoAtual === 'OFICIAL' ? (bot.oficialNumeroExibicao || `Phone Number ID ${bot.identificadorCanal}`) : numeroQr}
             </span>
           </div>
           {modoAtual === 'OFICIAL' ? (
@@ -619,6 +578,12 @@ export default function BotsClientePage() {
             </Button>
           )}
         </div>
+        {!online && (
+          <div role="status" className="mt-3 flex flex-wrap items-center gap-2.5 px-3 py-2.5 rounded-lg bg-[var(--warning-soft)] text-[13px] text-[var(--warning-text)]">
+            <span className="flex-1 min-w-[200px]">O bot está desligado, então ainda não responde ninguém.</span>
+            <Button variant="primary" size="sm" onClick={alternarStatus}>Ligar o bot</Button>
+          </div>
+        )}
         {modoAtual === 'QR' && (
           <p className="m-0 mt-3 text-xs text-[var(--text-muted)]">
             Modo não oficial: evite disparos em massa para não arriscar o número.
@@ -631,14 +596,10 @@ export default function BotsClientePage() {
           key={bot.id}
           id={ID_PASSO_OFICIAL}
           bot={bot}
-          conexao={conexao}
-          setConexao={setConexao}
-          credsWhatsapp={credsWhatsapp}
           urlWebhook={urlWebhook}
           copiar={copiar}
-          gerarVerifyToken={gerarVerifyToken}
-          salvarCanal={salvarCanal}
-          salvandoCanal={salvandoCanal}
+          antesDeSalvar={antesDeSalvarOficial}
+          onSalvo={aoSalvarOficial}
         />
       )}
 

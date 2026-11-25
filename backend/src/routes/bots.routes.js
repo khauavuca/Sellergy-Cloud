@@ -14,6 +14,8 @@ const { avaliarCota, consumoDoClienteNoMes, situacaoTetoGlobal } = require('../s
 const { emitirEventoBot } = require('../services/eventosBot');
 const { enfileirarComandoBaileys } = require('../filas');
 const { cifrarPayload } = require('../cripto/cofreCredenciais');
+const { carregarCredencialDecifrada } = require('../credenciais');
+const { validarDadosOficiais, gerarVerifyToken, conferirNaMeta } = require('../services/whatsappOficialConexao');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -39,6 +41,8 @@ const camposBotPublicos = {
   credencialCanalId: true,
   identificadorCanal: true,
   verifyTokenCanal: true,
+  webhookConfirmadoEm: true,
+  oficialNumeroExibicao: true,
   provedorCanal: true,
   statusConexaoBaileys: true,
   qrCodeAtual: true,
@@ -452,6 +456,8 @@ roteador.patch('/:id/canal', requerPermissao('BOTS', 'editar'), async (req, res)
     if (identificadorCanal !== undefined) {
       const valor = identificadorCanal ? String(identificadorCanal).trim() : '';
       data.identificadorCanal = valor || null;
+      // Numero novo (ou removido): a Meta precisa confirmar o webhook de novo.
+      data.webhookConfirmadoEm = null;
       if (data.identificadorCanal) {
         // Um numero so pode estar em um bot: sem isso, outro cliente poderia
         // cadastrar o phoneNumberId de alguem e receber as mensagens dele.
@@ -487,6 +493,94 @@ roteador.patch('/:id/canal', requerPermissao('BOTS', 'editar'), async (req, res)
     if (erro?.code === 'P2002') return res.status(409).json({ erro: 'Este número de WhatsApp já está em uso em outra conta.' });
     console.error('[bots/canal]', erro);
     res.status(500).json({ erro: 'Erro ao configurar canal.' });
+  }
+});
+
+// ==========================================
+// WHATSAPP OFICIAL COM O APP DO PROPRIO CLIENTE — um passo so.
+// Body: { identificadorCanal, accessToken?, appSecret? }
+// Grava/atualiza a credencial WHATSAPP_CLOUD_TOKEN do negocio (token + segredo
+// do app), liga o bot no oficial, gera o verify token se faltar e, com o envio
+// real ligado, confere na Meta antes de salvar. Token/segredo vazios mantem o
+// que ja estava salvo (trocar so o numero, por exemplo).
+// ==========================================
+roteador.put('/:id/canal/oficial', requerPermissao('BOTS', 'editar'), async (req, res) => {
+  try {
+    const where = ehAdmin(req.usuario) ? { id: req.params.id } : { id: req.params.id, clienteId: req.usuario.clienteId };
+    const bot = await prisma.bot.findFirst({
+      where,
+      select: { id: true, clienteId: true, credencialCanalId: true, identificadorCanal: true, verifyTokenCanal: true },
+    });
+    if (!bot) return res.status(404).json({ erro: 'Bot nao encontrado.' });
+
+    // Credencial atual do bot (so se for WhatsApp oficial do proprio negocio).
+    let credAtual = null;
+    if (bot.credencialCanalId) {
+      const linha = await prisma.credencial.findFirst({
+        where: { id: bot.credencialCanalId, clienteId: bot.clienteId, tipo: 'WHATSAPP_CLOUD_TOKEN' },
+        select: { id: true },
+      });
+      if (linha) {
+        const dec = await carregarCredencialDecifrada({ credencialId: linha.id, clienteId: bot.clienteId }).catch(() => null);
+        if (dec) credAtual = { id: linha.id, dados: dec.dados || {} };
+      }
+    }
+    const tokenSalvo = credAtual?.dados?.accessToken || credAtual?.dados?.token || null;
+    const segredoSalvo = credAtual?.dados?.appSecret || null;
+
+    const v = validarDadosOficiais(req.body || {}, { temToken: !!tokenSalvo, temSegredo: !!segredoSalvo });
+    if (!v.ok) return res.status(400).json({ erro: v.erro, campo: v.campo });
+    const { identificadorCanal } = v.dados;
+    const accessToken = v.dados.accessToken || tokenSalvo;
+    const appSecret = v.dados.appSecret || segredoSalvo;
+
+    const emUso = await prisma.bot.findFirst({
+      where: { identificadorCanal, id: { not: bot.id } },
+      select: { clienteId: true },
+    });
+    if (emUso) {
+      return res.status(409).json({
+        campo: 'identificadorCanal',
+        erro: emUso.clienteId === bot.clienteId
+          ? 'Este número já está ligado a outro bot do seu negócio. Desconecte lá primeiro.'
+          : 'Este número de WhatsApp já está em uso em outra conta.',
+      });
+    }
+
+    const meta = await conferirNaMeta({ phoneNumberId: identificadorCanal, token: accessToken });
+    if (!meta.ok) return res.status(422).json({ erro: meta.erro, motivo: meta.motivo });
+
+    const cifrado = cifrarPayload(bot.clienteId, { accessToken, appSecret });
+    const camposCifra = { dadosCifrados: cifrado.conteudoCifrado, iv: cifrado.iv, tag: cifrado.tag, versaoChave: cifrado.versaoChave };
+    const numeroMudou = bot.identificadorCanal !== identificadorCanal;
+
+    const atualizado = await prisma.$transaction(async (tx) => {
+      const credencialId = credAtual
+        ? (await tx.credencial.update({ where: { id: credAtual.id }, data: camposCifra, select: { id: true } })).id
+        : (await tx.credencial.create({
+          data: { clienteId: bot.clienteId, nome: 'WhatsApp oficial', tipo: 'WHATSAPP_CLOUD_TOKEN', ...camposCifra, criadoPorId: req.usuario.id || null },
+          select: { id: true },
+        })).id;
+      return tx.bot.update({
+        where: { id: bot.id },
+        data: {
+          canal: 'WHATSAPP',
+          provedorCanal: 'META_CLOUD',
+          credencialCanalId: credencialId,
+          identificadorCanal,
+          verifyTokenCanal: bot.verifyTokenCanal || gerarVerifyToken(),
+          ...(numeroMudou ? { webhookConfirmadoEm: null } : {}),
+          oficialNumeroExibicao: meta.numero ? [meta.numero, meta.nome].filter(Boolean).join(' · ') : (numeroMudou ? null : undefined),
+        },
+        select: camposBotPublicos,
+      });
+    });
+
+    res.json({ bot: atualizado, conferidoNaMeta: !meta.simulado });
+  } catch (erro) {
+    if (erro?.code === 'P2002') return res.status(409).json({ campo: 'identificadorCanal', erro: 'Este número de WhatsApp já está em uso em outra conta.' });
+    console.error('[bots/canal/oficial]', erro);
+    res.status(500).json({ erro: 'Erro ao salvar a conexão oficial.' });
   }
 });
 

@@ -280,6 +280,11 @@ model Bot {
   // indice unico do Postgres aceita varios NULL (bot sem canal).
   identificadorCanal String?       @unique
   verifyTokenCanal   String?
+  // WhatsApp oficial (app do proprio cliente na Meta): quando a Meta confirmou
+  // o webhook (GET de verificacao ou 1a mensagem assinada que passou) e o
+  // numero/nome que a Meta devolveu ao conferir o token.
+  webhookConfirmadoEm   DateTime?
+  oficialNumeroExibicao String?
   // Estado tecnico da conexao Baileys — vocabulario proprio, nao reaproveita
   // StatusBot (que e so o liga/desliga manual do tenant). Null/sem sentido
   // pra bot provedorCanal=META_CLOUD.
