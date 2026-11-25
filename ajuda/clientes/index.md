@@ -29,6 +29,12 @@ Em **Clientes**, clique em **Novo lead**, preencha **Nome** e **Telefone** e sal
 
 </Pergunta>
 
+<Pergunta titulo="Apareceu um cliente que eu não cadastrei. De onde veio?">
+
+Toda mensagem que chega no WhatsApp conectado procura o cliente pelo telefone e, se ele não existir, cria o cadastro em **Clientes**.
+
+</Pergunta>
+
 <Pergunta titulo="Como acho um cliente rápido?">
 
 Use a busca **Buscar por nome, telefone, e-mail ou tag...** no topo da lista.

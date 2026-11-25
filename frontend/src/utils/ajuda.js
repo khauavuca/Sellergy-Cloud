@@ -15,6 +15,8 @@ const POR_ROTA = {
   '/app/pedidos': 'vendas/acompanhar-um-pedido',
   '/app/devolucoes': 'vendas/devolucao-de-aluguel',
   '/app/catalogo': 'servicos/cadastrar-servico',
+  '/app/whatsapp': 'whatsapp/responder-uma-conversa',
+  '/app/bots': 'whatsapp/conectar-por-qr-code',
   '/app/campanhas': 'campanhas/criar-campanha',
   '/app/campanhas/nova': 'campanhas/criar-campanha',
   '/app/estoque': 'estoque/',

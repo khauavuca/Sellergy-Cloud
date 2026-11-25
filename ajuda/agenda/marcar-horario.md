@@ -45,6 +45,10 @@ Se quiser, escreva uma **Observação para a profissional** e ajuste o **Status*
 </Passo>
 
 ::: tip Dica
+Basta o telefone com DDD: o horário se liga ao cliente com esse telefone em **Clientes** (e cria o cadastro, se ele não existir). Assim o horário aparece na ficha dele.
+:::
+
+::: tip Dica
 Se a cliente tem um pacote ativo, dá pra marcar usando o pacote, sem cobrança. Veja [Vender um pacote de sessões](./vender-pacote).
 :::
 

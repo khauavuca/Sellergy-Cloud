@@ -38,6 +38,12 @@ Pra corrigir dados, clique em editar. Abre **Editar lead**, com os mesmos campos
 
 </Passo>
 
+## Tudo deste cliente
+
+Na ficha, o bloco **Tudo deste cliente** junta o que está ligado ao telefone dele: quanto **Já gastou**, as **Compras**, a última conversa do WhatsApp (com **Abrir conversa**) e os **Horários** (com **Agendar**). Agenda, venda, pedido e Pix feitos com o mesmo telefone caem aqui.
+
+<!-- PRINT: bloco Tudo deste cliente na ficha -->
+
 ## Leia também
 
 - [Cadastrar um cliente](./cadastrar-cliente)

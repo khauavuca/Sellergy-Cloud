@@ -1,9 +1,11 @@
 import {
-  BellRing, Boxes, CalendarCheck, Megaphone, Package, Percent, QrCode, ReceiptText, Sparkles, Store, Wallet, Link2,
+  BellRing, Boxes, MessagesSquare, Contact, LifeBuoy, CalendarCheck, Megaphone, Package, Percent, QrCode, ReceiptText, Sparkles, Store, Wallet, Link2,
 } from 'lucide-react';
 
 // Recursos reais do sistema, rolando numa faixa infinita.
 const RECURSOS = [
+  { icone: MessagesSquare, texto: 'Conversas do WhatsApp' },
+  { icone: Contact, texto: 'Ficha completa do cliente' },
   { icone: CalendarCheck, texto: 'Agenda online' },
   { icone: BellRing, texto: 'Lembrete no WhatsApp' },
   { icone: QrCode, texto: 'Pix com QR na tela' },
@@ -16,6 +18,7 @@ const RECURSOS = [
   { icone: Percent, texto: 'Comissões' },
   { icone: Megaphone, texto: 'Campanhas e recompra' },
   { icone: Sparkles, texto: 'Atendimento com IA' },
+  { icone: LifeBuoy, texto: 'Ajuda dentro do sistema' },
 ];
 
 function Lista({ escondida = false }) {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CalendarCheck, Link2, Moon, QrCode, ReceiptText, Wallet } from 'lucide-react';
+import { CalendarCheck, Link2, MessagesSquare, Moon, QrCode, ReceiptText, Wallet } from 'lucide-react';
 import Revelar from './Revelar';
 import { useVisivel } from './aoRolar';
 import { IconeSeta } from './Icones';
@@ -22,6 +22,13 @@ const MOMENTOS = [
     titulo: 'A agenda chega confirmada',
     texto: 'Ontem cada cliente recebeu o lembrete e respondeu. Quem remarcou deixou o horário livre pra outro.',
     detalhe: '6 de 7 confirmados',
+  },
+  {
+    hora: '10:15',
+    icone: MessagesSquare,
+    titulo: 'O WhatsApp no mesmo lugar',
+    texto: 'A cliente mandou uma pergunta. A conversa aparece no sistema com a ficha dela do lado, e qualquer pessoa da equipe responde. Se o bot estiver ligado, você assume quando quiser.',
+    detalhe: 'Conversa respondida · ficha aberta',
   },
   {
     hora: '11:40',

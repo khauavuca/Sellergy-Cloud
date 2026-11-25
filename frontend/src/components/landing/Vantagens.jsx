@@ -1,4 +1,4 @@
-import { BadgeDollarSign, Download, MessageCircle, ShieldCheck, Smartphone, Upload } from 'lucide-react';
+import { BadgeDollarSign, Contact, LifeBuoy, Download, MessageCircle, ShieldCheck, Smartphone, Upload } from 'lucide-react';
 import Revelar from './Revelar';
 import { moverHolofote } from './aoRolar';
 import { container, titulo, tituloSecao } from './estilo';
@@ -8,18 +8,18 @@ const VANTAGENS = [
   {
     icone: MessageCircle,
     titulo: 'O WhatsApp que você já usa',
-    texto: 'Leia um QR Code com o celular do negócio e pronto. Lembretes, confirmações e cobranças saem do seu número, com limites que protegem o chip.',
+    texto: 'Conecte seu número lendo um QR Code, como no WhatsApp Web, ou use o WhatsApp oficial. As conversas e contatos que você já tem aparecem no sistema, e dá pra responder com foto, áudio, documento e até mensagem de voz gravada na tela.',
     grande: true,
+  },
+  {
+    icone: Contact,
+    titulo: 'Cada conversa vira cliente',
+    texto: 'Quem escreve no WhatsApp já vira cadastro. Agenda, vendas, pedidos, pacotes e Pix ficam ligados à pessoa, numa ficha só.',
   },
   {
     icone: BadgeDollarSign,
     titulo: 'Preço fixo, sem fidelidade',
     texto: 'Um valor por negócio, sem taxa por agendamento. Cancele quando quiser, sem multa.',
-  },
-  {
-    icone: Smartphone,
-    titulo: 'Nada pra instalar',
-    texto: 'Abre no navegador do computador e vira app na tela do celular.',
   },
   {
     icone: Upload,
@@ -28,15 +28,26 @@ const VANTAGENS = [
     grande: true,
   },
   {
+    icone: Smartphone,
+    titulo: 'Nada pra instalar',
+    texto: 'Abre no navegador do computador e vira app na tela do celular.',
+  },
+  {
     icone: ShieldCheck,
     titulo: 'Seguro de verdade',
     texto: 'Login em 2 etapas, conexão criptografada, backup diário e cada negócio vendo só os próprios dados.',
     grande: true,
   },
   {
+    icone: LifeBuoy,
+    titulo: 'Ajuda quando precisar',
+    texto: 'Botão de ajuda com chat dentro do sistema e uma Central de Ajuda com o passo a passo de cada tela.',
+  },
+  {
     icone: Download,
     titulo: 'Seus dados são seus',
     texto: 'Exporte quando quiser. Se o teste acabar ou você cancelar, nada some de uma hora pra outra.',
+    grande: true,
   },
 ];
 

@@ -54,6 +54,12 @@
         "titulo": "Campanhas",
         "icone": "campanhas",
         "resumo": "Mensagens para vários clientes de uma vez pelo WhatsApp."
+      },
+      {
+        "slug": "whatsapp",
+        "titulo": "WhatsApp",
+        "icone": "whatsapp",
+        "resumo": "Conectar o número, responder clientes e mandar foto, áudio e documento."
       }
     ]
   },

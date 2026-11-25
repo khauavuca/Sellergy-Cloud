@@ -172,7 +172,7 @@ export const SEGMENTOS = [
 export const PASSOS = [
   { titulo: 'Crie a conta', texto: 'Nome do negócio, seu e-mail e uma senha. Leva uns dois minutos e você já entra no sistema.' },
   { titulo: 'Siga os primeiros passos', texto: 'O assistente pede só o que falta pro seu tipo de negócio: serviços ou produtos, profissionais e horário de atendimento.' },
-  { titulo: 'Conecte o WhatsApp', texto: 'Leia o QR Code com o celular do negócio. A partir daí os lembretes e confirmações saem sozinhos.' },
+  { titulo: 'Conecte o WhatsApp', texto: 'Leia o QR Code com o celular do negócio, como no WhatsApp Web, ou use o WhatsApp oficial. Suas conversas e contatos aparecem no sistema e os lembretes saem sozinhos.' },
 ];
 
 // ---------------------------------------------------------------------
@@ -189,7 +189,15 @@ export const PERGUNTAS = [
   },
   {
     pergunta: 'Funciona com o WhatsApp que eu já uso?',
-    resposta: 'Sim. Para conversas e lembretes, basta ler um QR Code com o celular do negócio. Campanhas para muitos contatos saem só pelo WhatsApp oficial, para o seu número não ser bloqueado.',
+    resposta: 'Sim. Basta ler um QR Code com o celular do negócio, como no WhatsApp Web, e as conversas e contatos que já estão no número aparecem no sistema. Se preferir, use o WhatsApp oficial. Campanhas para muitos contatos saem só pelo WhatsApp oficial, para o seu número não ser bloqueado.',
+  },
+  {
+    pergunta: 'Dá pra atender o WhatsApp pelo sistema?',
+    resposta: 'Sim. Você responde por texto, foto, vídeo, áudio, documento ou mensagem de voz gravada na tela, deixa nota interna pra equipe e reage com emoji. Quem escreve vira cliente, com agenda, vendas e Pix ligados à ficha.',
+  },
+  {
+    pergunta: 'Tenho ajuda se travar em alguma coisa?',
+    resposta: 'Sim. Dentro do sistema tem um botão de ajuda com chat, e a Central de Ajuda (ajuda.sellergycloud.com) mostra o passo a passo de cada tela.',
   },
   {
     pergunta: 'Emite nota fiscal?',

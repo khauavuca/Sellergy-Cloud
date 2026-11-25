@@ -10,6 +10,10 @@ No Sellergy, cada cliente entra como um **lead** no funil de atendimento. No fim
 
 <small>Leva 2 minutos · quem pode fazer: quem tem acesso a Clientes</small>
 
+::: tip Dica
+Quem manda mensagem no WhatsApp conectado ao Sellergy entra em **Clientes** sozinho, pelo telefone. Não precisa cadastrar de novo.
+:::
+
 ## Passo a passo
 
 <Passo n="1">

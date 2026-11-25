@@ -54,6 +54,10 @@ Confira o **Total** e clique em **Registrar venda**. O botão mostra o valor da 
 Produto marcado como **Aluguel** pede a data em **Devolução em**, e aí o cliente passa a ser obrigatório. A devolução aparece depois em **Devoluções**.
 :::
 
+::: tip Dica
+Quando a venda tem o telefone do cliente, ela se liga ao cadastro com esse telefone em **Clientes** (e cria o cadastro, se não existir). A compra aparece na ficha dele, em **Tudo deste cliente**.
+:::
+
 ::: warning Atenção
 A venda registrada aqui entra como concluída na hora, mesmo no Pix: o sistema entende que você já recebeu. Confira o Pix no seu banco antes de registrar. Para cobrar um Pix e esperar o pagamento cair, use **Nova cobrança** em **Pagamentos** ou na tela **Hoje**.
 :::

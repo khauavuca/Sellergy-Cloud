@@ -21,6 +21,7 @@ No menu do Sellergy, este módulo tem:
 - [Criar sua conta e começar o teste grátis](./criar-conta-e-teste-gratis)
 - [Seu primeiro dia no Sellergy](./primeiro-dia)
 - [Usar as telas Início e Hoje no dia a dia](./tela-hoje)
+- [Falar com o suporte do Sellergy](./falar-com-o-suporte)
 
 ## Perguntas frequentes
 
@@ -39,6 +40,12 @@ A conta fica só para consulta: você não registra vendas nem agendamentos até
 <Pergunta titulo="Já tenho meus clientes numa planilha. Preciso cadastrar um por um?">
 
 Não. Use **Importar planilha**, no menu **Conta**.
+
+</Pergunta>
+
+<Pergunta titulo="Como falo com o suporte do Sellergy?">
+
+Clique no botão redondo no canto da tela, escolha o assunto e escreva. Veja [Falar com o suporte do Sellergy](./falar-com-o-suporte).
 
 </Pergunta>
 
