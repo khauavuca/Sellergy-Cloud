@@ -294,7 +294,7 @@ function Conversa({ chamadoId, respostas, equipe, podeResponder, podeEntrar, onM
           onChange={(v) => editar('categoria', v)} />
         <span className="ml-auto text-xs text-[var(--text-muted)]">
           aberto {dataHora(chamado.criadoEm)} pelo {chamado.canal === 'WHATSAPP' ? 'WhatsApp' : 'sistema'}
-          {chamado.avaliacao ? <> · nota <b className="text-[var(--text-main)]">{chamado.avaliacao}/5</b></> : null}
+          {chamado.avaliacao != null ? <> · <span className="text-[#C98A12]" aria-label={`nota ${chamado.avaliacao} de 5`}>{"★".repeat(chamado.avaliacao)}<span className="text-[var(--border-strong)]">{"★".repeat(5 - chamado.avaliacao)}</span></span></> : null}
         </span>
       </div>
 
@@ -353,7 +353,7 @@ function Conversa({ chamadoId, respostas, equipe, podeResponder, podeEntrar, onM
             {chamado.avaliacaoComentario && (
               <li className="mt-3 flex justify-center gap-2 text-[13px] text-[var(--text-muted)]">
                 <Star size={16} className="text-[var(--accent)]" aria-hidden="true" />
-                <span>Avaliação {chamado.avaliacao}/5: “{chamado.avaliacaoComentario}”</span>
+                <span>Relato do cliente ({chamado.avaliacao} de 5): “{chamado.avaliacaoComentario}”</span>
               </li>
             )}
           </ol>

@@ -9,7 +9,7 @@
 // 7 dias depois disso e entao e apagada (regra em backend/src/suporte/anexos.js).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ArrowUp, BookOpen, ChevronDown, ExternalLink, ImagePlus, MessageCircle, X } from 'lucide-react';
+import { ArrowLeft, ArrowUp, BookOpen, ChevronDown, ExternalLink, ImagePlus, MessageCircle, Star, X } from 'lucide-react';
 import clsx from 'clsx';
 import api from '../../services/api';
 import { useAuthStore } from '../../store/auth.store';
@@ -87,20 +87,20 @@ function CampoMensagem({ placeholder, enviando, onEnviar, rodape }) {
   };
 
   return (
-    <div className="px-3 pt-2.5 pb-3 border-t border-[var(--border-main)] bg-[var(--bg-card)]">
+    <div className="px-2.5 pt-2 pb-2 border-t border-[var(--border-main)] bg-[var(--bg-card)]">
       {foto && (
         <div className="mb-2 ml-1 relative inline-block">
-          <img src={foto.previa} alt="Foto escolhida" className="h-20 w-20 object-cover rounded-xl border border-[var(--border-main)]" />
+          <img src={foto.previa} alt="Foto escolhida" className="h-14 w-14 object-cover rounded-xl border border-[var(--border-main)]" />
           <button type="button" onClick={limpar} aria-label="Tirar a foto"
             className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-[var(--text-main)] text-[var(--bg-card)] grid place-items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
             <X size={13} />
           </button>
         </div>
       )}
-      <div className="flex items-end gap-1.5 p-1.5 rounded-3xl border border-[var(--border-main)] bg-[var(--bg-subtle)] focus-within:border-[var(--primary)]">
+      <div className="flex items-end gap-1 p-1 rounded-2xl border border-[var(--border-main)] bg-[var(--bg-subtle)] focus-within:border-[var(--primary)]">
         <button type="button" onClick={() => arquivo.current?.click()} aria-label="Anexar foto"
-          className="w-9 h-9 shrink-0 rounded-full grid place-items-center text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-card)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
-          <ImagePlus size={18} />
+          className="w-7 h-7 shrink-0 rounded-full grid place-items-center text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-card)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
+          <ImagePlus size={15} />
         </button>
         <input ref={arquivo} type="file" accept={TIPOS_FOTO} className="hidden" tabIndex={-1}
           onChange={(e) => { escolher(e.target.files?.[0]); e.target.value = ''; }} />
@@ -109,44 +109,44 @@ function CampoMensagem({ placeholder, enviando, onEnviar, rodape }) {
           onChange={(e) => setTexto(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviar(); } }}
           placeholder={placeholder}
-          className="flex-1 min-w-0 resize-none bg-transparent py-2 px-1 text-[15px] leading-snug text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none" />
+          className="flex-1 min-w-0 resize-none bg-transparent py-1.5 px-1 text-[13.5px] leading-snug text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none" />
         <button type="button" onClick={enviar} disabled={enviando || (!texto.trim() && !foto)} aria-label="Enviar"
-          className="w-9 h-9 shrink-0 rounded-full grid place-items-center bg-[var(--primary)] text-[var(--text-on-primary)] disabled:opacity-40 hover:bg-[var(--primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--primary)]">
-          {enviando ? <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" /> : <ArrowUp size={17} strokeWidth={2.4} />}
+          className="w-7 h-7 shrink-0 rounded-full grid place-items-center bg-[var(--primary)] text-[var(--text-on-primary)] disabled:opacity-40 hover:bg-[var(--primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--primary)]">
+          {enviando ? <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" /> : <ArrowUp size={14} strokeWidth={2.6} />}
         </button>
       </div>
-      {rodape && <p className="mt-1.5 text-center text-[11px] text-[var(--text-muted)]">{rodape}</p>}
+      {rodape && <p className="mt-1 text-center text-[10.5px] text-[var(--text-muted)]">{rodape}</p>}
     </div>
   );
 }
 
 function Inicio({ nome, chamados, erro, carregando, onAbrir, onNovo, onTentar, somenteLeitura, linkTela }) {
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-5 space-y-5">
+    <div className="flex-1 overflow-y-auto px-3 py-3.5 space-y-3.5">
       <div>
-        <p className="font-['Space_Grotesk',Inter,sans-serif] text-2xl font-bold tracking-tight text-[var(--text-main)]">Oi{nome ? `, ${nome}` : ''}!</p>
-        <p className="text-sm text-[var(--text-muted)] mt-0.5">Como podemos ajudar hoje?</p>
+        <p className="font-['Space_Grotesk',Inter,sans-serif] text-lg font-bold tracking-tight text-[var(--text-main)]">Oi{nome ? `, ${nome}` : ''}!</p>
+        <p className="text-[13px] text-[var(--text-muted)]">Como podemos ajudar hoje?</p>
       </div>
 
       <a href={linkTela} target="_blank" rel="noopener noreferrer"
-        className="flex items-center gap-3 p-3.5 rounded-2xl border border-[var(--border-main)] bg-[var(--bg-card)] no-underline hover:border-[var(--primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
-        <span className="w-9 h-9 rounded-xl bg-[var(--primary-soft)] text-[var(--primary)] grid place-items-center shrink-0"><BookOpen size={18} /></span>
+        className="flex items-center gap-2.5 p-2.5 rounded-xl border border-[var(--border-main)] bg-[var(--bg-card)] no-underline hover:border-[var(--primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
+        <span className="w-7 h-7 rounded-lg bg-[var(--primary-soft)] text-[var(--primary)] grid place-items-center shrink-0"><BookOpen size={15} /></span>
         <span className="flex-1 min-w-0">
-          <span className="block text-sm font-semibold text-[var(--text-main)]">Passo a passo desta tela</span>
-          <span className="block text-[13px] text-[var(--text-muted)]">Na Central de Ajuda. Muita dúvida se resolve lá.</span>
+          <span className="block text-[13px] font-semibold text-[var(--text-main)]">Passo a passo desta tela</span>
+          <span className="block text-xs text-[var(--text-muted)]">Na Central de Ajuda</span>
         </span>
-        <ExternalLink size={15} className="text-[var(--text-muted)] shrink-0" aria-hidden="true" />
+        <ExternalLink size={13} className="text-[var(--text-muted)] shrink-0" aria-hidden="true" />
       </a>
 
       {!somenteLeitura && (
         <button type="button" onClick={onNovo}
-          className="w-full min-h-12 rounded-2xl bg-[var(--primary)] text-[var(--text-on-primary)] font-semibold text-[15px] inline-flex items-center justify-center gap-2 hover:bg-[var(--primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--primary)]">
-          <MessageCircle size={18} /> Falar com o suporte
+          className="w-full min-h-10 rounded-xl bg-[var(--primary)] text-[var(--text-on-primary)] font-semibold text-[13px] inline-flex items-center justify-center gap-2 hover:bg-[var(--primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--primary)]">
+          <MessageCircle size={15} /> Falar com o suporte
         </button>
       )}
 
       <div>
-        <p className="text-xs font-bold tracking-wider text-[var(--text-muted)] mb-2">SUAS CONVERSAS</p>
+        <p className="text-[11px] font-bold tracking-wider text-[var(--text-muted)] mb-1.5">SUAS CONVERSAS</p>
         {erro ? (
           <div role="alert" className="text-sm text-[var(--danger-text)] space-y-2">
             <p>{erro}</p>
@@ -164,24 +164,24 @@ function Inicio({ nome, chamados, erro, carregando, onAbrir, onNovo, onTentar, s
               return (
                 <li key={c.id}>
                   <button type="button" onClick={() => onAbrir(c.id)}
-                    className={clsx('w-full text-left flex items-center gap-3 p-3 rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]',
+                    className={clsx('w-full text-left flex items-center gap-2.5 p-2 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]',
                       resolvido ? 'hover:bg-[var(--bg-subtle)]' : 'border border-[var(--border-main)] bg-[var(--bg-card)] hover:border-[var(--primary)]')}>
-                    <span className={clsx('w-9 h-9 rounded-full grid place-items-center text-xs font-bold shrink-0',
+                    <span className={clsx('w-7 h-7 rounded-full grid place-items-center text-[11px] font-bold shrink-0',
                       resolvido ? 'bg-[var(--bg-subtle)] text-[var(--text-muted)]' : 'bg-[var(--primary)] text-[var(--text-on-primary)]')}>
                       {resolvido ? '✓' : 'S'}
                     </span>
                     <span className="flex-1 min-w-0">
-                      <span className="flex justify-between gap-2 text-[13px]">
+                      <span className="flex justify-between gap-2 text-[12.5px]">
                         <b className={clsx('truncate', resolvido ? 'text-[var(--text-secondary)]' : 'text-[var(--text-main)]')}>{c.assunto}</b>
                         <span className="text-[var(--text-muted)] whitespace-nowrap">{hora(c.atualizadoEm)}</span>
                       </span>
-                      <span className="block text-[13px] text-[var(--text-muted)] truncate">
+                      <span className="block text-xs text-[var(--text-muted)] truncate">
                         {resolvido ? 'Resolvido' : c.ultimaMensagem
                           ? `${c.ultimaMensagem.autor === 'SUPORTE' ? 'Suporte: ' : 'Você: '}${c.ultimaMensagem.texto || 'enviou uma foto'}`
                           : (STATUS[c.status] || {}).rotulo}
                       </span>
                     </span>
-                    {novo && <span className="w-2.5 h-2.5 rounded-full bg-[var(--primary)] shrink-0" aria-label="resposta nova" />}
+                    {novo && <span className="w-2 h-2 rounded-full bg-[var(--primary)] shrink-0" aria-label="resposta nova" />}
                   </button>
                 </li>
               );
@@ -224,12 +224,12 @@ function Novo({ onCriado }) {
 
   return (
     <>
-      <div className="flex-1 overflow-y-auto px-4 py-5 space-y-5">
+      <div className="flex-1 overflow-y-auto px-3 py-3.5 space-y-3.5">
         <fieldset>
           <legend className="text-sm font-semibold text-[var(--text-main)] mb-2">Sobre o quê?</legend>
           <div className="flex flex-wrap gap-2">
             {CATEGORIAS.map(([v, r]) => (
-              <label key={v} className={clsx('min-h-10 px-3.5 inline-flex items-center rounded-full border text-sm cursor-pointer has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--primary)]',
+              <label key={v} className={clsx('min-h-8 px-2.5 inline-flex items-center rounded-full border text-xs cursor-pointer has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--primary)]',
                 categoria === v ? 'border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary)] font-semibold' : 'border-[var(--border-main)] text-[var(--text-secondary)]')}>
                 <input type="radio" name="categoria-ajuda" value={v} checked={categoria === v} onChange={() => setCategoria(v)} className="sr-only" />
                 {r}
@@ -242,7 +242,7 @@ function Novo({ onCriado }) {
           <input id="ajuda-assunto" value={assunto} maxLength={120} onChange={(e) => setAssunto(e.target.value)}
             placeholder="Ex.: o lembrete não chegou pra uma cliente"
             aria-invalid={campos.includes('assunto') || undefined}
-            className={clsx('w-full min-h-11 px-3.5 rounded-xl border bg-[var(--bg-card)] text-[15px] text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--primary)]',
+            className={clsx('w-full min-h-9 px-3 rounded-lg border bg-[var(--bg-card)] text-[13px] text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--primary)]',
               campos.includes('assunto') ? 'border-[var(--danger)]' : 'border-[var(--border-main)]')} />
           {campos.includes('assunto') && <p className="text-xs text-[var(--danger-text)] mt-1">Escreva o assunto (3 a 120 letras).</p>}
         </div>
@@ -254,15 +254,33 @@ function Novo({ onCriado }) {
   );
 }
 
+// Pesquisa de satisfacao: nota de 0 a 5 em estrelas + relato.
+function Estrelas({ nota, onEscolher, tamanho = 22 }) {
+  return (
+    <div className="flex items-center justify-center gap-0.5" role="radiogroup" aria-label="Nota do atendimento, de 0 a 5">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button key={n} type="button" role="radio" aria-checked={nota === n} aria-label={`${n} estrela${n > 1 ? 's' : ''}`}
+          onClick={() => onEscolher(nota === n ? n - 1 : n)}
+          className="p-0.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]">
+          <Star size={tamanho} className={n <= nota ? 'fill-[#F2B53C] text-[#F2B53C]' : 'text-[var(--border-strong)]'} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const ROTULO_NOTA = ['Muito ruim', 'Ruim', 'Regular', 'Bom', 'Muito bom', 'Excelente'];
+
 function Avaliar({ chamadoId, onAvaliado }) {
   const toast = useToast();
-  const [nota, setNota] = useState(0);
-  const [comentario, setComentario] = useState('');
+  const [nota, setNota] = useState(null);
+  const [relato, setRelato] = useState('');
   const [enviando, setEnviando] = useState(false);
   const enviar = async () => {
+    if (nota == null) return;
     setEnviando(true);
     try {
-      await api.post(`/suporte/chamados/${chamadoId}/avaliar`, { nota, comentario: comentario.trim() || undefined });
+      await api.post(`/suporte/chamados/${chamadoId}/avaliar`, { nota, comentario: relato.trim() || undefined });
       toast.success('Obrigado pela avaliação!');
       onAvaliado();
     } catch (e) {
@@ -272,27 +290,21 @@ function Avaliar({ chamadoId, onAvaliado }) {
     }
   };
   return (
-    <div className="mx-auto my-3 w-full max-w-[300px] rounded-2xl border border-[var(--border-main)] bg-[var(--bg-card)] p-4 text-center space-y-3">
-      <p className="text-sm font-semibold text-[var(--text-main)]">Resolveu? Como foi o atendimento?</p>
-      <div className="flex justify-center gap-1.5" role="radiogroup" aria-label="Nota do atendimento">
-        {[1, 2, 3, 4, 5].map((n) => (
-          <button key={n} type="button" role="radio" aria-checked={nota === n} aria-label={`Nota ${n}`} onClick={() => setNota(n)}
-            className={clsx('w-10 h-10 rounded-xl border font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]',
-              nota >= n ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--text-on-primary)]' : 'border-[var(--border-main)] text-[var(--text-secondary)]')}>
-            {n}
-          </button>
-        ))}
-      </div>
-      {nota > 0 && (
-        <>
-          <label className="sr-only" htmlFor="ajuda-comentario">Comentário</label>
-          <textarea id="ajuda-comentario" rows={2} maxLength={500} value={comentario} onChange={(e) => setComentario(e.target.value)}
-            placeholder="Quer contar mais? (opcional)"
-            className="w-full px-3 py-2 rounded-xl border border-[var(--border-main)] bg-[var(--bg-subtle)] text-sm text-[var(--text-main)] resize-none focus:outline-none focus:border-[var(--primary)]" />
-          <button type="button" onClick={enviar} disabled={enviando}
-            className="w-full min-h-10 rounded-xl bg-[var(--primary)] text-[var(--text-on-primary)] text-sm font-semibold disabled:opacity-50">Enviar avaliação</button>
-        </>
+    <div className="mx-auto my-3 w-full max-w-[280px] rounded-xl border border-[var(--border-main)] bg-[var(--bg-card)] p-3 text-center space-y-2">
+      <p className="text-[13px] font-semibold text-[var(--text-main)]">Como foi o atendimento?</p>
+      <Estrelas nota={nota ?? 0} onEscolher={setNota} />
+      <p className="text-[11px] text-[var(--text-muted)] h-4">
+        {nota == null ? 'Toque nas estrelas (pode ser 0)' : `${nota} de 5 · ${ROTULO_NOTA[nota]}`}
+      </p>
+      {nota == null && (
+        <button type="button" onClick={() => setNota(0)} className="text-[11px] underline text-[var(--text-muted)]">Dar nota 0</button>
       )}
+      <label className="sr-only" htmlFor="ajuda-relato">Conte como foi</label>
+      <textarea id="ajuda-relato" rows={2} maxLength={500} value={relato} onChange={(e) => setRelato(e.target.value)}
+        placeholder="Conte como foi o atendimento"
+        className="w-full px-2.5 py-2 rounded-lg border border-[var(--border-main)] bg-[var(--bg-subtle)] text-[13px] text-[var(--text-main)] resize-none focus:outline-none focus:border-[var(--primary)]" />
+      <button type="button" onClick={enviar} disabled={enviando || nota == null}
+        className="w-full min-h-9 rounded-lg bg-[var(--primary)] text-[var(--text-on-primary)] text-[13px] font-semibold disabled:opacity-40">Enviar avaliação</button>
     </div>
   );
 }
@@ -367,12 +379,12 @@ function Conversa({ chamadoId, somenteLeitura, onAtualizarTitulo }) {
 
   return (
     <>
-      <div className="px-4 py-2.5 flex items-center gap-2 text-[13px] border-b border-[var(--border-main)] bg-[var(--bg-subtle)]">
+      <div className="px-3 py-2 flex items-center gap-2 text-xs border-b border-[var(--border-main)] bg-[var(--bg-subtle)]">
         <b className="truncate text-[var(--text-main)]">{chamado.assunto}</b>
         <span className={clsx('px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap', st.classe)}>{st.rotulo}</span>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 bg-[var(--bg-app)]">
+      <div className="flex-1 overflow-y-auto px-3 py-3 bg-[var(--bg-app)]">
         {apagada ? (
           <p className="text-center text-sm text-[var(--text-muted)] mt-8">Esta conversa foi encerrada e apagada. Se precisar, abra um chamado novo.</p>
         ) : (
@@ -386,21 +398,21 @@ function Conversa({ chamadoId, somenteLeitura, onAtualizarTitulo }) {
                     return (
                       <li key={m.id} className={clsx('flex gap-2', minha ? 'justify-end' : 'items-end')}>
                         {!minha && (
-                          <span aria-hidden="true" className="w-7 h-7 rounded-full bg-[var(--primary)] text-[var(--text-on-primary)] grid place-items-center text-[10px] font-bold shrink-0">{iniciais(m.autorNome)}</span>
+                          <span aria-hidden="true" className="w-6 h-6 rounded-full bg-[var(--primary)] text-[var(--text-on-primary)] grid place-items-center text-[9px] font-bold shrink-0">{iniciais(m.autorNome)}</span>
                         )}
                         <div className={clsx('max-w-[78%] flex flex-col gap-1', minha ? 'items-end' : 'items-start')}>
                           {!minha && <span className="text-[11px] text-[var(--text-muted)] pl-1">{m.autorNome} · Suporte</span>}
                           {m.anexo?.caminho && (
                             <a href={urlApi(m.anexo.caminho)} target="_blank" rel="noopener noreferrer" className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] rounded-2xl">
                               <img src={urlApi(m.anexo.caminho)} alt={minha ? 'Foto que você enviou' : 'Foto enviada pelo suporte'} loading="lazy"
-                                className="max-h-56 max-w-full rounded-2xl border border-[var(--border-main)] object-cover" />
+                                className="max-h-44 max-w-full rounded-xl border border-[var(--border-main)] object-cover" />
                             </a>
                           )}
                           {m.anexo?.apagado && (
                             <span className="px-3 py-2 rounded-2xl border border-dashed border-[var(--border-strong)] text-xs text-[var(--text-muted)]">Foto apagada quando o chamado foi resolvido</span>
                           )}
                           {m.texto && (
-                            <p className={clsx('px-3.5 py-2.5 text-[15px] leading-snug whitespace-pre-wrap break-words',
+                            <p className={clsx('px-3 py-2 text-[13.5px] leading-snug whitespace-pre-wrap break-words',
                               minha ? 'bg-[var(--primary)] text-[var(--text-on-primary)] rounded-[18px_18px_4px_18px]' : 'bg-[var(--bg-card)] border border-[var(--border-main)] text-[var(--text-main)] rounded-[18px_18px_18px_4px]')}>
                               {m.texto}
                             </p>
@@ -420,8 +432,8 @@ function Conversa({ chamadoId, somenteLeitura, onAtualizarTitulo }) {
             Chamado resolvido. As fotos já foram apagadas{guardaAte ? ` e a conversa fica guardada até ${guardaAte}` : ''}.
           </p>
         )}
-        {resolvido && !apagada && !somenteLeitura && !chamado.avaliacao && <Avaliar chamadoId={chamado.id} onAvaliado={carregar} />}
-        {chamado.avaliacao ? <p className="text-center text-xs text-[var(--text-muted)] mt-2">Você avaliou com {chamado.avaliacao}/5. Obrigado!</p> : null}
+        {resolvido && !apagada && !somenteLeitura && chamado.avaliacao == null && <Avaliar chamadoId={chamado.id} onAvaliado={carregar} />}
+        {chamado.avaliacao != null ? <div className="mt-2 flex flex-col items-center gap-1 text-xs text-[var(--text-muted)]"><Estrelas nota={chamado.avaliacao} onEscolher={() => {}} tamanho={14} /><span>Você avaliou com {chamado.avaliacao} de 5. Obrigado!</span></div> : null}
         <div ref={fim} />
       </div>
 
@@ -429,7 +441,7 @@ function Conversa({ chamadoId, somenteLeitura, onAtualizarTitulo }) {
         <CampoMensagem
           placeholder={resolvido ? 'Escrever de novo reabre o chamado' : 'Escreva uma mensagem...'}
           enviando={enviando} onEnviar={enviar}
-          rodape="Enter envia · as fotos somem quando o chamado é resolvido" />
+          rodape="Fechar a janela não encerra o chamado. Só a equipe encerra." />
       )}
     </>
   );
@@ -472,23 +484,23 @@ export default function BotaoAjuda() {
     <>
       {painelAberto && (
         <section role="dialog" aria-label="Suporte Sellergy"
-          className="fixed z-40 inset-0 sm:inset-auto sm:right-5 sm:bottom-24 sm:w-[400px] sm:h-[min(660px,calc(100vh-130px))] flex flex-col overflow-hidden bg-[var(--bg-card)] sm:rounded-3xl shadow-[0_24px_60px_rgba(10,20,15,0.28),0_2px_8px_rgba(10,20,15,0.12)] border border-[var(--border-main)]">
-          <header className="flex items-center gap-3 px-4 py-3.5 text-white bg-[linear-gradient(135deg,#0F1A15,#15322A)]">
+          className="fixed z-40 inset-0 sm:inset-auto sm:left-4 sm:bottom-[68px] sm:w-[340px] sm:h-[min(520px,calc(100vh-96px))] flex flex-col overflow-hidden bg-[var(--bg-card)] sm:rounded-2xl shadow-[0_18px_44px_rgba(10,20,15,0.28),0_2px_6px_rgba(10,20,15,0.12)] border border-[var(--border-main)] text-[13px]">
+          <header className="flex items-center gap-2.5 px-3 py-2.5 text-white bg-[linear-gradient(135deg,#0F1A15,#15322A)]">
             {telaAtual.tipo !== 'inicio' && (
-              <button type="button" onClick={irInicio} aria-label="Voltar" className="-ml-1.5 w-9 h-9 rounded-full grid place-items-center hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
-                <ArrowLeft size={18} />
+              <button type="button" onClick={irInicio} aria-label="Voltar" className="-ml-1 w-7 h-7 rounded-full grid place-items-center hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+                <ArrowLeft size={16} />
               </button>
             )}
-            <img src="/logo-sellergy.png" alt="" className="w-11 h-11 rounded-full border-2 border-white/90 shrink-0" />
+            <img src="/logo-sellergy.png" alt="" className="w-8 h-8 rounded-full border-[1.5px] border-white/90 shrink-0" />
             <div className="flex-1 min-w-0">
-              <p className="font-['Space_Grotesk',Inter,sans-serif] font-bold text-[16px] leading-tight">Suporte Sellergy</p>
-              <p className="text-xs text-[#B7C4BD] font-semibold flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-[#1FA672]" aria-hidden="true" />
+              <p className="font-['Space_Grotesk',Inter,sans-serif] font-bold text-[14px] leading-tight">Suporte Sellergy</p>
+              <p className="text-[11px] text-[#B7C4BD] font-medium flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#1FA672]" aria-hidden="true" />
                 {somenteLeitura ? 'Sessão de suporte: só leitura' : 'Online · responde em até 1 hora'}
               </p>
             </div>
-            <button type="button" onClick={fechar} aria-label="Fechar" className="w-9 h-9 rounded-full grid place-items-center bg-white/10 hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
-              <X size={18} />
+            <button type="button" onClick={fechar} aria-label="Fechar" className="w-7 h-7 rounded-full grid place-items-center bg-white/10 hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+              <X size={15} />
             </button>
           </header>
 
@@ -517,10 +529,10 @@ export default function BotaoAjuda() {
         onClick={alternar}
         aria-expanded={painelAberto}
         aria-label={painelAberto ? 'Fechar o suporte' : 'Ajuda: falar com o suporte'}
-        className={clsx('fixed bottom-5 right-5 z-40 inline-flex items-center justify-center gap-2 min-h-14 rounded-full bg-[var(--primary)] text-[var(--text-on-primary)] font-semibold text-sm shadow-[0_10px_28px_rgba(19,111,77,0.45)] hover:bg-[var(--primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--primary)]',
-          painelAberto ? 'w-14 max-sm:hidden' : 'px-5')}
+        className={clsx('fixed bottom-4 left-4 z-40 w-11 h-11 grid place-items-center rounded-full bg-[var(--primary)] text-[var(--text-on-primary)] shadow-[0_6px_18px_rgba(19,111,77,0.4)] hover:bg-[var(--primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--primary)]',
+          painelAberto && 'max-sm:hidden')}
       >
-        {painelAberto ? <ChevronDown size={22} /> : <><MessageCircle size={20} aria-hidden="true" /><span className="hidden sm:inline">Ajuda</span></>}
+        {painelAberto ? <ChevronDown size={18} /> : <MessageCircle size={18} aria-hidden="true" />}
       </button>
     </>
   );

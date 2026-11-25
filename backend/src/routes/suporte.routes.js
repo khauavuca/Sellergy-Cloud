@@ -4,7 +4,7 @@
 //   GET  /suporte/chamados                 -> chamados do negocio (mais recentes primeiro)
 //   GET  /suporte/chamados/:id             -> conversa
 //   POST /suporte/chamados                 -> { assunto, texto, categoria? } abre chamado
-//   POST /suporte/chamados/:id/avaliar     -> { nota 1-5, comentario? } depois de resolvido
+//   POST /suporte/chamados/:id/avaliar     -> { nota 0-5, comentario? } depois de resolvido
 //   POST /suporte/chamados/:id/fotos       -> multipart { imagem, texto? } foto temporaria
 //   GET  /suporte/chamados/:id/fotos/:msg  -> a foto (some quando o chamado e resolvido)
 //   POST /suporte/chamados/:id/mensagens   -> { texto } responde (reabre se estava resolvido)
@@ -193,7 +193,7 @@ roteador.get('/chamados/:id/fotos/:mensagemId', async (req, res) => {
 roteador.post('/chamados/:id/avaliar', async (req, res) => {
   try {
     const nota = Number(req.body?.nota);
-    if (!Number.isInteger(nota) || nota < 1 || nota > 5) return res.status(422).json({ erro: 'Escolha uma nota de 1 a 5.', campos: ['nota'] });
+    if (!Number.isInteger(nota) || nota < 0 || nota > 5) return res.status(422).json({ erro: 'Escolha uma nota de 0 a 5.', campos: ['nota'] });
     const comentario = textoValido(req.body?.comentario, 1, 500);
     const chamado = await prisma.chamado.findFirst({ where: { id: req.params.id, clienteId: req.usuario.clienteId }, select: { id: true, status: true } });
     if (!chamado) return res.status(404).json({ erro: 'Chamado não encontrado.' });
