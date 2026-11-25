@@ -3,6 +3,7 @@ import { CheckCircle2, Circle, ArrowRight, Copy } from 'lucide-react';
 import clsx from 'clsx';
 import { useToast, Painel } from '../ui';
 import { useResumoConta } from './useResumoConta';
+import { URL_SITE } from '../../utils/painel';
 
 // "Primeiros passos" no Inicio (coluna da direita): some quando tudo esta
 // feito. Os passos vem do backend, calculados dos dados reais
@@ -16,7 +17,7 @@ export default function InicioChecklist() {
 
   const slug = resumo.configuracoes?.slugPublico;
   const temLink = resumo.plano?.recursos?.linkAgendamento && slug && resumo.negocio?.segmento !== 'PRODUTO';
-  const link = temLink ? `${window.location.origin}/agendar/${slug}` : null;
+  const link = temLink ? `${URL_SITE}/agendar/${slug}` : null;
   const pct = Math.round((inicio.feitos / inicio.total) * 100);
 
   const copiar = async () => {

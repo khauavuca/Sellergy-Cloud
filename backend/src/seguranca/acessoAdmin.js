@@ -46,6 +46,22 @@ function origemLiberada(origem, lista = origensAdmin()) {
   return lista.includes(String(origem).trim().replace(/\/$/, '').toLowerCase());
 }
 
+/**
+ * Separa as duas camadas: com ADMIN_ORIGENS definido, sessão de cliente não
+ * vale vinda do site do painel (crm.) e sessão ADMIN não vale vinda do site do
+ * cliente. Sem Origin (script/integração) ou sem a lista (dev), passa. PURA.
+ * Sessão de suporte (admin vendo a conta do cliente) roda no painel e passa.
+ * Origem localhost (dev, um front só) não barra cliente.
+ */
+function camadaRecusada({ origem, perfil, suporte }, lista = origensAdmin()) {
+  if (lista.length === 0 || !origem || suporte) return false;
+  const doPainel = origemLiberada(origem, lista);
+  if (perfil === 'ADMIN') return !doPainel;
+  // Em dev o mesmo localhost serve as duas camadas: cliente passa.
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(String(origem).trim())) return false;
+  return doPainel;
+}
+
 function chaveFalhas(usuarioId) {
   const h = crypto.createHash('sha256').update(String(usuarioId)).digest('hex').slice(0, 24);
   return `admin:falhas:${h}`;
@@ -106,6 +122,7 @@ module.exports = {
   MAX_FALHAS,
   origensAdmin,
   origemLiberada,
+  camadaRecusada,
   segundosBloqueado,
   registrarFalha,
   limparFalhas,

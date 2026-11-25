@@ -161,7 +161,10 @@ roteador.post('/login', limitadorLogin, async (req, res) => {
 
     // Conta ADMIN fora do site do painel recebe a mesma resposta de senha
     // errada e conta como erro: quem tenta pelo site do cliente nao descobre nada.
-    const origemRecusada = ehAdmin && !acessoAdmin.origemLiberada(req.get('origin'));
+    // E conta de cliente pelo site do painel tambem: resposta de senha errada.
+    const origemRecusada = usuario
+      ? acessoAdmin.camadaRecusada({ origem: req.get('origin'), perfil: usuario.perfil })
+      : false;
     if (!usuario || !senhaValida || origemRecusada) {
       if (ehAdmin) {
         const travou = await acessoAdmin.registrarFalha(usuario.id);
@@ -206,6 +209,9 @@ roteador.post('/login/2fa', limitadorLogin, async (req, res) => {
     if (!usuario?.totpAtivo || !usuario.totpSegredoCifrado) return res.status(401).json({ erro: 'Desafio invalido.' });
 
     const ehAdmin = usuario.perfil === 'ADMIN';
+    if (!ehAdmin && acessoAdmin.camadaRecusada({ origem: req.get('origin'), perfil: usuario.perfil })) {
+      return res.status(401).json({ erro: 'Desafio invalido.' });
+    }
     if (ehAdmin) {
       const resta = await acessoAdmin.segundosBloqueado(usuario.id);
       if (resta) return res.status(429).json({ erro: acessoAdmin.mensagemBloqueio(resta) });

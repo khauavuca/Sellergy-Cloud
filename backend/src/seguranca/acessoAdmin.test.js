@@ -29,3 +29,18 @@ test('mensagem do bloqueio arredonda os minutos pra cima', () => {
   assert.match(mensagemBloqueio(1799), /30 min/);
   assert.match(mensagemBloqueio(5), /1 min/);
 });
+
+test('camadas separadas: cliente nao entra pelo painel, admin nao entra pelo site', () => {
+  const { camadaRecusada } = require('./acessoAdmin');
+  const lista = ['https://crm.sellergycloud.com'];
+  const crm = 'https://crm.sellergycloud.com';
+  const site = 'https://sellergycloud.com';
+  assert.equal(camadaRecusada({ origem: crm, perfil: 'CLIENTE' }, lista), true);
+  assert.equal(camadaRecusada({ origem: site, perfil: 'CLIENTE' }, lista), false);
+  assert.equal(camadaRecusada({ origem: site, perfil: 'ADMIN' }, lista), true);
+  assert.equal(camadaRecusada({ origem: crm, perfil: 'ADMIN' }, lista), false);
+  assert.equal(camadaRecusada({ origem: crm, perfil: 'CLIENTE', suporte: { id: 1 } }, lista), false);
+  assert.equal(camadaRecusada({ origem: undefined, perfil: 'CLIENTE' }, lista), false);
+  assert.equal(camadaRecusada({ origem: crm, perfil: 'CLIENTE' }, []), false);
+  assert.equal(camadaRecusada({ origem: 'http://localhost:5173', perfil: 'CLIENTE' }, [...lista, 'http://localhost:5173']), false);
+});

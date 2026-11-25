@@ -86,6 +86,18 @@ function CarregandoPagina() {
 
 const SoNoPainel = ({ children }) => (ADMIN_NESTE_SITE ? children : <Navigate to="/app/login" replace />);
 
+// No endereco do painel (crm.) so existe o admin: o site do cliente (landing,
+// /app, cadastro, links publicos) manda pro login do admin. Unica excecao: a
+// sessao de suporte, que abre a conta do cliente em /app aqui mesmo.
+const ROTAS_DO_PAINEL = /^\/(admin(\/|$)|trocar-senha$)/;
+const SoAdminNoPainel = ({ children }) => {
+  const { pathname } = useLocation();
+  const suporte = useAuthStore((s) => s.user?.suporte);
+  if (!NO_PAINEL || ROTAS_DO_PAINEL.test(pathname)) return children;
+  if (suporte && /^\/app(\/|$)/.test(pathname) && pathname !== '/app/login') return children;
+  return <Navigate to="/admin/login" replace />;
+};
+
 const ProtectedRoute = ({ children }) => {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   // Sem sessao vai sempre pro login do cliente: o do admin nao aparece pra
@@ -159,6 +171,7 @@ export default function App() {
     <ToastProvider>
       <BrowserRouter>
         <Suspense fallback={<CarregandoPagina />}>
+        <SoAdminNoPainel>
         <Routes>
           {/* Publicas */}
           <Route path="/" element={NO_PAINEL ? <Navigate to="/admin/login" replace /> : <LandingPage />} />
@@ -268,6 +281,7 @@ export default function App() {
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </SoAdminNoPainel>
         </Suspense>
         <AvisoCookies />
       </BrowserRouter>

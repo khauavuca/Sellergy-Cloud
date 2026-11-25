@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const { NOME_SESSAO, lerCookie } = require('../utils/sessaoCookie');
 const { requisicaoPermitidaEmSuporte } = require('../seguranca/sessaoSuporte');
 const { papelDe, escritaLiberadaPara, DESATIVADO } = require('../seguranca/papeis');
+const { camadaRecusada } = require('../seguranca/acessoAdmin');
 
 if (!process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET nao configurado. Defina a variavel de ambiente antes de iniciar o servidor.');
@@ -90,6 +91,12 @@ const middlewareAutenticacao = (req, res, next) => {
     decodificado = jwt.verify(token, SEGREDO_JWT);
   } catch (erro) {
     return res.status(401).json({ erro: 'Token invalido ou expirado' });
+  }
+
+  // Painel (crm.) e site do cliente sao camadas separadas: a sessao de uma
+  // nao serve na outra, mesmo com o cookie da API valendo pras duas.
+  if (camadaRecusada({ origem: req.get?.('origin'), perfil: decodificado.perfil, suporte: decodificado.suporte })) {
+    return res.status(401).json({ erro: 'Sessão inválida neste endereço. Entre de novo.' });
   }
 
   req.usuario = decodificado;

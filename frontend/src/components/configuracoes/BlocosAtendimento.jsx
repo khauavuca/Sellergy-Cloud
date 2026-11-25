@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Copy, ExternalLink, Save, AlertCircle } from 'lucide-react';
 import api from '../../services/api';
 import { Painel, Badge, Button, Input, Switch } from '../ui';
+import { URL_SITE } from '../../utils/painel';
 
 // Blocos da seção "Atendimento" das Configurações que leem e gravam a
 // configuração da conta (GET /conta/resumo e PUT /conta/configuracoes).
@@ -137,7 +138,7 @@ export function BlocoLinkAgendamento({ resumo, recarregar, podeEditar, toast }) 
   const slugAtual = resumo?.configuracoes?.slugPublico || '';
   const [slug, setSlug] = useState(slugAtual);
   const [salvando, setSalvando] = useState(false);
-  const base = `${window.location.origin}/agendar/`;
+  const base = `${URL_SITE}/agendar/`;
   const link = slugAtual ? `${base}${slugAtual}` : null;
 
   const copiar = async () => {

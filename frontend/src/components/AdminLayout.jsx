@@ -74,7 +74,9 @@ export default function AdminLayout() {
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
   const podeVerSuporte = secoesDoPapel(user).some((s) => s.items.some((i) => i.to === '/admin/suporte'));
-  const resumoSuporte = useResumoSuporte(podeVerSuporte);
+  // Sem o 2FA (quando obrigatorio) a API barra a fila: nao consulta ate ativar.
+  const pendente2fa = user?.admin2faObrigatorio === true && user?.mfa !== true;
+  const resumoSuporte = useResumoSuporte(podeVerSuporte && !pendente2fa);
   // Contador de chamados esperando resposta no item Suporte do menu.
   const secoes = secoesDoPapel(user).map((s) => ({
     ...s,
