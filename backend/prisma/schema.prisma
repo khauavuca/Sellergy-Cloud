@@ -2012,6 +2012,14 @@ model Chamado {
   assunto      String
   status       String   @default("ABERTO") // ABERTO | RESPONDIDO | RESOLVIDO
   canal        String   @default("APP") // APP | WHATSAPP
+  categoria    String   @default("DUVIDA") // DUVIDA | ERRO | COBRANCA | FISCAL | WHATSAPP | OUTRO
+  prioridade   String   @default("NORMAL") // ALTA | NORMAL | BAIXA
+  responsavelId String? // usuario ADMIN que esta cuidando
+  primeiraRespostaEm DateTime? // primeira resposta do suporte (tempo de resposta)
+  ultimaDoClienteEm  DateTime? // ultima mensagem do cliente (fila e "parado ha")
+  lidoSuporteEm      DateTime? // quando a equipe abriu a conversa pela ultima vez (nao lido)
+  avaliacao    Int? // 1 a 5, dada pelo cliente depois de resolvido
+  avaliacaoComentario String?
   criadoEm     DateTime @default(now())
   atualizadoEm DateTime @updatedAt
 
@@ -2019,13 +2027,14 @@ model Chamado {
 
   @@index([status, atualizadoEm])
   @@index([clienteId])
+  @@index([responsavelId])
   @@map("chamados")
 }
 
 model ChamadoMensagem {
   id        String   @id @default(uuid())
   chamadoId String
-  autor     String   // CLIENTE | SUPORTE
+  autor     String   // CLIENTE | SUPORTE | INTERNO (nota so da equipe)
   autorNome String
   texto     String
   criadoEm  DateTime @default(now())

@@ -3,7 +3,8 @@
 //
 //   GET  /suporte/chamados                 -> chamados do negocio (mais recentes primeiro)
 //   GET  /suporte/chamados/:id             -> conversa
-//   POST /suporte/chamados                 -> { assunto, texto } abre chamado
+//   POST /suporte/chamados                 -> { assunto, texto, categoria? } abre chamado
+//   POST /suporte/chamados/:id/avaliar     -> { nota 1-5, comentario? } depois de resolvido
 //   POST /suporte/chamados/:id/mensagens   -> { texto } responde (reabre se estava resolvido)
 //   POST /suporte/sessao/encerrar          -> sai da sessao de suporte (so leitura) do admin
 //
@@ -22,6 +23,9 @@ const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
 
 const MAX_ABERTOS = 5;
+const CATEGORIAS = ['DUVIDA', 'ERRO', 'COBRANCA', 'FISCAL', 'WHATSAPP', 'OUTRO'];
+// Nota interna e so da equipe: nunca sai por aqui.
+const VISIVEL = { autor: { not: 'INTERNO' } };
 
 function textoValido(v, min, max) {
   return typeof v === 'string' && v.trim().length >= min && v.trim().length <= max ? v.trim() : null;
@@ -53,6 +57,8 @@ function formatarChamado(c) {
     id: c.id,
     assunto: c.assunto,
     status: c.status,
+    categoria: c.categoria,
+    avaliacao: c.avaliacao ?? null,
     criadoEm: c.criadoEm,
     atualizadoEm: c.atualizadoEm,
     ultimaMensagem: ultima ? { autor: ultima.autor, texto: ultima.texto.slice(0, 160), criadoEm: ultima.criadoEm } : null,
@@ -65,7 +71,7 @@ roteador.get('/chamados', async (req, res) => {
       where: { clienteId: req.usuario.clienteId },
       orderBy: { atualizadoEm: 'desc' },
       take: 30,
-      include: { mensagens: { orderBy: { criadoEm: 'desc' }, take: 1 } },
+      include: { mensagens: { where: VISIVEL, orderBy: { criadoEm: 'desc' }, take: 1 } },
     });
     res.json(chamados.map((c) => formatarChamado({ ...c, mensagens: c.mensagens.reverse() })));
   } catch (e) {
@@ -78,7 +84,7 @@ roteador.get('/chamados/:id', async (req, res) => {
   try {
     const chamado = await prisma.chamado.findFirst({
       where: { id: req.params.id, clienteId: req.usuario.clienteId },
-      include: { mensagens: { orderBy: { criadoEm: 'asc' } } },
+      include: { mensagens: { where: VISIVEL, orderBy: { criadoEm: 'asc' } } },
     });
     if (!chamado) return res.status(404).json({ erro: 'Chamado não encontrado.' });
     res.json({
@@ -109,12 +115,17 @@ roteador.post('/chamados', async (req, res) => {
     if (abertos >= MAX_ABERTOS) {
       return res.status(429).json({ erro: `Você já tem ${abertos} chamados em andamento. Responda em um deles que a gente continua por lá.` });
     }
+    const categoria = CATEGORIAS.includes(req.body?.categoria) ? req.body.categoria : 'DUVIDA';
     const autorNome = await nomeDoUsuario(req.usuario.id);
     const chamado = await prisma.chamado.create({
       data: {
         clienteId: req.usuario.clienteId,
         usuarioId: req.usuario.id,
         assunto,
+        categoria,
+        // Cobranca e erro entram como prioridade alta: travam o uso.
+        prioridade: ['ERRO', 'COBRANCA', 'FISCAL'].includes(categoria) ? 'ALTA' : 'NORMAL',
+        ultimaDoClienteEm: new Date(),
         canal: 'APP',
         mensagens: { create: { autor: 'CLIENTE', autorNome, texto } },
       },
@@ -136,12 +147,28 @@ roteador.post('/chamados/:id/mensagens', async (req, res) => {
     const autorNome = await nomeDoUsuario(req.usuario.id);
     const [mensagem] = await prisma.$transaction([
       prisma.chamadoMensagem.create({ data: { chamadoId: chamado.id, autor: 'CLIENTE', autorNome, texto } }),
-      prisma.chamado.update({ where: { id: chamado.id }, data: { status: 'ABERTO' } }),
+      prisma.chamado.update({ where: { id: chamado.id }, data: { status: 'ABERTO', ultimaDoClienteEm: new Date() } }),
     ]);
     res.status(201).json({ id: mensagem.id, autor: mensagem.autor, autorNome: mensagem.autorNome, texto: mensagem.texto, criadoEm: mensagem.criadoEm });
   } catch (e) {
     console.error('[suporte/mensagem]', e);
     res.status(500).json({ erro: 'Erro ao enviar a mensagem.' });
+  }
+});
+
+roteador.post('/chamados/:id/avaliar', async (req, res) => {
+  try {
+    const nota = Number(req.body?.nota);
+    if (!Number.isInteger(nota) || nota < 1 || nota > 5) return res.status(422).json({ erro: 'Escolha uma nota de 1 a 5.', campos: ['nota'] });
+    const comentario = textoValido(req.body?.comentario, 1, 500);
+    const chamado = await prisma.chamado.findFirst({ where: { id: req.params.id, clienteId: req.usuario.clienteId }, select: { id: true, status: true } });
+    if (!chamado) return res.status(404).json({ erro: 'Chamado não encontrado.' });
+    if (chamado.status !== 'RESOLVIDO') return res.status(409).json({ erro: 'Dá pra avaliar depois que o chamado for resolvido.' });
+    await prisma.chamado.update({ where: { id: chamado.id }, data: { avaliacao: nota, avaliacaoComentario: comentario } });
+    res.json({ ok: true, avaliacao: nota });
+  } catch (e) {
+    console.error('[suporte/avaliar]', e);
+    res.status(500).json({ erro: 'Erro ao salvar a avaliação.' });
   }
 });
 

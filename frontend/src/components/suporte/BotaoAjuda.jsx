@@ -73,8 +73,18 @@ function Lista({ chamados, erro, carregando, onAbrir, onNovo, onTentar, somenteL
   );
 }
 
+const CATEGORIAS = [
+  ['DUVIDA', 'Dúvida de uso'],
+  ['ERRO', 'Algo deu erro'],
+  ['FISCAL', 'Nota fiscal'],
+  ['COBRANCA', 'Cobrança e plano'],
+  ['WHATSAPP', 'WhatsApp'],
+  ['OUTRO', 'Outro assunto'],
+];
+
 function Novo({ onCriado, onVoltar }) {
   const toast = useToast();
+  const [categoria, setCategoria] = useState('DUVIDA');
   const [assunto, setAssunto] = useState('');
   const [texto, setTexto] = useState('');
   const [campos, setCampos] = useState([]);
@@ -84,8 +94,8 @@ function Novo({ onCriado, onVoltar }) {
     e.preventDefault();
     setEnviando(true);
     try {
-      const r = await api.post('/suporte/chamados', { assunto, texto });
-      toast.success('Chamado aberto. A resposta chega aqui e no seu WhatsApp.');
+      const r = await api.post('/suporte/chamados', { assunto, texto, categoria });
+      toast.success('Chamado aberto. Avisamos você quando a equipe responder.');
       onCriado(r.data.id);
     } catch (err) {
       setCampos(err.response?.data?.campos || []);
@@ -98,6 +108,18 @@ function Novo({ onCriado, onVoltar }) {
   return (
     <form onSubmit={enviar} className="space-y-4">
       <Button variant="ghost" className="min-h-11 -ml-2" icon={ArrowLeft} onClick={onVoltar}>Voltar</Button>
+      <fieldset>
+        <legend className="text-sm font-medium text-[var(--text-main)] mb-2">Sobre o quê?</legend>
+        <div className="flex flex-wrap gap-2">
+          {CATEGORIAS.map(([v, r]) => (
+            <label key={v} className={clsx('min-h-11 px-3.5 inline-flex items-center rounded-full border text-sm cursor-pointer has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--primary)]',
+              categoria === v ? 'border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary)] font-semibold' : 'border-[var(--border-main)] text-[var(--text-secondary)]')}>
+              <input type="radio" name="categoria" value={v} checked={categoria === v} onChange={() => setCategoria(v)} className="sr-only" />
+              {r}
+            </label>
+          ))}
+        </div>
+      </fieldset>
       <Input label="Assunto" value={assunto} maxLength={120} onChange={(e) => setAssunto(e.target.value)}
         placeholder="Ex.: lembrete não chegou para uma cliente" error={campos.includes('assunto') ? 'Escreva o assunto (3 a 120 letras)' : undefined} />
       <Textarea label="O que aconteceu?" rows={6} value={texto} maxLength={4000} onChange={(e) => setTexto(e.target.value)}
@@ -105,6 +127,45 @@ function Novo({ onCriado, onVoltar }) {
         error={campos.includes('texto') ? 'Conte o que aconteceu' : undefined} />
       <Button type="submit" className="min-h-11 w-full" icon={Send} loading={enviando}>Enviar para o suporte</Button>
     </form>
+  );
+}
+
+function Avaliar({ chamadoId, onAvaliado }) {
+  const toast = useToast();
+  const [nota, setNota] = useState(0);
+  const [comentario, setComentario] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const enviar = async () => {
+    setEnviando(true);
+    try {
+      await api.post(`/suporte/chamados/${chamadoId}/avaliar`, { nota, comentario: comentario.trim() || undefined });
+      toast.success('Obrigado pela avaliação!');
+      onAvaliado();
+    } catch (e) {
+      toast.error(e.response?.data?.erro || 'Não foi possível enviar a avaliação.');
+    } finally {
+      setEnviando(false);
+    }
+  };
+  return (
+    <div className="rounded-xl border border-[var(--border-main)] p-4 space-y-3">
+      <p className="text-sm font-semibold text-[var(--text-main)]">Resolveu? Como foi o atendimento?</p>
+      <div className="flex gap-2" role="radiogroup" aria-label="Nota do atendimento">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button key={n} type="button" role="radio" aria-checked={nota === n} aria-label={`Nota ${n}`} onClick={() => setNota(n)}
+            className={clsx('w-11 h-11 rounded-lg border font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]',
+              nota >= n ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--text-on-primary)]' : 'border-[var(--border-main)] text-[var(--text-secondary)]')}>
+            {n}
+          </button>
+        ))}
+      </div>
+      {nota > 0 && (
+        <>
+          <Textarea label="Quer contar mais? (opcional)" rows={2} maxLength={500} value={comentario} onChange={(e) => setComentario(e.target.value)} />
+          <Button className="min-h-11 w-full" loading={enviando} onClick={enviar}>Enviar avaliação</Button>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -162,6 +223,10 @@ function Conversa({ chamadoId, onVoltar, somenteLeitura }) {
               </li>
             ))}
           </ol>
+          {!somenteLeitura && chamado.status === 'RESOLVIDO' && !chamado.avaliacao && (
+            <Avaliar chamadoId={chamado.id} onAvaliado={carregar} />
+          )}
+          {chamado.avaliacao ? <p className="text-xs text-[var(--text-muted)]">Você avaliou este atendimento com {chamado.avaliacao}/5.</p> : null}
           {!somenteLeitura && (
             <form onSubmit={responder} className="space-y-2">
               <Textarea label={chamado.status === 'RESOLVIDO' ? 'Escrever de novo (reabre o chamado)' : 'Sua mensagem'} rows={3} value={texto} maxLength={4000} onChange={(e) => setTexto(e.target.value)} />

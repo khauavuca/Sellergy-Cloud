@@ -8,6 +8,7 @@ import { useAuthStore } from '../store/auth.store';
 import { useUiStore } from '../store/ui.store';
 import { AcaoTopoContext } from '../hooks/useAcaoTopo';
 import Topbar from './Topbar';
+import { useResumoSuporte } from './suporte/useResumoSuporte';
 
 const SECTIONS = [
   {
@@ -72,7 +73,13 @@ export default function AdminLayout() {
   const [acaoTopo, setAcaoTopo] = useState(null);
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
-  const secoes = secoesDoPapel(user);
+  const podeVerSuporte = secoesDoPapel(user).some((s) => s.items.some((i) => i.to === '/admin/suporte'));
+  const resumoSuporte = useResumoSuporte(podeVerSuporte);
+  // Contador de chamados esperando resposta no item Suporte do menu.
+  const secoes = secoesDoPapel(user).map((s) => ({
+    ...s,
+    items: s.items.map((i) => (i.to === '/admin/suporte' && resumoSuporte?.esperando ? { ...i, badge: resumoSuporte.esperando } : i)),
+  }));
   const menuAberto = useUiStore((s) => s.menuAberto);
   const alternarMenu = useUiStore((s) => s.alternarMenu);
   const atalhos = secoes.flatMap((sec) => sec.items.map((i) => ({ to: i.to, label: i.label, grupo: sec.titulo })));

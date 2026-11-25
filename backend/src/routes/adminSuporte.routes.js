@@ -1,8 +1,12 @@
 // Chamados (admin), responder, resolver, entrar como suporte.
 // Montado em /admin/suporte (src/index.js). Frente D da fase 2.
 //
-//   GET  /admin/suporte/chamados?status=ABERTO|RESPONDIDO|RESOLVIDO|TODOS&busca=
-//   GET  /admin/suporte/chamados/:id
+//   GET   /admin/suporte/resumo                     -> contadores da fila (o painel consulta pra avisar chamado novo)
+//   GET   /admin/suporte/chamados?aba=ABERTO|MEUS|CLIENTE|RESOLVIDO|TODOS&busca=
+//   GET   /admin/suporte/chamados/:id               -> conversa (marca como lida pela equipe)
+//   PATCH /admin/suporte/chamados/:id               -> { categoria?, prioridade?, responsavelId? }
+//   POST  /admin/suporte/chamados/:id/nota          -> { texto } nota interna, o cliente nao ve
+//   GET   /admin/suporte/equipe                     -> quem pode ser responsavel
 //   POST /admin/suporte/chamados/:id/responder   -> { texto, resolver? }  (avisa no sistema + WhatsApp)
 //   POST /admin/suporte/chamados/:id/resolver
 //   POST /admin/suporte/chamados/:id/reabrir
@@ -28,7 +32,9 @@ const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
 roteador.use(requerAdmin);
 
-const STATUS = ['ABERTO', 'RESPONDIDO', 'RESOLVIDO'];
+const CATEGORIAS = ['DUVIDA', 'ERRO', 'COBRANCA', 'FISCAL', 'WHATSAPP', 'OUTRO'];
+const PRIORIDADES = ['ALTA', 'NORMAL', 'BAIXA'];
+const ABAS = ['ABERTO', 'MEUS', 'CLIENTE', 'RESOLVIDO', 'TODOS'];
 const CHAVE_RESPOSTAS = 'respostasProntas';
 // Modelos genericos pra comecar (o time edita na tela).
 const RESPOSTAS_PADRAO = [
@@ -41,27 +47,86 @@ function textoValido(v, min, max) {
   return typeof v === 'string' && v.trim().length >= min && v.trim().length <= max ? v.trim() : null;
 }
 
+function whereDaAba(aba, usuarioId) {
+  if (aba === 'ABERTO') return { status: 'ABERTO' };
+  if (aba === 'CLIENTE') return { status: 'RESPONDIDO' };
+  if (aba === 'RESOLVIDO') return { status: 'RESOLVIDO' };
+  if (aba === 'MEUS') return { responsavelId: usuarioId, status: { not: 'RESOLVIDO' } };
+  return {};
+}
+
+const naoLido = (c) => Boolean(c.ultimaDoClienteEm && (!c.lidoSuporteEm || c.ultimaDoClienteEm > c.lidoSuporteEm));
+
+async function nomesDaEquipe(ids) {
+  const unicos = [...new Set(ids.filter(Boolean))];
+  if (!unicos.length) return new Map();
+  const us = await prisma.usuario.findMany({ where: { id: { in: unicos } }, select: { id: true, nome: true } });
+  return new Map(us.map((u) => [u.id, u.nome]));
+}
+
+roteador.get('/resumo', requerPapelAdmin('suporte.ver'), async (req, res) => {
+  try {
+    const desde = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const [abertos, respondidos, avaliados] = await Promise.all([
+      prisma.chamado.findMany({ where: { status: 'ABERTO' }, select: { id: true, ultimaDoClienteEm: true, lidoSuporteEm: true, criadoEm: true } }),
+      prisma.chamado.findMany({ where: { primeiraRespostaEm: { not: null }, criadoEm: { gte: desde } }, select: { criadoEm: true, primeiraRespostaEm: true } }),
+      prisma.chamado.aggregate({ where: { avaliacao: { not: null }, atualizadoEm: { gte: desde } }, _avg: { avaliacao: true }, _count: { avaliacao: true } }),
+    ]);
+    const minutos = respondidos.map((c) => (c.primeiraRespostaEm - c.criadoEm) / 60000).filter((m) => m >= 0);
+    const maisAntigo = abertos.reduce((min, c) => {
+      const t = c.ultimaDoClienteEm || c.criadoEm;
+      return !min || t < min ? t : min;
+    }, null);
+    res.json({
+      esperando: abertos.length,
+      naoLidos: abertos.filter(naoLido).length,
+      maisAntigoEm: maisAntigo,
+      primeiraRespostaMin: minutos.length ? Math.round(minutos.reduce((a, b) => a + b, 0) / minutos.length) : null,
+      satisfacao: avaliados._avg.avaliacao ? Number(avaliados._avg.avaliacao.toFixed(1)) : null,
+      avaliacoes: avaliados._count.avaliacao,
+    });
+  } catch (e) {
+    console.error('[admin/suporte/resumo]', e);
+    res.status(500).json({ erro: 'Erro ao carregar o resumo do suporte.' });
+  }
+});
+
+roteador.get('/equipe', requerPapelAdmin('suporte.ver'), async (req, res) => {
+  try {
+    const equipe = await prisma.usuario.findMany({ where: { perfil: 'ADMIN' }, select: { id: true, nome: true }, orderBy: { nome: 'asc' } });
+    res.json({ equipe });
+  } catch (e) {
+    console.error('[admin/suporte/equipe]', e);
+    res.status(500).json({ erro: 'Erro ao carregar a equipe.' });
+  }
+});
+
 roteador.get('/chamados', requerPapelAdmin('suporte.ver'), async (req, res) => {
   try {
-    const status = STATUS.includes(req.query.status) ? req.query.status : null;
+    const aba = ABAS.includes(req.query.aba) ? req.query.aba : 'ABERTO';
     const busca = textoValido(req.query.busca, 1, 80);
-    const where = {};
-    if (status) where.status = status;
-    else if (req.query.status !== 'TODOS') where.status = { in: ['ABERTO', 'RESPONDIDO'] };
-    if (busca) where.assunto = { contains: busca, mode: 'insensitive' };
-    const [chamados, contagem] = await Promise.all([
+    const where = whereDaAba(aba, req.usuario.id);
+    if (busca) {
+      const clientes = await prisma.cliente.findMany({ where: { nome: { contains: busca, mode: 'insensitive' } }, select: { id: true }, take: 50 });
+      where.OR = [{ assunto: { contains: busca, mode: 'insensitive' } }, { clienteId: { in: clientes.map((c) => c.id) } }];
+    }
+    const [chamados, contagens] = await Promise.all([
       prisma.chamado.findMany({
         where,
-        orderBy: [{ atualizadoEm: 'desc' }],
+        // Esperando voce: o parado ha mais tempo primeiro. Nas outras abas, o mais recente.
+        orderBy: aba === 'ABERTO' ? [{ prioridade: 'asc' }, { ultimaDoClienteEm: 'asc' }] : [{ atualizadoEm: 'desc' }],
         take: 100,
         include: { mensagens: { orderBy: { criadoEm: 'desc' }, take: 1 } },
       }),
-      prisma.chamado.groupBy({ by: ['status'], _count: { _all: true } }),
+      Promise.all(ABAS.filter((a) => a !== 'TODOS').map((a) => prisma.chamado.count({ where: whereDaAba(a, req.usuario.id) }))),
     ]);
-    const clientes = await prisma.cliente.findMany({
-      where: { id: { in: [...new Set(chamados.map((c) => c.clienteId))] } },
-      select: { id: true, nome: true, plano: true, statusAssinatura: true },
-    });
+    const [clientes, nomes] = await Promise.all([
+      prisma.cliente.findMany({
+        where: { id: { in: [...new Set(chamados.map((c) => c.clienteId))] } },
+        select: { id: true, nome: true, plano: true, statusAssinatura: true },
+      }),
+      nomesDaEquipe(chamados.map((c) => c.responsavelId)),
+    ]);
     const porId = new Map(clientes.map((c) => [c.id, c]));
     res.json({
       chamados: chamados.map((c) => {
@@ -69,11 +134,14 @@ roteador.get('/chamados', requerPapelAdmin('suporte.ver'), async (req, res) => {
         const ultima = c.mensagens[0];
         return {
           id: c.id, assunto: c.assunto, status: c.status, canal: c.canal, criadoEm: c.criadoEm, atualizadoEm: c.atualizadoEm,
+          categoria: c.categoria, prioridade: c.prioridade, avaliacao: c.avaliacao,
+          responsavel: c.responsavelId ? { id: c.responsavelId, nome: nomes.get(c.responsavelId) || 'Equipe' } : null,
+          ultimaDoClienteEm: c.ultimaDoClienteEm, naoLido: naoLido(c),
           cliente: cli ? { id: cli.id, nome: cli.nome, planoNome: obterPlano(cli.plano).nome, statusAssinatura: cli.statusAssinatura } : null,
           ultimaMensagem: ultima ? { autor: ultima.autor, texto: ultima.texto.slice(0, 160), criadoEm: ultima.criadoEm } : null,
         };
       }),
-      contagem: Object.fromEntries(contagem.map((g) => [g.status, g._count._all])),
+      contagem: Object.fromEntries(ABAS.filter((a) => a !== 'TODOS').map((a, k) => [a, contagens[k]])),
     });
   } catch (e) {
     console.error('[admin/suporte/chamados]', e);
@@ -88,8 +156,20 @@ async function carregarChamadoCompleto(id) {
     prisma.cliente.findUnique({ where: { id: chamado.clienteId }, select: { id: true, nome: true, telefone: true, email: true, plano: true, statusAssinatura: true, trialAte: true } }),
     chamado.usuarioId ? prisma.usuario.findUnique({ where: { id: chamado.usuarioId }, select: { nome: true } }) : null,
   ]);
+  const [responsavel, anteriores] = await Promise.all([
+    chamado.responsavelId ? prisma.usuario.findUnique({ where: { id: chamado.responsavelId }, select: { id: true, nome: true } }) : null,
+    prisma.chamado.findMany({
+      where: { clienteId: chamado.clienteId, NOT: { id: chamado.id } },
+      orderBy: { criadoEm: 'desc' }, take: 5,
+      select: { id: true, assunto: true, status: true, criadoEm: true, avaliacao: true },
+    }),
+  ]);
   return {
     id: chamado.id, assunto: chamado.assunto, status: chamado.status, canal: chamado.canal, criadoEm: chamado.criadoEm, atualizadoEm: chamado.atualizadoEm,
+    categoria: chamado.categoria, prioridade: chamado.prioridade, responsavel,
+    primeiraRespostaEm: chamado.primeiraRespostaEm, ultimaDoClienteEm: chamado.ultimaDoClienteEm,
+    avaliacao: chamado.avaliacao, avaliacaoComentario: chamado.avaliacaoComentario,
+    anteriores,
     usuarioId: chamado.usuarioId,
     abertoPor: usuario?.nome || null,
     cliente: cliente ? { ...cliente, planoNome: obterPlano(cliente.plano).nome } : null,
@@ -99,12 +179,59 @@ async function carregarChamadoCompleto(id) {
 
 roteador.get('/chamados/:id', requerPapelAdmin('suporte.ver'), async (req, res) => {
   try {
-    const chamado = await carregarChamadoCompleto(req.params.id);
-    if (!chamado) return res.status(404).json({ erro: 'Chamado não encontrado.' });
-    res.json(chamado);
+    const existe = await prisma.chamado.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!existe) return res.status(404).json({ erro: 'Chamado não encontrado.' });
+    // Abrir a conversa marca como lida pela equipe (some a bolinha da fila).
+    await prisma.chamado.update({ where: { id: existe.id }, data: { lidoSuporteEm: new Date() } });
+    res.json(await carregarChamadoCompleto(existe.id));
   } catch (e) {
     console.error('[admin/suporte/chamado]', e);
     res.status(500).json({ erro: 'Erro ao carregar o chamado.' });
+  }
+});
+
+roteador.patch('/chamados/:id', requerPapelAdmin('suporte.responder'), async (req, res) => {
+  try {
+    const data = {};
+    const campos = [];
+    if (req.body?.categoria !== undefined) {
+      if (CATEGORIAS.includes(req.body.categoria)) data.categoria = req.body.categoria; else campos.push('categoria');
+    }
+    if (req.body?.prioridade !== undefined) {
+      if (PRIORIDADES.includes(req.body.prioridade)) data.prioridade = req.body.prioridade; else campos.push('prioridade');
+    }
+    if (req.body?.responsavelId !== undefined) {
+      if (req.body.responsavelId === null) data.responsavelId = null;
+      else {
+        const u = await prisma.usuario.findFirst({ where: { id: String(req.body.responsavelId), perfil: 'ADMIN' }, select: { id: true } });
+        if (u) data.responsavelId = u.id; else campos.push('responsavelId');
+      }
+    }
+    if (campos.length) return res.status(422).json({ erro: 'Confira os campos.', campos });
+    if (!Object.keys(data).length) return res.status(422).json({ erro: 'Nada pra mudar.' });
+    const chamado = await prisma.chamado.findUnique({ where: { id: req.params.id }, select: { id: true, clienteId: true } });
+    if (!chamado) return res.status(404).json({ erro: 'Chamado não encontrado.' });
+    await prisma.chamado.update({ where: { id: chamado.id }, data });
+    await registrarAuditoria(req, { acao: 'CHAMADO_EDITAR', alvoTipo: 'CLIENTE', alvoId: chamado.clienteId, detalhes: { chamadoId: chamado.id, ...data } });
+    res.json(await carregarChamadoCompleto(chamado.id));
+  } catch (e) {
+    console.error('[admin/suporte/editar]', e);
+    res.status(500).json({ erro: 'Erro ao atualizar o chamado.' });
+  }
+});
+
+roteador.post('/chamados/:id/nota', requerPapelAdmin('suporte.responder'), async (req, res) => {
+  try {
+    const texto = textoValido(req.body?.texto, 1, 4000);
+    if (!texto) return res.status(422).json({ erro: 'Escreva a nota.', campos: ['texto'] });
+    const chamado = await prisma.chamado.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!chamado) return res.status(404).json({ erro: 'Chamado não encontrado.' });
+    // Nota interna nao muda o status nem avisa o cliente.
+    await prisma.chamadoMensagem.create({ data: { chamadoId: chamado.id, autor: 'INTERNO', autorNome: req.usuario.nome || 'Equipe', texto } });
+    res.status(201).json(await carregarChamadoCompleto(chamado.id));
+  } catch (e) {
+    console.error('[admin/suporte/nota]', e);
+    res.status(500).json({ erro: 'Erro ao salvar a nota.' });
   }
 });
 
@@ -113,12 +240,21 @@ roteador.post('/chamados/:id/responder', requerPapelAdmin('suporte.responder'), 
     const texto = textoValido(req.body?.texto, 1, 4000);
     if (!texto) return res.status(422).json({ erro: 'Escreva a resposta.', campos: ['texto'] });
     const resolver = req.body?.resolver === true;
-    const chamado = await prisma.chamado.findUnique({ where: { id: req.params.id }, select: { id: true, clienteId: true, usuarioId: true, assunto: true } });
+    const chamado = await prisma.chamado.findUnique({ where: { id: req.params.id }, select: { id: true, clienteId: true, usuarioId: true, assunto: true, primeiraRespostaEm: true, responsavelId: true } });
     if (!chamado) return res.status(404).json({ erro: 'Chamado não encontrado.' });
 
     await prisma.$transaction([
       prisma.chamadoMensagem.create({ data: { chamadoId: chamado.id, autor: 'SUPORTE', autorNome: req.usuario.nome || 'Suporte Sellergy', texto } }),
-      prisma.chamado.update({ where: { id: chamado.id }, data: { status: resolver ? 'RESOLVIDO' : 'RESPONDIDO' } }),
+      prisma.chamado.update({
+        where: { id: chamado.id },
+        data: {
+          status: resolver ? 'RESOLVIDO' : 'RESPONDIDO',
+          lidoSuporteEm: new Date(),
+          ...(chamado.primeiraRespostaEm ? {} : { primeiraRespostaEm: new Date() }),
+          // Quem responde primeiro vira o responsavel, se ninguem pegou.
+          ...(chamado.responsavelId ? {} : { responsavelId: req.usuario.id }),
+        },
+      }),
     ]);
 
     // Aviso pro cliente: no sistema (abre a conversa no botao de ajuda) e no
