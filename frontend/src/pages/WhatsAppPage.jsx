@@ -104,7 +104,7 @@ export default function WhatsAppPage() {
   }, [buscaAtiva, filtro, lista.proximo]);
 
   useAcaoTopo(
-    <Button size="sm" variant="secondary" icon={RefreshCw} onClick={() => carregarLista()}>Atualizar</Button>,
+    <Button size="sm" variant="secondary" icon={RefreshCw} aria-label="Atualizar conversas" onClick={() => carregarLista()}><span className="max-sm:hidden">Atualizar</span></Button>,
     [carregarLista]
   );
 

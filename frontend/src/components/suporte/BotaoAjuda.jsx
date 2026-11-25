@@ -475,6 +475,7 @@ export default function BotaoAjuda() {
     return () => window.removeEventListener('keydown', aoTeclar);
   });
 
+  const naTelaDoWhatsapp = location.pathname.startsWith('/app/whatsapp');
   const tirarDaUrl = () => { if (chamadoDaUrl) { params.delete('ajuda'); setParams(params, { replace: true }); } };
   const irInicio = () => { tirarDaUrl(); setAberto(true); setTela({ tipo: 'inicio' }); setCarregando(true); carregar(); };
   const alternar = () => { if (painelAberto) fechar(); else irInicio(); };
@@ -530,7 +531,7 @@ export default function BotaoAjuda() {
         aria-expanded={painelAberto}
         aria-label={painelAberto ? 'Fechar o suporte' : 'Ajuda: falar com o suporte'}
         className={clsx('fixed bottom-4 right-4 z-40 w-11 h-11 grid place-items-center rounded-full bg-[var(--primary)] text-[var(--text-on-primary)] shadow-[0_6px_18px_rgba(19,111,77,0.4)] hover:bg-[var(--primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--primary)]',
-          painelAberto && 'max-sm:hidden')}
+          (painelAberto || naTelaDoWhatsapp) && 'max-sm:hidden')}
       >
         {painelAberto ? <ChevronDown size={18} /> : <MessageCircle size={18} aria-hidden="true" />}
       </button>

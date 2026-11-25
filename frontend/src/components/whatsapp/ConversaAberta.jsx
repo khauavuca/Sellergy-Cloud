@@ -268,37 +268,38 @@ export default function ConversaAberta({
 
   return (
     <section aria-label={`Conversa com ${nome}`} className={clsx('rounded-[10px] border border-[var(--border-main)] bg-[var(--bg-card)] min-w-0 flex flex-col overflow-hidden', className)}>
-      <header className="px-3 sm:px-4 py-3 border-b border-[var(--border-subtle)] flex flex-wrap items-center gap-x-3 gap-y-2">
-        <IconButton icon={ArrowLeft} ariaLabel="Voltar para a lista" size="sm" className="lg:hidden" onClick={onVoltar} />
-        <span className="flex-none w-9 h-9 rounded-full grid place-items-center text-xs font-bold bg-[var(--accent-soft)] text-[var(--accent-text)]" aria-hidden="true">
+      <header className="px-2 sm:px-4 py-2 sm:py-3 border-b border-[var(--border-subtle)] flex items-center gap-2 sm:gap-3 min-w-0">
+        <IconButton icon={ArrowLeft} ariaLabel="Voltar para a lista" size="sm" className="lg:hidden flex-none" onClick={onVoltar} />
+        <span className="flex-none w-8 h-8 sm:w-9 sm:h-9 rounded-full grid place-items-center text-xs font-bold bg-[var(--accent-soft)] text-[var(--accent-text)]" aria-hidden="true">
           {iniciais(nome)}
         </span>
-        <div className="flex-1 min-w-[140px]">
-          <h2 className="m-0 text-[15px] font-bold text-[var(--text-main)] truncate">{nome}</h2>
-          <p className="m-0 text-xs text-[var(--text-muted)] truncate">
+        <div className="flex-1 min-w-0">
+          <h2 className="m-0 text-[14px] sm:text-[15px] font-bold text-[var(--text-main)] truncate">{nome}</h2>
+          <p className="m-0 text-[11px] sm:text-xs text-[var(--text-muted)] truncate">
+            <span className="sm:hidden">{pausada ? 'Com a equipe' : 'Bot respondendo'} · </span>
             {formatarTelefone(conversa.telefone)}
-            {conversa.canal ? ` · chegou pelo ${NOME_CANAL[conversa.canal] || 'WhatsApp'}` : ''}
+            <span className="max-sm:hidden">{conversa.canal ? ` · chegou pelo ${NOME_CANAL[conversa.canal] || 'WhatsApp'}` : ''}</span>
           </p>
         </div>
-        <Badge variant={pausada ? 'neutral' : 'info'} icon={pausada ? UserRound : Bot}>
+        <Badge variant={pausada ? 'neutral' : 'info'} icon={pausada ? UserRound : Bot} className="max-sm:hidden">
           {pausada ? (conversa.botPausadoAte ? `Com a equipe até ${hora(conversa.botPausadoAte)}` : 'Com a equipe') : 'Bot respondendo'}
         </Badge>
         {podeResponder && (pausada ? (
-          <Button size="sm" variant="secondary" icon={Undo2} onClick={onRetomar}>Devolver ao bot</Button>
+          <Button size="sm" variant="secondary" icon={Undo2} onClick={onRetomar} aria-label="Devolver ao bot" className="flex-none"><span className="max-sm:hidden">Devolver ao bot</span></Button>
         ) : (
           <Dropdown
             align="right"
-            trigger={<Button size="sm" variant="secondary" icon={Hand}>Assumir conversa</Button>}
+            trigger={<Button size="sm" variant="secondary" icon={Hand} aria-label="Assumir conversa" className="flex-none"><span className="max-sm:hidden">Assumir conversa</span></Button>}
           >
             <DropdownItem onClick={() => onPausar(4)}>Por 4 horas</DropdownItem>
             <DropdownItem onClick={() => onPausar(24)}>Até amanhã (24 h)</DropdownItem>
             <DropdownItem onClick={() => onPausar(null)}>Até eu devolver ao bot</DropdownItem>
           </Dropdown>
         ))}
-        <Button size="sm" variant="ghost" className="xl:hidden" onClick={onFicha}>Ficha</Button>
+        <Button size="sm" variant="ghost" icon={UserRound} aria-label="Ficha do cliente" className="xl:hidden flex-none" onClick={onFicha}><span className="max-sm:hidden">Ficha</span></Button>
       </header>
 
-      <div ref={rolagem} className="flex-1 min-h-0 overflow-y-auto bg-[var(--bg-app)] p-3 sm:p-4 flex flex-col gap-2" aria-live="polite" aria-busy={carregando}>
+      <div ref={rolagem} className="flex-1 min-h-0 overflow-y-auto bg-[var(--bg-app)] px-2 py-3 sm:p-4 flex flex-col gap-2" aria-live="polite" aria-busy={carregando}>
         {temMais && (
           <div className="self-center">
             <Button size="sm" variant="ghost" loading={carregandoMais} onClick={carregarAntigas}>Mensagens anteriores</Button>
@@ -314,7 +315,7 @@ export default function ConversaAberta({
         ) : <Bolha key={it.m.id} m={it.m} conversaId={conversa.id} podeReagir={podeResponder && !bloqueado} onReagir={reagir} />))}
       </div>
 
-      <div className="border-t border-[var(--border-subtle)] px-3 sm:px-4 py-3 flex flex-col gap-2.5">
+      <div className="border-t border-[var(--border-subtle)] px-2 sm:px-4 py-2 sm:py-3 flex flex-col gap-2 sm:gap-2.5">
         {podeResponder && <AtalhosResposta atalhos={atalhos} conversa={conversa} onInserir={inserir} desabilitado={bloqueado} />}
         {podeResponder && (
           <div className="flex items-center gap-1" role="tablist" aria-label="Tipo de mensagem">
@@ -369,7 +370,8 @@ export default function ConversaAberta({
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); enviar(); }
               }}
               disabled={modo === 'mensagem' && (bloqueado || Boolean(gravando))}
-              placeholder={modo === 'nota' ? 'Nota interna (só a equipe vê)' : gravando ? 'Gravando mensagem de voz…' : bloqueado ? 'Responder está indisponível agora' : arquivo ? 'Legenda (opcional)' : 'Escreva uma mensagem (Enter envia, Shift+Enter quebra linha)'}
+              placeholder={modo === 'nota' ? 'Nota interna (só a equipe vê)' : gravando ? 'Gravando mensagem de voz…' : bloqueado ? 'Responder está indisponível agora' : arquivo ? 'Legenda (opcional)' : 'Mensagem'}
+              title="Enter envia, Shift+Enter quebra linha"
               className="flex-1 min-w-0 min-h-10 max-h-40 resize-none field-sizing-content px-3 py-2 rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)] text-[13px] text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--primary)] focus:shadow-[var(--shadow-focus)] disabled:opacity-60"
             />
             {modo === 'mensagem' && !rascunho.trim() && !arquivo ? (
@@ -387,7 +389,7 @@ export default function ConversaAberta({
           <p className="m-0 text-xs text-[var(--text-muted)]">Você pode ler as conversas, mas responder precisa da permissão de editar Clientes.</p>
         )}
         <div className={clsx(
-          'flex gap-2 items-start text-xs',
+          'flex gap-2 items-start text-xs max-sm:text-[11px] max-sm:[&>span:nth-child(2)]:line-clamp-1',
           aviso.tom === 'perigo' && 'text-[var(--danger-text)]',
           aviso.tom === 'alerta' && 'text-[var(--warning-text)]',
           aviso.tom === 'neutro' && 'text-[var(--text-muted)]'
