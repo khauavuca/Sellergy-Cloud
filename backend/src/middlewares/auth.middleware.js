@@ -64,6 +64,11 @@ async function conferirAdmin(req, res, next, decodificado) {
   return next();
 }
 
+/** Token de sessao de verdade: tem usuario e perfil e nao e etapa de login. PURA. */
+function ehTokenDeSessao(dados) {
+  return Boolean(dados && typeof dados === 'object' && dados.id && dados.perfil && !dados.etapa);
+}
+
 const middlewareAutenticacao = (req, res, next) => {
   // Navegador: o token vem no cookie httpOnly, fora do alcance do JavaScript
   // (um XSS nao consegue le-lo). Clientes fora do navegador — scripts,
@@ -90,6 +95,13 @@ const middlewareAutenticacao = (req, res, next) => {
   try {
     decodificado = jwt.verify(token, SEGREDO_JWT);
   } catch (erro) {
+    return res.status(401).json({ erro: 'Token invalido ou expirado' });
+  }
+
+  // So token de SESSAO abre a API. O desafio do 2FA (etapa: '2fa') e assinado
+  // com o mesmo segredo, mas so vale em POST /autenticacao/login/2fa: aceitar
+  // ele aqui deixava pular o segundo fator (trocar senha/e-mail so com a senha).
+  if (!ehTokenDeSessao(decodificado)) {
     return res.status(401).json({ erro: 'Token invalido ou expirado' });
   }
 
@@ -125,3 +137,4 @@ const middlewareAutenticacao = (req, res, next) => {
 
 module.exports = middlewareAutenticacao;
 module.exports.SEGREDO_JWT = SEGREDO_JWT;
+module.exports.ehTokenDeSessao = ehTokenDeSessao;

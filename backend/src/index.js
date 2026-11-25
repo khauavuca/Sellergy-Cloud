@@ -95,6 +95,8 @@ io.use((socket, next) => {
 
   try {
     const dados = jwt.verify(token, SEGREDO_JWT);
+    // So token de sessao (o desafio do 2FA nao abre o tempo real).
+    if (!dados?.id || !dados?.perfil || dados.etapa) return next(new Error('Token invalido'));
     // Sessao de suporte (so leitura) nao abre o tempo real: ali ha eventos que escrevem.
     if (dados.suporte) return next(new Error('Sessao de suporte nao usa o tempo real'));
     socket.usuario = dados;
@@ -104,6 +106,9 @@ io.use((socket, next) => {
   }
 });
 
+// Erros sempre com `erro` e sem detalhe interno no 5xx (seguranca/respostaSegura.js).
+const { mensagemPadronizada, tratadorFinal } = require('./seguranca/respostaSegura');
+app.use(mensagemPadronizada);
 app.use(helmet());
 app.use(cors(opcoesCors));
 
@@ -222,6 +227,9 @@ app.get('/saude', (req, res) => {
   res.json({ status: 'ok', data: new Date() });
 });
 
+// Ultimo da cadeia: erro nao tratado (CORS, JSON quebrado, excecao) vira JSON seguro.
+app.use(tratadorFinal);
+
 io.on('connection', (socket) => {
   console.log('Novo cliente conectado:', socket.id, 'usuario:', socket.usuario?.id);
 
@@ -271,6 +279,23 @@ io.on('connection', (socket) => {
     }
   });
 })();
+
+// Rota que nao existe: JSON curto (sem a pagina padrao do Express).
+app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada' }));
+
+// Erros que escaparam das rotas: resposta curta, sem stack trace nem caminho
+// de arquivo (o Express em modo dev devolvia o erro inteiro em HTML).
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  if (/Origem nao permitida pelo CORS/.test(err?.message || '')) return res.status(403).json({ erro: 'Origem não permitida.' });
+  if (err?.type === 'entity.parse.failed') return res.status(400).json({ erro: 'Corpo da requisição inválido.' });
+  if (err?.type === 'entity.too.large') return res.status(413).json({ erro: 'Requisição grande demais.' });
+  const status = Number(err?.status || err?.statusCode);
+  if (status >= 400 && status < 500) return res.status(status).json({ erro: 'Requisição inválida.' });
+  console.error('[erro nao tratado]', req.method, req.originalUrl, err?.message || err);
+  return res.status(500).json({ erro: 'Erro interno. Tente de novo em instantes.' });
+});
 
 const PORTA = process.env.BACKEND_PORT || 3333;
 
