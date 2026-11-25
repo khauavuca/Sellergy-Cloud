@@ -1,0 +1,95 @@
+[
+  {
+    "grupo": "Primeiros passos",
+    "modulos": [
+      {
+        "slug": "primeiros-passos",
+        "titulo": "Primeiros passos",
+        "icone": "inicio",
+        "resumo": "Criar a conta, configurar o negócio e começar a usar no primeiro dia."
+      },
+      {
+        "slug": "conta",
+        "titulo": "Conta e equipe",
+        "icone": "conta",
+        "resumo": "Seus dados, usuários da equipe, permissões, importar planilha e configurações."
+      },
+      {
+        "slug": "plano",
+        "titulo": "Plano e pagamento",
+        "icone": "plano",
+        "resumo": "Mensalidade do Sellergy, teste grátis, troca de plano e segunda via."
+      }
+    ]
+  },
+  {
+    "grupo": "Atendimento e vendas",
+    "modulos": [
+      {
+        "slug": "clientes",
+        "titulo": "Clientes",
+        "icone": "clientes",
+        "resumo": "Cadastro de clientes, histórico e funil de atendimento."
+      },
+      {
+        "slug": "agenda",
+        "titulo": "Agenda",
+        "icone": "agenda",
+        "resumo": "Horários, lista de espera, pacotes de sessões e lembretes."
+      },
+      {
+        "slug": "vendas",
+        "titulo": "Vendas e pedidos",
+        "icone": "vendas",
+        "resumo": "Registrar vendas, acompanhar pedidos e fazer devoluções."
+      },
+      {
+        "slug": "servicos",
+        "titulo": "Serviços",
+        "icone": "servicos",
+        "resumo": "Cadastro de serviços, preços e duração."
+      },
+      {
+        "slug": "campanhas",
+        "titulo": "Campanhas",
+        "icone": "campanhas",
+        "resumo": "Mensagens para vários clientes de uma vez pelo WhatsApp."
+      }
+    ]
+  },
+  {
+    "grupo": "Gestão",
+    "modulos": [
+      {
+        "slug": "estoque",
+        "titulo": "Estoque",
+        "icone": "estoque",
+        "resumo": "Produtos, movimentações, reposição, categorias, fornecedores e entrada de nota."
+      },
+      {
+        "slug": "financeiro",
+        "titulo": "Financeiro",
+        "icone": "financeiro",
+        "resumo": "Lançamentos, caixa, contas a pagar, categorias e comissões."
+      },
+      {
+        "slug": "pagamentos",
+        "titulo": "Pagamentos",
+        "icone": "pagamentos",
+        "resumo": "Receber pelo sistema e configurar a conta de recebimento."
+      },
+      {
+        "slug": "fiscal",
+        "titulo": "Fiscal",
+        "icone": "fiscal",
+        "resumo": "Configurar e emitir nota fiscal."
+      },
+      {
+        "slug": "relatorios",
+        "titulo": "Relatórios",
+        "icone": "relatorios",
+        "resumo": "Visão executiva, fechamento do mês e relatórios por área."
+      }
+    ]
+  }
+]
