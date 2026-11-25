@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useEffect, lazy, Suspense } from 'react';
+import { NO_PAINEL, ADMIN_NESTE_SITE } from './utils/painel';
 import { useAuthStore } from './store/auth.store';
 import { useUiStore } from './store/ui.store';
 import { ToastProvider } from './components/ui';
@@ -18,7 +19,6 @@ const ClientLayout = lazy(() => import('./components/ClientLayout'));
 
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const ClientDashboardPage = lazy(() => import('./pages/ClientDashboardPage'));
-const DesignShowcasePage = lazy(() => import('./pages/DesignShowcasePage'));
 
 // Paginas reais do cliente (Pacote 3) - jaa rodando.
 // Cliente
@@ -41,14 +41,8 @@ const PlanoPage = lazy(() => import('./pages/PlanoPage'));
 // Admin
 const ClientsPage = lazy(() => import('./pages/ClientsPage'));
 const AdminPermissoesClientePage = lazy(() => import('./pages/AdminPermissoesClientePage'));
-const BotsPage = lazy(() => import('./pages/BotsPage'));
-const BotCanalPage = lazy(() => import('./pages/BotCanalPage'));
-const AlertsPage = lazy(() => import('./pages/AlertsPage'));
-const ReportsPage = lazy(() => import('./pages/ReportsPage'));
 const RelatoriosPage = lazy(() => import('./pages/RelatoriosPage'));
 const RelatorioMensalDetalhePage = lazy(() => import('./pages/RelatorioMensalDetalhePage'));
-const UsersPage = lazy(() => import('./pages/UsersPage'));
-const ConfiguracoesAdminPage = lazy(() => import('./pages/ConfiguracoesAdminPage'));
 const CampanhasPage = lazy(() => import('./pages/CampanhasPage'));
 const BotsClientePage = lazy(() => import('./pages/BotsClientePage'));
 const AdminAssinaturasPage = lazy(() => import('./pages/AdminAssinaturasPage'));
@@ -88,12 +82,7 @@ function CarregandoPagina() {
   );
 }
 
-// Painel admin num endereco proprio (VITE_HOST_PAINEL, ex.: crm.sellergycloud.com).
-// Nos outros enderecos as telas /admin nem existem: caem no login do cliente.
-// Sem a variavel (dev em localhost) o admin abre em qualquer lugar.
-const HOST_PAINEL = String(import.meta.env.VITE_HOST_PAINEL || '').trim().toLowerCase();
-const NO_PAINEL = Boolean(HOST_PAINEL) && window.location.hostname.toLowerCase() === HOST_PAINEL;
-const ADMIN_NESTE_SITE = !HOST_PAINEL || NO_PAINEL;
+// Painel admin so no endereco proprio: regra em utils/painel.js.
 
 const SoNoPainel = ({ children }) => (ADMIN_NESTE_SITE ? children : <Navigate to="/app/login" replace />);
 
@@ -225,14 +214,7 @@ export default function App() {
             <Route path="/admin/uso" element={<AdminUsoPage />} />
             <Route path="/admin/equipe" element={<AdminEquipePage />} />
             <Route path="/admin/planos" element={<AdminPlanosPage />} />
-            <Route path="/admin/bots" element={<BotsPage />} />
-            <Route path="/admin/bots/:botId/canal" element={<BotCanalPage />} />
-            <Route path="/admin/alertas" element={<AlertsPage />} />
-            <Route path="/admin/relatorios" element={<ReportsPage />} />
-            <Route path="/admin/usuarios" element={<UsersPage />} />
-            <Route path="/admin/configuracoes" element={<ConfiguracoesAdminPage />} />
             <Route path="/admin/configuracoes/perfil" element={<PerfilPage />} />
-            <Route path="/admin/_design" element={<DesignShowcasePage />} />
           </Route>
 
           {/* ECOSSISTEMA CLIENTE */}

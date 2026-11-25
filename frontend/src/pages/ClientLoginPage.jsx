@@ -5,6 +5,7 @@ import { useAuthStore } from '../store/auth.store';
 import { Button, Input } from '../components/ui';
 import SellergyLogo from '../components/SellergyLogo';
 import EtapaCodigo from '../components/auth/EtapaCodigo';
+import { ADMIN_NESTE_SITE } from '../utils/painel';
 
 /**
  * Login do cliente final (CLIENT, ADMINISTRADOR, VENDEDOR).
@@ -18,7 +19,10 @@ export default function ClientLoginPage() {
   useEffect(() => {
     if (isAuthenticated && user) {
       if (user.perfil === 'ADMIN') {
-        logout();
+        // No endereco do painel (crm) o admin segue pro painel. No site publico
+        // (sellergycloud.com) o painel nao existe: encerra a sessao.
+        if (ADMIN_NESTE_SITE) navigate('/admin/dashboard', { replace: true });
+        else logout();
       } else if (['CLIENT', 'ADMINISTRADOR', 'VENDEDOR'].includes(user.perfil)) {
         navigate('/app/dashboard');
       }
