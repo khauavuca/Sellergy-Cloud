@@ -12,6 +12,10 @@ const adminCredencialIAService = {
     const { data } = await api.put('/admin/plataforma/credencial-ia', { apiKey });
     return data;
   },
+  remover: async () => {
+    const { data } = await api.delete('/admin/plataforma/credencial-ia');
+    return data;
+  },
 };
 
 export default adminCredencialIAService;

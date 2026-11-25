@@ -194,3 +194,30 @@ test('PUT: dono nao aumenta a propria cota de IA (so admin)', async () => {
   assert.equal(gravados[1].iaExcedenteAutorizadoTokens, 1_000_000);
   assert.equal(gravados[1].iaPrecoPorMilTokensExcedenteCentavos, 1.5);
 });
+
+test('PUT: dono nao liga a IA nem troca o modelo; ajusta so prompt e acoes', async () => {
+  usuarioAtual = { id: 'u1', perfil: 'DONO', clienteId: 'c1' };
+  const gravados = [];
+  prisma.bot.findFirst = async () => ({ id: 'b1' });
+  prisma.bot.update = async ({ data }) => { gravados.push(data); return { id: 'b1', clienteId: 'c1' }; };
+  const put = (corpo) => fetch(`${base}/bots/b1`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(corpo) });
+  assert.equal((await put({ iaAtiva: true, iaModelo: 'deepseek-v4-pro', iaPromptSistema: '  Seja breve.  ' })).status, 200);
+  assert.equal(gravados[0].iaAtiva, undefined);
+  assert.equal(gravados[0].iaModelo, undefined);
+  assert.equal(gravados[0].iaPromptSistema, 'Seja breve.');
+  usuarioAtual = { id: 'a1', perfil: 'ADMIN' };
+  assert.equal((await put({ iaAtiva: true, iaModelo: 'deepseek-v4-pro' })).status, 200);
+  assert.equal(gravados[1].iaAtiva, true);
+  assert.equal(gravados[1].iaModelo, 'deepseek-v4-pro');
+});
+
+test('GET /bots: admin filtra por ?clienteId; dono fica no proprio negocio', async () => {
+  const filtros = [];
+  prisma.bot.findMany = async ({ where }) => { filtros.push(where); return []; };
+  usuarioAtual = { id: 'a1', perfil: 'ADMIN' };
+  await fetch(`${base}/bots?clienteId=c9`);
+  assert.deepEqual(filtros[0], { clienteId: 'c9' });
+  usuarioAtual = { id: 'u1', perfil: 'DONO', clienteId: 'c1' };
+  await fetch(`${base}/bots?clienteId=c9`);
+  assert.deepEqual(filtros[1], { clienteId: 'c1' });
+});

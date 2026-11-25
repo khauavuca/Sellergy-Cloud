@@ -7,6 +7,7 @@ import { Badge, Button, EmptyState, Input, KpiCard, Select, useToast } from '../
 import { brl } from '../components/conta/rotulosAssinatura';
 import { Carregando, ErroCarregar, SemPermissao } from '../components/suporte/EstadosAdmin';
 import { erroDaApi, usePapelAdmin } from '../components/suporte/papelAdmin';
+import ChaveIAPlataforma from '../components/admin/ChaveIAPlataforma';
 
 const NOME_MES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 
@@ -288,6 +289,11 @@ export default function AdminUsoPage() {
           ) : (
             <Carregando linhas={3} />
           )}
+          <div className="pt-3 mt-1 border-t border-[var(--border-main)]">
+            <h2 className="text-sm font-semibold text-[var(--text-main)] mb-2">IA dos bots</h2>
+            <ChaveIAPlataforma />
+            <p className="text-xs text-[var(--text-muted)] mt-2">Para ligar a IA de um cliente: Clientes, menu do cliente, IA do bot.</p>
+          </div>
         </aside>
       </div>
     </div>

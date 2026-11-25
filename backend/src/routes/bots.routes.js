@@ -57,6 +57,15 @@ const camposBotPublicos = {
 
 const TAM_MAX_PROMPT_IA = 4000;
 
+// Campos de IA que so o admin da plataforma pode mudar (ver PUT /:id).
+const CAMPOS_IA_SO_ADMIN = [
+  'iaAtiva',
+  'iaModelo',
+  'iaTokensIncluidosMes',
+  'iaPrecoPorMilTokensExcedenteCentavos',
+  'iaExcedenteAutorizadoTokens',
+];
+
 // Valida os campos de IA vindos do body. Retorna { data } com so o que veio
 // definido, ou { erro }.
 function validarCamposIA(body) {
@@ -122,8 +131,13 @@ function filtroTenant(req) {
 
 roteador.get('/', requerPermissao('BOTS', 'visualizar'), async (req, res) => {
   try {
+    // Admin pode pedir os bots de um negocio so (?clienteId=), ex.: tela de IA.
+    const where = filtroTenant(req);
+    if (ehAdmin(req.usuario) && typeof req.query.clienteId === 'string' && req.query.clienteId) {
+      where.clienteId = req.query.clienteId;
+    }
     const bots = await prisma.bot.findMany({
-      where: filtroTenant(req),
+      where,
       select: {
         ...camposBotPublicos,
         cliente: { select: { nome: true } },
@@ -275,12 +289,11 @@ roteador.put('/:id', requerPermissao('BOTS', 'editar'), async (req, res) => {
 
     const { data: dadosIA, erro: erroIA } = validarCamposIA(req.body || {});
     if (erroIA) return res.status(400).json({ erro: erroIA });
-    // Cota, preco do excedente e pacote extra sao regra comercial: so o
-    // admin da plataforma muda. O dono do negocio nao aumenta a propria cota.
+    // Ligar a IA, o modelo, a cota, o preco do excedente e o pacote extra sao
+    // regra comercial (a IA custa pra plataforma): so o admin muda. O dono do
+    // negocio so ajusta a instrucao (prompt) e as acoes da IA.
     if (!ehAdmin(req.usuario)) {
-      delete dadosIA.iaTokensIncluidosMes;
-      delete dadosIA.iaPrecoPorMilTokensExcedenteCentavos;
-      delete dadosIA.iaExcedenteAutorizadoTokens;
+      for (const campo of CAMPOS_IA_SO_ADMIN) delete dadosIA[campo];
     }
 
     const bot = await prisma.bot.update({

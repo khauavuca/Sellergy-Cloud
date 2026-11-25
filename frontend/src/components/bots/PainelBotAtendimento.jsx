@@ -61,7 +61,7 @@ export default function PainelBotAtendimento({
           {ehIA
             ? `Entende texto livre e usa as informações do negócio. Modelo: ${bot.iaModelo || '—'}.`
             : 'Sem IA: responde com base nas perguntas e respostas cadastradas e nas palavras-chave.'}
-          {' '}O modo é definido pelo administrador.
+          {' '}O modo é definido pelo administrador{ehIA ? '.' : ': para usar IA, fale com o suporte.'}
         </span>
       </div>
 
