@@ -57,6 +57,43 @@ async function lojaOnline(slug) {
 
 const indisponivel = (res) => res.status(404).json({ erro: 'Loja online indisponível neste endereço.', codigo: 'LOJA_INDISPONIVEL' });
 
+/** So digitos, com DDI 55 quando vier so DDD + numero. null se nao parece telefone. */
+function paraWaMe(texto) {
+  let d = String(texto || '').replace(/\D/g, '');
+  if (d.length === 10 || d.length === 11) d = `55${d}`;
+  return d.length >= 12 && d.length <= 13 ? d : null;
+}
+
+/**
+ * Numero de WhatsApp que recebe o pedido: o conectado na tela Bots (QR Code
+ * ou oficial confirmado); sem bot conectado, o telefone do cadastro.
+ */
+async function whatsappDoNegocio(clienteId) {
+  const bots = await prisma.bot.findMany({
+    where: { clienteId },
+    select: { provedorCanal: true, statusConexaoBaileys: true, baileysNumeroConectado: true, oficialNumeroExibicao: true, webhookConfirmadoEm: true },
+    orderBy: { criadoEm: 'asc' },
+  });
+  for (const b of bots) {
+    if (b.provedorCanal === 'BAILEYS' && b.statusConexaoBaileys === 'CONECTADO' && paraWaMe(b.baileysNumeroConectado)) return paraWaMe(b.baileysNumeroConectado);
+    if (b.provedorCanal === 'META_CLOUD' && b.webhookConfirmadoEm && paraWaMe(String(b.oficialNumeroExibicao || '').split('·')[0])) {
+      return paraWaMe(String(b.oficialNumeroExibicao).split('·')[0]);
+    }
+  }
+  const c = await prisma.cliente.findUnique({ where: { id: clienteId }, select: { telefone: true } });
+  return paraWaMe(c?.telefone);
+}
+
+const brl = (v) => `R$ ${Number(v || 0).toFixed(2).replace('.', ',')}`;
+
+/** Mensagem que o cliente manda pro negocio depois de fechar o pedido. */
+function mensagemDoPedido(pedido) {
+  const itens = (Array.isArray(pedido.itens) ? pedido.itens : [])
+    .map((i) => `• ${i.quantidade}x ${i.nome} — ${brl(i.subtotal ?? (i.precoUnitario * i.quantidade))}`);
+  const receber = pedido.entrega === 'ENTREGA' ? 'entrega' : 'retirada na loja';
+  return [`Olá! Acabei de fazer o pedido #${pedido.numero} pelo catálogo:`, ...itens, `Total: ${brl(pedido.total)} (${receber})`].join('\n');
+}
+
 /** O Asaas cobra com CPF de quem paga: a loja pede o CPF so nesse caso. */
 function exigeCpf(cliente) {
   return cliente.configuracaoPagamento?.ativo === true && cliente.configuracaoPagamento.provedor === 'ASAAS';
@@ -97,8 +134,13 @@ roteador.get('/pedido/:token', limitadorLeitura, async (req, res) => {
       }
     }
 
+    // Botao "mandar no WhatsApp da loja" (mensagem pronta com o pedido).
+    const numeroZap = pedido.status === 'CANCELADO' ? null : await whatsappDoNegocio(pedido.clienteId).catch(() => null);
     res.json({
-      negocio: { nome: negocio?.brandNome || negocio?.nome || '', logo: negocio?.brandLogo || null, slug: negocio?.slugPublico || null },
+      negocio: {
+        nome: negocio?.brandNome || negocio?.nome || '', logo: negocio?.brandLogo || null, slug: negocio?.slugPublico || null,
+        whatsappUrl: numeroZap ? `https://wa.me/${numeroZap}?text=${encodeURIComponent(mensagemDoPedido(pedido))}` : null,
+      },
       pedido: {
         numero: pedido.numero,
         primeiroNome: String(pedido.nomeCliente || '').trim().split(/\s+/)[0],
@@ -168,7 +210,10 @@ roteador.get('/:slug', limitadorLeitura, async (req, res) => {
     const categorias = [...new Set(vitrine.map((p) => p.categoria))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
     res.json({
-      negocio: { nome: cliente.brandNome || cliente.nome, logo: cliente.brandLogo || null, corDestaque: config.corDestaque || null },
+      negocio: {
+        nome: cliente.brandNome || cliente.nome, logo: cliente.brandLogo || null, corDestaque: config.corDestaque || null,
+        temWhatsapp: Boolean(await whatsappDoNegocio(cliente.id)),
+      },
       entrega: {
         aceitaRetirada: config.aceitaRetirada,
         aceitaEntrega: config.aceitaEntrega,
@@ -202,7 +247,10 @@ roteador.post('/:slug/pedidos', limitadorEscrita, async (req, res) => {
     });
     // Avisos fora da resposta critica: falha no WhatsApp nao derruba o pedido.
     await aposPedidoDaLoja(pedido).catch((e) => console.error('[publico/loja] avisos do pedido', e?.message));
-    res.status(201).json({ token: pedido.tokenPublico, numero: pedido.numero, total: pedido.total });
+    // Depois do pedido o cliente manda no WhatsApp do negocio, com a mensagem pronta.
+    const numero = await whatsappDoNegocio(loja.cliente.id).catch(() => null);
+    const whatsappUrl = numero ? `https://wa.me/${numero}?text=${encodeURIComponent(mensagemDoPedido(pedido))}` : null;
+    res.status(201).json({ token: pedido.tokenPublico, numero: pedido.numero, total: pedido.total, whatsappUrl, mensagem: mensagemDoPedido(pedido) });
   } catch (e) {
     if (e instanceof ErroPedido) {
       return res.status(e.status).json({ erro: e.message, codigo: e.codigo, campos: e.campos, semEstoque: e.semEstoque });
@@ -213,3 +261,4 @@ roteador.post('/:slug/pedidos', limitadorEscrita, async (req, res) => {
 });
 
 module.exports = roteador;
+module.exports._internos = { paraWaMe, mensagemDoPedido };

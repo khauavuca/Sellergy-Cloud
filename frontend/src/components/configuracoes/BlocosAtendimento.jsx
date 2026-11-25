@@ -134,7 +134,7 @@ export function PreviaLembrete({ nomeNegocio }) {
 // Link de agendamento: endereço público (/agendar/<slug>). O mesmo slug
 // vale pra loja online (pedidos).
 // ---------------------------------------------------------------------
-export function BlocoLinkAgendamento({ resumo, recarregar, podeEditar, toast }) {
+export function BlocoLinkAgendamento({ resumo, recarregar, podeEditar, toast, soEndereco = false }) {
   const slugAtual = resumo?.configuracoes?.slugPublico || '';
   const [slug, setSlug] = useState(slugAtual);
   const [salvando, setSalvando] = useState(false);
@@ -167,12 +167,12 @@ export function BlocoLinkAgendamento({ resumo, recarregar, podeEditar, toast }) 
 
   return (
     <Painel
-      titulo="Link de agendamento"
-      subtitulo="A página onde a cliente marca sozinha. Coloque na bio do Instagram."
-      acoes={link ? <Badge variant="success">No ar</Badge> : <Badge variant="neutral">Sem endereço</Badge>}
+      titulo={soEndereco ? 'Endereço dos links' : 'Link de agendamento'}
+      subtitulo={soEndereco ? 'Vale para a agenda e para o catálogo. Use o nome do negócio, sem espaço.' : 'A página onde a cliente marca sozinha. Coloque na bio do Instagram.'}
+      acoes={soEndereco ? null : link ? <Badge variant="success">No ar</Badge> : <Badge variant="neutral">Sem endereço</Badge>}
     >
       <div className="flex flex-col gap-4">
-        {link && (
+        {link && !soEndereco && (
           <div className="flex flex-wrap items-center gap-2">
             <code className="flex-1 min-w-0 truncate h-10 leading-10 px-3 rounded-lg border border-[var(--border-main)] bg-[var(--bg-subtle)] text-[13px] text-[var(--text-main)]">
               {link}

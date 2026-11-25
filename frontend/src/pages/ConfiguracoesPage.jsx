@@ -16,6 +16,7 @@ import { useAuthStore } from '../store/auth.store';
 import { useUiStore } from '../store/ui.store';
 import { useResumoConta } from '../components/conta/useResumoConta';
 import ProntidaoNegocio from '../components/configuracoes/ProntidaoNegocio';
+import BlocoOnline from '../components/configuracoes/BlocoOnline';
 import {
   BlocoLembretes, BlocoLinkAgendamento, PreviaLembrete, LinhaOpcao
 } from '../components/configuracoes/BlocosAtendimento';
@@ -48,7 +49,7 @@ export default function ConfiguracoesPage() {
   const podeEditarOperacao = user?.perfil === 'CLIENT' || user?.perfil === 'ADMINISTRADOR';
   const podeVerCatalogo = !!user?.modulosLiberados?.CATALOGO;
   const temAgenda = !!user?.modulosLiberados?.AGENDA;
-  const vendeSoProduto = resumo?.negocio?.segmento === 'PRODUTO';
+  const temVendas = !!user?.modulosLiberados?.VENDAS;
 
   // Monta o menu (só com o que esta conta tem).
   const grupos = [
@@ -67,7 +68,7 @@ export default function ConfiguracoesPage() {
       itens: [
         temAgenda && { id: 'agenda', rotulo: 'Agenda e sinal', icone: CalendarDays },
         temAgenda && { id: 'lembretes', rotulo: 'Lembretes', icone: BellRing },
-        temAgenda && !vendeSoProduto && { id: 'link', rotulo: 'Link de agendamento', icone: Link2 },
+        (temAgenda || temVendas) && { id: 'link', rotulo: 'Agenda e loja online', icone: Link2 },
         { href: '/app/bots', rotulo: 'WhatsApp e bot', icone: MessageCircle },
       ].filter(Boolean),
     },
@@ -140,11 +141,14 @@ export default function ConfiguracoesPage() {
             ) : <CarregandoPainel titulo="Lembretes automáticos" />
           )}
 
+          {secao === 'link' && <BlocoOnline onAbrirSecao={abrir} />}
+
           {secao === 'link' && (
             !resumo ? (
-              <CarregandoPainel titulo="Link de agendamento" />
-            ) : resumo.plano?.recursos?.linkAgendamento ? (
+              <CarregandoPainel titulo="Endereço dos links" />
+            ) : resumo.plano?.recursos?.linkAgendamento || resumo.plano?.recursos?.catalogoOnline ? (
               <BlocoLinkAgendamento
+                soEndereco
                 key={resumo.configuracoes?.slugPublico || ''}
                 resumo={resumo}
                 recarregar={recarregar}
@@ -519,7 +523,7 @@ function BlocoHorarioFuncionamento({ user, refreshUser, toast }) {
     <Painel
       titulo="Horário de funcionamento"
       subtitulo="Quando a loja está aberta. Vale o mesmo horário pra todos os dias abertos."
-      acoes={!user?.horarioFuncionamento ? <Badge variant="warning" size="sm">Ainda não salvo</Badge> : null}
+      acoes={!user?.horarioFuncionamento ? <Badge variant="neutral" size="sm">Padrão em uso</Badge> : null}
       semPadding
     >
       <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4 border-b border-[var(--border-subtle)]">

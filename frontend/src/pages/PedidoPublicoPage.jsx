@@ -3,7 +3,7 @@
 // sozinho a cada 15 s ate o pagamento cair.
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { CheckCircle2, Clock, Package, XCircle, Loader2, Copy, ExternalLink, Store, Bike } from 'lucide-react';
+import { CheckCircle2, Clock, Package, XCircle, Loader2, Copy, ExternalLink, Store, Bike, MessageCircle } from 'lucide-react';
 import clsx from 'clsx';
 import api from '../services/api';
 import { Button } from '../components/ui';
@@ -110,7 +110,21 @@ export default function PedidoPublicoPage() {
         )}
 
         {pedido.status === 'NOVO' && (
-          <p className="text-sm text-[var(--text-secondary)]">Oi, {pedido.primeiroNome}! A loja está conferindo seu pedido e manda o Pix no seu WhatsApp. Esta página atualiza sozinha.</p>
+          <p className="text-sm text-[var(--text-secondary)]">
+            Oi, {pedido.primeiroNome}! {negocio.whatsappUrl ? 'Agora é só mandar o pedido no WhatsApp da loja para combinar o pagamento.' : 'A loja está conferindo seu pedido e manda o Pix no seu WhatsApp. Esta página atualiza sozinha.'}
+          </p>
+        )}
+
+        {negocio.whatsappUrl && pedido.status !== 'CANCELADO' && (
+          <a
+            href={negocio.whatsappUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-center gap-2 min-h-12 rounded-xl text-[15px] font-bold text-white bg-[#1FA855] hover:bg-[#1a9149] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#1FA855]"
+          >
+            <MessageCircle size={20} aria-hidden="true" />
+            {pedido.status === 'NOVO' ? 'Enviar pedido no WhatsApp' : 'Falar com a loja no WhatsApp'}
+          </a>
         )}
 
         {pagamento && (

@@ -3,6 +3,7 @@
 //
 //   GET  /conta/resumo        -> tudo que o front precisa pro banner + checklist
 //   PUT  /conta/configuracoes -> { slugPublico?, caixaAutomatico?, configLembrete? }
+//   GET  /conta/online        -> o que falta pro link de agendamento e pro catalogo online
 //
 // Sem requerModuloLiberado de proposito: precisa responder mesmo com o
 // trial vencido (e justamente quando o banner mais importa). A escrita
@@ -31,6 +32,76 @@ roteador.use(requerTenant);
 function clienteIdDe(req) {
   return ehAdmin(req.usuario) ? req.query.clienteId || req.body?.clienteId : req.usuario.clienteId;
 }
+
+// Link de agendamento e catalogo online: links e a lista do que falta.
+roteador.get('/online', async (req, res) => {
+  try {
+    const clienteId = clienteIdDe(req);
+    if (!clienteId) return res.status(400).json({ erro: 'clienteId obrigatorio.' });
+    const cliente = await prisma.cliente.findUnique({
+      where: { id: clienteId },
+      select: {
+        slugPublico: true, horarioFuncionamento: true, modulosLiberados: true, telefone: true,
+        plano: true, statusAssinatura: true, trialAte: true,
+        configuracaoCatalogo: { select: { online: true, aceitaRetirada: true, aceitaEntrega: true, freteEntrega: true } },
+      },
+    });
+    if (!cliente) return res.status(404).json({ erro: 'Cliente nao encontrado.' });
+    const { temRecurso } = require('../planos/recursos');
+    const { HORARIO_PADRAO } = require('../services/agendaSlots');
+    const base = (process.env.APP_URL_PUBLICA || process.env.VITE_URL_PUBLICA || '').replace(/\/$/, '');
+    const slug = cliente.slugPublico || null;
+
+    const [servicos, profissionais, produtos, bots] = await Promise.all([
+      prisma.produto.findMany({
+        where: { clienteId, tipo: 'SERVICO', visibilidade: 'ATIVO' },
+        select: { variacoes: { select: { preco: true, duracaoMin: true } } },
+      }),
+      prisma.especialista.count({ where: { clienteId, ativo: true } }),
+      prisma.produto.count({ where: { clienteId, tipo: 'FISICO', visibilidade: 'ATIVO', variacoes: { some: { preco: { gt: 0 } } } } }),
+      prisma.bot.findMany({
+        where: { clienteId },
+        select: { provedorCanal: true, statusConexaoBaileys: true, baileysNumeroConectado: true, oficialNumeroExibicao: true, webhookConfirmadoEm: true },
+      }),
+    ]);
+    const servicosNoLink = servicos.filter((sv) => sv.variacoes.some((v) => Number.isFinite(v.preco) && v.preco >= 0)).length;
+    const h = cliente.horarioFuncionamento && typeof cliente.horarioFuncionamento === 'object' ? cliente.horarioFuncionamento : null;
+    const hv = h || HORARIO_PADRAO;
+    const conectado = bots.find((b) => (b.provedorCanal === 'BAILEYS' && b.statusConexaoBaileys === 'CONECTADO')
+      || (b.provedorCanal === 'META_CLOUD' && b.webhookConfirmadoEm));
+    const numeroZap = conectado
+      ? (conectado.provedorCanal === 'BAILEYS' ? conectado.baileysNumeroConectado : String(conectado.oficialNumeroExibicao || '').split('·')[0].trim()) || null
+      : null;
+    const cat = cliente.configuracaoCatalogo;
+
+    const agendaLiberada = cliente.modulosLiberados?.AGENDA === true && temRecurso(cliente, 'linkAgendamento');
+    const lojaLiberada = cliente.modulosLiberados?.VENDAS === true && temRecurso(cliente, 'catalogoOnline');
+    res.json({
+      slug,
+      agenda: agendaLiberada ? {
+        link: slug && base ? `${base}/agendar/${slug}` : null,
+        horario: { salvo: Boolean(h), abertura: hv.abertura, fechamento: hv.fechamento, dias: hv.dias },
+        servicos: servicosNoLink,
+        profissionais,
+        pronto: Boolean(slug) && servicosNoLink > 0 && profissionais > 0,
+      } : null,
+      loja: lojaLiberada ? {
+        link: slug && base ? `${base}/loja/${slug}` : null,
+        online: Boolean(cat?.online),
+        produtos,
+        whatsapp: numeroZap || cliente.telefone || null,
+        whatsappDoBot: Boolean(numeroZap),
+        retirada: Boolean(cat?.aceitaRetirada),
+        entrega: Boolean(cat?.aceitaEntrega),
+        frete: cat?.aceitaEntrega ? Number(cat.freteEntrega) || 0 : null,
+        pronto: Boolean(slug) && Boolean(cat?.online) && produtos > 0 && Boolean(cat?.aceitaRetirada || cat?.aceitaEntrega),
+      } : null,
+    });
+  } catch (erro) {
+    console.error('[conta/online]', erro);
+    res.status(500).json({ erro: 'Erro ao carregar a agenda e a loja online.' });
+  }
+});
 
 roteador.get('/resumo', async (req, res) => {
   try {

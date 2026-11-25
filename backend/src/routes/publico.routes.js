@@ -4,6 +4,8 @@
 //   GET  /publico/planos                          -> planos e precos (landing)
 //   GET  /publico/agenda/:slug                    -> negocio + servicos + profissionais
 //   GET  /publico/agenda/:slug/horarios           -> ?especialistaId&variacaoId&data=YYYY-MM-DD
+//   GET  /publico/agenda/:slug/dias               -> ?especialistaId&variacaoId -> 14 dias livre/poucos/lotado/fechado
+//   (especialistaId=qualquer: junta os horarios de todos que fazem o servico)
 //   POST /publico/agenda/:slug/agendamentos       -> agenda (nome, telefone, horario)
 //   GET  /publico/confirmacao/:token              -> resumo do horario
 //   POST /publico/confirmacao/:token              -> { acao: CONFIRMAR | REMARCAR }
@@ -22,7 +24,7 @@ const prisma = require('../prisma');
 const { planosPublicos } = require('../planos/catalogo');
 const { temRecurso } = require('../planos/recursos');
 const { situacaoAssinatura } = require('../assinatura/situacao');
-const { listarHorariosLivres } = require('../services/agendaSlots');
+const { resumoDosDias } = require('../services/agendaSlots');
 const { aplicarResposta } = require('../agenda/respostaLembrete');
 const { lockClienteAdvisory } = require('../utils/locks');
 const sinal = require('../agenda/sinal');
@@ -80,6 +82,9 @@ roteador.get('/agenda/:slug', limitadorLeitura, async (req, res) => {
     const cliente = await negocioComAgendaOnline(req.params.slug);
     if (!cliente) return indisponivel(res);
 
+    const todos = await prisma.especialista.findMany({
+      where: { clienteId: cliente.id, ativo: true }, select: { id: true, nome: true, ativo: true }, orderBy: { nome: 'asc' },
+    });
     const servicos = await prisma.produto.findMany({
       where: { clienteId: cliente.id, tipo: 'SERVICO', visibilidade: 'ATIVO' },
       select: {
@@ -101,8 +106,8 @@ roteador.get('/agenda/:slug', limitadorLeitura, async (req, res) => {
           variacoes: s.variacoes
             .filter(variacaoPublicavel)
             .map((v) => ({ ...v, duracaoMin: v.duracaoMin || DURACAO_PADRAO_MIN })),
-          profissionais: s.especialistas
-            .map((e) => e.especialista)
+          // Servico sem profissional marcado: todos os profissionais ativos atendem.
+          profissionais: (s.especialistas.length ? s.especialistas.map((e) => e.especialista) : todos)
             .filter((e) => e.ativo)
             .map((e) => ({ id: e.id, nome: String(e.nome).trim().split(/\s+/)[0] })),
         }))
@@ -124,7 +129,24 @@ function lerDia(texto) {
   return dia;
 }
 
-/** Garante que o profissional faz o servico da variacao, no mesmo negocio. */
+const QUALQUER = 'qualquer';
+
+/** Profissionais ativos que fazem o servico (nenhum marcado = todos do negocio). */
+async function profissionaisDoServico(clienteId, produtoId) {
+  const vinculos = await prisma.especialistaServico.findMany({
+    where: { produtoId, especialista: { clienteId } },
+    select: { especialistaId: true, especialista: { select: { ativo: true } } },
+  });
+  if (vinculos.length) return vinculos.filter((v) => v.especialista.ativo).map((v) => v.especialistaId);
+  const todos = await prisma.especialista.findMany({ where: { clienteId, ativo: true }, select: { id: true } });
+  return todos.map((e) => e.id);
+}
+
+/**
+ * Garante que o profissional faz o servico da variacao, no mesmo negocio.
+ * especialistaId = 'qualquer' vale com todos que fazem o servico.
+ * @returns {Promise<null | { variacao, especialistaIds: string[] }>}
+ */
 async function validarCombinacao(clienteId, especialistaId, variacaoId) {
   if (typeof especialistaId !== 'string' || typeof variacaoId !== 'string') return null;
   const variacao = await prisma.variacaoProduto.findFirst({
@@ -132,11 +154,9 @@ async function validarCombinacao(clienteId, especialistaId, variacaoId) {
     select: { id: true, nome: true, preco: true, duracaoMin: true, produtoId: true, produto: { select: { nome: true } } },
   });
   if (!variacao || !variacaoPublicavel(variacao)) return null;
-  const vinculo = await prisma.especialistaServico.findFirst({
-    where: { especialistaId, produtoId: variacao.produtoId, especialista: { clienteId, ativo: true } },
-    select: { id: true },
-  });
-  return vinculo ? variacao : null;
+  const aptos = await profissionaisDoServico(clienteId, variacao.produtoId);
+  if (especialistaId === QUALQUER) return aptos.length ? { variacao, especialistaIds: aptos } : null;
+  return aptos.includes(especialistaId) ? { variacao, especialistaIds: [especialistaId] } : null;
 }
 
 roteador.get('/agenda/:slug/horarios', limitadorLeitura, async (req, res) => {
@@ -146,14 +166,43 @@ roteador.get('/agenda/:slug/horarios', limitadorLeitura, async (req, res) => {
     const { especialistaId, variacaoId, data } = req.query;
     const dia = lerDia(data);
     if (!dia) return res.status(422).json({ erro: `Escolha um dia entre hoje e os próximos ${DIAS_MAX_ANTECEDENCIA} dias.`, campos: ['data'] });
-    const variacao = await validarCombinacao(cliente.id, especialistaId, variacaoId);
-    if (!variacao) return res.status(422).json({ erro: 'Serviço ou profissional inválido.', campos: ['variacaoId', 'especialistaId'] });
+    const combo = await validarCombinacao(cliente.id, especialistaId, variacaoId);
+    if (!combo) return res.status(422).json({ erro: 'Serviço ou profissional inválido.', campos: ['variacaoId', 'especialistaId'] });
 
-    const horarios = await listarHorariosLivres({ clienteId: cliente.id, especialistaId, data: dia, variacaoId });
-    res.json({ horarios: horarios.map((h) => ({ inicio: h.inicio, fim: h.fim })) });
+    const [r] = await resumoDosDias({
+      clienteId: cliente.id, especialistaIds: combo.especialistaIds, dias: [dia],
+      duracao: combo.variacao.duracaoMin || DURACAO_PADRAO_MIN,
+    });
+    // Mesmo horario com varios profissionais livres: fica o primeiro.
+    const vistos = new Set();
+    const horarios = (r?.horarios || []).filter((h) => (vistos.has(h.inicio) ? false : vistos.add(h.inicio)));
+    res.json({ horarios: horarios.map((h) => ({ inicio: h.inicio, fim: h.fim, especialistaId: h.especialistaId })) });
   } catch (e) {
     console.error('[publico/horarios]', e);
     res.status(500).json({ erro: 'Erro ao carregar os horários.' });
+  }
+});
+
+const DIAS_NA_FAIXA = 14;
+
+roteador.get('/agenda/:slug/dias', limitadorLeitura, async (req, res) => {
+  try {
+    const cliente = await negocioComAgendaOnline(req.params.slug);
+    if (!cliente) return indisponivel(res);
+    const { especialistaId, variacaoId } = req.query;
+    const combo = await validarCombinacao(cliente.id, especialistaId, variacaoId);
+    if (!combo) return res.status(422).json({ erro: 'Serviço ou profissional inválido.', campos: ['variacaoId', 'especialistaId'] });
+    const hoje = new Date(); hoje.setHours(12, 0, 0, 0);
+    const dias = Array.from({ length: DIAS_NA_FAIXA }, (_, i) => new Date(hoje.getTime() + i * 86400000));
+    const resumo = await resumoDosDias({
+      clienteId: cliente.id, especialistaIds: combo.especialistaIds, dias,
+      duracao: combo.variacao.duracaoMin || DURACAO_PADRAO_MIN,
+    });
+    // So o status de cada dia: nada de quem marcou.
+    res.json({ dias: resumo.map((d) => ({ dia: d.dia, status: d.status, livres: d.livres })) });
+  } catch (e) {
+    console.error('[publico/dias]', e);
+    res.status(500).json({ erro: 'Erro ao carregar os dias.' });
   }
 });
 
@@ -162,7 +211,8 @@ roteador.post('/agenda/:slug/agendamentos', limitadorEscrita, async (req, res) =
     const cliente = await negocioComAgendaOnline(req.params.slug);
     if (!cliente) return indisponivel(res);
 
-    const { especialistaId, variacaoId, inicio, nome, telefone } = req.body || {};
+    const { variacaoId, inicio, nome, telefone } = req.body || {};
+    let { especialistaId } = req.body || {};
     const nomeLimpo = typeof nome === 'string' ? nome.trim().slice(0, 80) : '';
     const telefoneDigitos = typeof telefone === 'string' ? telefone.replace(/\D/g, '') : '';
     const campos = [];
@@ -172,15 +222,22 @@ roteador.post('/agenda/:slug/agendamentos', limitadorEscrita, async (req, res) =
     if (Number.isNaN(dataInicio.getTime()) || dataInicio.getTime() <= Date.now()) campos.push('inicio');
     if (campos.length) return res.status(422).json({ erro: 'Confira os campos destacados.', campos });
 
-    const variacao = await validarCombinacao(cliente.id, especialistaId, variacaoId);
-    if (!variacao) return res.status(422).json({ erro: 'Serviço ou profissional inválido.', campos: ['variacaoId', 'especialistaId'] });
+    const combo = await validarCombinacao(cliente.id, especialistaId, variacaoId);
+    if (!combo) return res.status(422).json({ erro: 'Serviço ou profissional inválido.', campos: ['variacaoId', 'especialistaId'] });
+    const { variacao } = combo;
 
     // O horario pedido precisa estar na lista de livres (respeita jornada,
-    // expediente e passo) — o cliente nao inventa horario.
-    const livres = await listarHorariosLivres({ clienteId: cliente.id, especialistaId, data: dataInicio, variacaoId });
-    if (!livres.some((h) => new Date(h.inicio).getTime() === dataInicio.getTime())) {
+    // expediente e passo) — o cliente nao inventa horario. "Qualquer
+    // profissional": fica com o primeiro que estiver livre nesse horario.
+    const [resumo] = await resumoDosDias({
+      clienteId: cliente.id, especialistaIds: combo.especialistaIds, dias: [dataInicio],
+      duracao: variacao.duracaoMin || DURACAO_PADRAO_MIN,
+    });
+    const livre = (resumo?.horarios || []).find((h) => new Date(h.inicio).getTime() === dataInicio.getTime());
+    if (!livre) {
       return res.status(409).json({ erro: 'Esse horário acabou de ser ocupado. Escolha outro.', codigo: 'HORARIO_OCUPADO' });
     }
+    especialistaId = livre.especialistaId;
 
     const duracao = variacao.duracaoMin || DURACAO_PADRAO_MIN;
     const fim = new Date(dataInicio.getTime() + duracao * 60000);
@@ -323,7 +380,9 @@ roteador.post('/agenda/:slug/fila', limitadorFila, async (req, res) => {
   try {
     const cliente = await negocioComAgendaOnline(req.params.slug);
     if (!cliente) return indisponivel(res);
-    const { variacaoId, especialistaId, dia, soEsseDia, nome, telefone } = req.body || {};
+    const { variacaoId, dia, soEsseDia, nome, telefone } = req.body || {};
+    // 'qualquer' na fila = sem preferencia de profissional.
+    const especialistaId = req.body?.especialistaId === QUALQUER ? null : req.body?.especialistaId;
 
     const variacao = typeof variacaoId === 'string'
       ? await prisma.variacaoProduto.findFirst({

@@ -3,7 +3,8 @@
 //
 //   GET  /conversas/canal                 número conectado? + não lidas (menu)
 //   GET  /conversas/atalhos               quais atalhos de resposta existem
-//   GET  /conversas/atalhos/horarios      texto com horários livres de um dia
+//   GET  /conversas/atalhos/horarios      texto com horários livres de um dia (?dia&variacaoId&especialistaId)
+//   GET  /conversas/atalhos/dias          próximos 14 dias livre/poucos/lotado/fechado (?variacaoId&especialistaId)
 //   GET  /conversas                       lista (busca, filtro, cursor)
 //   GET  /conversas/:id                   conversa + ficha do cliente (lead)
 //   GET  /conversas/:id/mensagens         mensagens (paginado, mais novas por último)
@@ -26,6 +27,7 @@ const conversas = require('../conversas/servico');
 const { temRecurso } = require('../planos/recursos');
 const multer = require('multer');
 const midia = require('../conversas/midia');
+const { resumoDosDias } = require('../services/agendaSlots');
 
 // Arquivo da tela (foto, video, audio gravado, documento, figurinha).
 // Em memoria: o maior permitido (documento) e 100 MB, mas a tela limita a 25 MB.
@@ -112,7 +114,10 @@ roteador.get('/atalhos', ver, async (req, res) => {
     const clienteId = req.usuario.clienteId;
     const cliente = await prisma.cliente.findUnique({
       where: { id: clienteId },
-      select: { slugPublico: true, modulosLiberados: true, plano: true, statusAssinatura: true, trialAte: true },
+      select: {
+        slugPublico: true, modulosLiberados: true, plano: true, statusAssinatura: true, trialAte: true,
+        configuracaoCatalogo: { select: { online: true, aceitaRetirada: true, aceitaEntrega: true } },
+      },
     });
     const agenda = cliente?.modulosLiberados?.AGENDA === true;
     const base = (process.env.APP_URL_PUBLICA || process.env.VITE_URL_PUBLICA || '').replace(/\/$/, '');
@@ -126,7 +131,30 @@ roteador.get('/atalhos', ver, async (req, res) => {
       const cfg = await prisma.configuracaoPagamento.findUnique({ where: { clienteId }, select: { ativo: true } });
       pix = Boolean(cfg?.ativo);
     }
-    res.json({ linkAgendamento: link, horarios: agenda, pix });
+    // Catálogo online (mesma regra da rota pública /publico/loja/:slug).
+    const cat = cliente?.configuracaoCatalogo;
+    const linkLoja = cliente?.slugPublico && base && cliente?.modulosLiberados?.VENDAS === true && temRecurso(cliente, 'catalogoOnline')
+      && cat?.online && (cat.aceitaRetirada || cat.aceitaEntrega)
+      ? `${base}/loja/${cliente.slugPublico}` : null;
+
+    // Serviços e profissionais pro modal de horários (opcional: sem escolha = qualquer).
+    let servicos = [];
+    let profissionais = [];
+    if (agenda) {
+      const [prods, esps] = await Promise.all([
+        prisma.produto.findMany({
+          where: { clienteId, tipo: 'SERVICO', visibilidade: 'ATIVO' },
+          select: { nome: true, variacoes: { select: { id: true, nome: true, duracaoMin: true }, orderBy: { preco: 'asc' } } },
+          orderBy: { nome: 'asc' }, take: 50,
+        }),
+        prisma.especialista.findMany({ where: { clienteId, ativo: true }, select: { id: true, nome: true }, orderBy: { nome: 'asc' }, take: 30 }),
+      ]);
+      servicos = prods.flatMap((pr) => pr.variacoes.map((v) => ({
+        variacaoId: v.id, nome: v.nome && v.nome !== pr.nome ? `${pr.nome} — ${v.nome}` : pr.nome, duracaoMin: v.duracaoMin || null,
+      })));
+      profissionais = esps.map((e) => ({ id: e.id, nome: e.nome }));
+    }
+    res.json({ linkAgendamento: link, linkLoja, horarios: agenda, pix, servicos, profissionais });
   } catch (e) {
     erro500(res, 'atalhos', e);
   }
@@ -146,21 +174,63 @@ roteador.get('/atalhos/horarios', ver, async (req, res) => {
     const cliente = await prisma.cliente.findUnique({ where: { id: clienteId }, select: { modulosLiberados: true } });
     if (cliente?.modulosLiberados?.AGENDA !== true) return res.status(403).json({ erro: 'A agenda não está liberada para este negócio.' });
 
-    const { listarHorariosLivres } = require('../services/agendaSlots');
-    const profissionais = await prisma.especialista.findMany({
-      where: { clienteId, ativo: true }, select: { id: true, nome: true }, orderBy: { nome: 'asc' }, take: 8,
+    const alvo = await alvoDosHorarios(clienteId, req.query);
+    if (alvo.erro) return res.status(422).json({ erro: alvo.erro });
+    const [resumo] = await resumoDosDias({ clienteId, especialistaIds: alvo.profissionais.map((p) => p.id), dias: [data], duracao: alvo.duracao });
+    const porProfissional = alvo.profissionais.map((p) => ({
+      nome: String(p.nome || '').trim().split(/\s+/)[0] || 'Equipe',
+      horarios: (resumo?.horarios || []).filter((h) => h.especialistaId === p.id).slice(0, 6)
+        .map((h) => { const d = new Date(h.inicio); return regras.horaDeMinutos(d.getHours() * 60 + d.getMinutes()); }),
+    }));
+    res.json({
+      rotulo,
+      status: resumo?.status || 'fechado',
+      profissionais: porProfissional,
+      texto: regras.textoHorarios(alvo.servicoNome ? `${rotulo} para ${alvo.servicoNome.toLowerCase()}` : rotulo, porProfissional),
     });
-    const porProfissional = [];
-    for (const p of profissionais) {
-      const livres = await listarHorariosLivres({ clienteId, especialistaId: p.id, data }).catch(() => []);
-      porProfissional.push({
-        nome: String(p.nome || '').trim().split(/\s+/)[0] || 'Equipe',
-        horarios: livres.slice(0, 6).map((h) => regras.horaDeMinutos(h.inicioMin)),
-      });
-    }
-    res.json({ rotulo, profissionais: porProfissional, texto: regras.textoHorarios(rotulo, porProfissional) });
   } catch (e) {
     erro500(res, 'horarios', e);
+  }
+});
+
+/**
+ * Profissionais e duração pros atalhos de horário. Sem serviço: duração padrão
+ * e todos os profissionais. Com serviço: quem faz o serviço (nenhum marcado = todos).
+ */
+async function alvoDosHorarios(clienteId, { variacaoId, especialistaId } = {}) {
+  let duracao = 30;
+  let servicoNome = null;
+  let ids = null;
+  if (typeof variacaoId === 'string' && variacaoId) {
+    const v = await prisma.variacaoProduto.findFirst({
+      where: { id: variacaoId, produto: { clienteId, tipo: 'SERVICO' } },
+      select: { duracaoMin: true, nome: true, produtoId: true, produto: { select: { nome: true } } },
+    });
+    if (!v) return { erro: 'Serviço não encontrado.' };
+    duracao = v.duracaoMin || 30;
+    servicoNome = v.produto.nome;
+    const vinc = await prisma.especialistaServico.findMany({ where: { produtoId: v.produtoId }, select: { especialistaId: true } });
+    if (vinc.length) ids = vinc.map((x) => x.especialistaId);
+  }
+  const where = { clienteId, ativo: true };
+  if (typeof especialistaId === 'string' && especialistaId && especialistaId !== 'qualquer') where.id = especialistaId;
+  else if (ids) where.id = { in: ids };
+  const profissionais = await prisma.especialista.findMany({ where, select: { id: true, nome: true }, orderBy: { nome: 'asc' }, take: 8 });
+  if (!profissionais.length) return { erro: 'Nenhum profissional ativo para esse serviço.' };
+  return { profissionais, duracao, servicoNome };
+}
+
+roteador.get('/atalhos/dias', ver, async (req, res) => {
+  try {
+    const clienteId = req.usuario.clienteId;
+    const alvo = await alvoDosHorarios(clienteId, req.query);
+    if (alvo.erro) return res.status(422).json({ erro: alvo.erro });
+    const hoje = new Date(); hoje.setHours(12, 0, 0, 0);
+    const dias = Array.from({ length: 14 }, (_, i) => new Date(hoje.getTime() + i * 86400000));
+    const resumo = await resumoDosDias({ clienteId, especialistaIds: alvo.profissionais.map((p) => p.id), dias, duracao: alvo.duracao });
+    res.json({ dias: resumo.map((d) => ({ dia: d.dia, status: d.status, livres: d.livres })) });
+  } catch (e) {
+    erro500(res, 'dias', e);
   }
 });
 

@@ -25,14 +25,21 @@ function proximosDias() {
   });
 }
 
-function Escolha({ ativo, onClick, children, className }) {
+// Situacao de cada dia na faixa (vem de /publico/agenda/:slug/dias).
+const COR_DIA = { livre: '#1E9E5A', poucos: '#E0A11B', lotado: '#C2410C' };
+const NOME_DIA = { livre: 'livre', poucos: 'poucos horários', lotado: 'lotado', fechado: 'fechado' };
+const QUALQUER = 'qualquer';
+
+function Escolha({ ativo, onClick, children, className, disabled = false, ariaLabel }) {
   return (
     <button
       type="button"
       aria-pressed={ativo}
+      aria-label={ariaLabel}
       onClick={onClick}
+      disabled={disabled}
       className={clsx(
-        'rounded-xl border px-3 py-2.5 text-left transition-colors',
+        'rounded-xl border px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:opacity-60',
         ativo ? 'border-[var(--primary)] bg-[var(--bg-subtle)]' : 'border-[var(--border-main)] bg-[var(--bg-card)] hover:bg-[var(--bg-subtle)]',
         className,
       )}
@@ -189,6 +196,7 @@ export default function AgendarPage() {
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState(null);
   const [confirmado, setConfirmado] = useState(null);
+  const [statusDias, setStatusDias] = useState({}); // { 'AAAA-MM-DD': 'livre'|'poucos'|'lotado'|'fechado' }
 
   useEffect(() => {
     api.get(`/publico/agenda/${slug}`)
@@ -203,6 +211,26 @@ export default function AgendarPage() {
   // Mudou servico/profissional/dia: zera o horario escolhido e mostra o
   // carregando (nos handlers, pra nao fazer setState sincrono no efeito).
   const recomecarHorario = () => { setInicio(null); setHorarios([]); setCarregandoHorarios(true); };
+
+  // Situacao dos 14 dias pro servico + profissional escolhidos. Se o dia
+  // escolhido estiver fechado, pula pro primeiro dia com horario.
+  useEffect(() => {
+    if (!variacaoId || !especialistaId) return;
+    let vivo = true;
+    api.get(`/publico/agenda/${slug}/dias`, { params: { variacaoId, especialistaId } })
+      .then((r) => {
+        if (!vivo) return;
+        const mapa = Object.fromEntries((r.data.dias || []).map((d) => [d.dia, d.status]));
+        setStatusDias(mapa);
+        if (['fechado', 'lotado'].includes(mapa[dia])) {
+          const melhor = (r.data.dias || []).find((d) => d.status === 'livre' || d.status === 'poucos');
+          if (melhor && melhor.dia !== dia) { setInicio(null); setHorarios([]); setCarregandoHorarios(true); setDia(melhor.dia); }
+        }
+      })
+      .catch(() => { if (vivo) setStatusDias({}); });
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- so ao trocar servico/profissional
+  }, [slug, variacaoId, especialistaId]);
 
   useEffect(() => {
     if (!variacaoId || !especialistaId || !dia) return;
@@ -309,6 +337,10 @@ export default function AgendarPage() {
         {servico && servico.profissionais.length > 1 && (
           <Etapa numero={2} titulo="Com quem?">
             <div className="flex flex-wrap gap-2">
+              <Escolha ativo={especialistaId === QUALQUER} onClick={() => { recomecarHorario(); setEspecialistaId(QUALQUER); }} className="flex items-center gap-2">
+                <User size={14} className="text-[var(--text-muted)]" />
+                <span className="text-sm font-medium text-[var(--text-main)]">Qualquer profissional</span>
+              </Escolha>
               {servico.profissionais.map((p) => (
                 <Escolha key={p.id} ativo={especialistaId === p.id} onClick={() => { recomecarHorario(); setEspecialistaId(p.id); }} className="flex items-center gap-2">
                   <User size={14} className="text-[var(--text-muted)]" />
@@ -322,19 +354,40 @@ export default function AgendarPage() {
         {variacao && especialistaId && (
           <Etapa numero={servico.profissionais.length > 1 ? 3 : 2} titulo="Dia e horário">
             <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
-              {dias.map((d) => (
-                <Escolha key={d.iso} ativo={dia === d.iso} onClick={() => { if (d.iso !== dia) { recomecarHorario(); setDia(d.iso); } }} className="flex-shrink-0 w-16 text-center">
-                  <span className="block text-xs text-[var(--text-muted)] capitalize">{d.semana}</span>
-                  <span className="block text-sm font-semibold text-[var(--text-main)]">{d.dia}</span>
-                </Escolha>
-              ))}
+              {dias.map((d) => {
+                const st = statusDias[d.iso];
+                return (
+                  <Escolha
+                    key={d.iso}
+                    ativo={dia === d.iso}
+                    disabled={st === 'fechado'}
+                    ariaLabel={`${d.semana} ${d.dia}${st ? `: ${NOME_DIA[st]}` : ''}`}
+                    onClick={() => { if (d.iso !== dia) { recomecarHorario(); setDia(d.iso); } }}
+                    className="flex-shrink-0 w-16 text-center"
+                  >
+                    <span className="block text-xs text-[var(--text-muted)] capitalize">{d.semana}</span>
+                    <span className={clsx('block text-sm font-semibold text-[var(--text-main)]', st === 'fechado' && 'line-through')}>{d.dia}</span>
+                    <span className="block mx-auto mt-1 w-1.5 h-1.5 rounded-full" style={{ background: COR_DIA[st] || 'transparent' }} aria-hidden="true" />
+                  </Escolha>
+                );
+              })}
             </div>
+            {Object.keys(statusDias).length > 0 && (
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-[var(--text-muted)]" aria-hidden="true">
+                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: COR_DIA.livre }} />Livre</span>
+                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: COR_DIA.poucos }} />Poucos horários</span>
+                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: COR_DIA.lotado }} />Lotado</span>
+                <span className="inline-flex items-center gap-1"><span className="line-through">12</span>Fechado</span>
+              </div>
+            )}
             {carregandoHorarios ? (
               <Loader2 size={18} className="animate-spin text-[var(--text-muted)]" />
             ) : horarios.length === 0 ? (
               <div className="space-y-3">
-                <p className="text-sm text-[var(--text-muted)]">Sem horários livres neste dia. Tente outro.</p>
-                <AviseSeVagar slug={slug} variacaoId={variacaoId} especialistaId={especialistaId} dia={dia} />
+                <p className="text-sm text-[var(--text-muted)]">
+                  {statusDias[dia] === 'fechado' ? 'Fechado neste dia. Escolha outro.' : 'Sem horários livres neste dia. Tente outro.'}
+                </p>
+                {statusDias[dia] !== 'fechado' && <AviseSeVagar slug={slug} variacaoId={variacaoId} especialistaId={especialistaId} dia={dia} />}
               </div>
             ) : (
               <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
