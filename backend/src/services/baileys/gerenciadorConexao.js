@@ -34,6 +34,7 @@ const {
   downloadMediaMessage,
 } = require('@whiskeysockets/baileys');
 const { lerConteudo } = require('./conteudoMensagem');
+const historico = require('./historico');
 const midiaConversa = require('../../conversas/midia');
 
 const prisma = require('../../prisma');
@@ -366,9 +367,10 @@ async function abrirConexao(botId) {
     logger,
     browser: Browsers.ubuntu('Sellergy Cloud'),
     printQRInTerminal: false,
-    // Leve: nada de historico, presenca automatica ou preview pesado.
-    syncFullHistory: false,
-    shouldSyncHistoryMessage: () => false,
+    // Ao parear, o WhatsApp entrega as conversas e contatos do numero: entram
+    // na tela WhatsApp do sistema (services/baileys/historico.js).
+    syncFullHistory: true,
+    shouldSyncHistoryMessage: () => true,
     markOnlineOnConnect: false,
     generateHighQualityLinkPreview: false,
     shouldIgnoreJid: (jid) => isJidBroadcast(jid) || isJidGroup(jid) || isJidNewsletter(jid),
@@ -378,6 +380,14 @@ async function abrirConexao(botId) {
   conexoes.set(botId, { sock });
 
   sock.ev.on('creds.update', saveCreds);
+
+  // Historico (conversas, contatos e mensagens antigas), em lotes.
+  sock.ev.on('messaging-history.set', (lote) => {
+    historico.importarLote({ bot, sock, lote }).catch((e) => console.error(`[baileys/historico] falha (bot ${botId}):`, e?.message));
+  });
+  sock.ev.on('contacts.upsert', (contatos) => {
+    historico.atualizarNomes({ bot, contatos }).catch(() => {});
+  });
 
   sock.ev.on('messages.upsert', (upsert) => {
     tratarMensagemRecebida(bot, upsert).catch((e) => console.error(`[baileys] erro no messages.upsert (bot ${botId}):`, e?.message));

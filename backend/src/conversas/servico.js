@@ -236,7 +236,84 @@ async function pausaDoContato(clienteId, telefone) {
   return r.pausaAtiva(c);
 }
 
+/**
+ * Importa conversas antigas (historico que o WhatsApp entrega ao conectar o
+ * numero). Diferente de registrarMensagem: grava com a data original, nao soma
+ * "nao lidas", nao dispara bot e pula o que ja foi importado (mesmo id).
+ * Cada contato que ja escreveu vira cliente (regra unica do telefone).
+ * @param {{ clienteId: string, botId?: string, canal?: string, itens: Array<{
+ *   telefone: string, nomeContato?: string, direcao: string, origem: string, texto?: string, tipo?: string,
+ *   extra?: object, idExterno?: string, criadoEm: Date, autorNome?: string,
+ *   midiaChave?: string, midiaMime?: string, midiaNome?: string, midiaTamanho?: number, midiaSegundos?: number }> }} p
+ */
+async function importarHistorico({ clienteId, botId = null, canal = 'BAILEYS', itens = [] }) {
+  const porTelefoneChave = new Map();
+  for (const it of itens) {
+    const chave = r.chaveTelefone(it.telefone);
+    if (!chave) continue;
+    if (!porTelefoneChave.has(chave)) porTelefoneChave.set(chave, []);
+    porTelefoneChave.get(chave).push(it);
+  }
+  let conversasNovas = 0;
+  let mensagensNovas = 0;
+  for (const [chave, lista] of porTelefoneChave) {
+    lista.sort((a, b) => a.criadoEm - b.criadoEm);
+    const nomeContato = lista.map((i) => i.nomeContato).find(Boolean) || null;
+    const temEntrada = lista.some((i) => i.direcao === 'ENTRADA');
+    const where = { clienteId_telefone: { clienteId, telefone: chave } };
+    let conversa = await prisma.conversa.findUnique({ where });
+    if (!conversa) {
+      conversa = await prisma.conversa.create({
+        data: {
+          clienteId, telefone: chave, telefoneEnvio: r.digitos(lista[0].telefone) || chave, nomeContato,
+          botId, canal, ultimaMensagemEm: lista[0].criadoEm,
+        },
+      }).catch(async (e) => { if (e?.code === 'P2002') return prisma.conversa.findUnique({ where }); throw e; });
+      conversasNovas += 1;
+    }
+    if (!conversa.leadId) {
+      const leadId = await leadDoContato({ clienteId, chave, nomeContato, criarLead: temEntrada }).catch(() => null);
+      if (leadId) conversa = await prisma.conversa.update({ where: { id: conversa.id }, data: { leadId } });
+    }
+    const ids = lista.map((i) => i.idExterno).filter(Boolean);
+    const existentes = ids.length
+      ? new Set((await prisma.mensagemConversa.findMany({ where: { conversaId: conversa.id, idExterno: { in: ids } }, select: { idExterno: true } })).map((m) => m.idExterno))
+      : new Set();
+    const novas = lista.filter((i) => !i.idExterno || !existentes.has(i.idExterno));
+    if (!novas.length) continue;
+    await prisma.mensagemConversa.createMany({
+      data: novas.map((i) => ({
+        conversaId: conversa.id, clienteId,
+        direcao: i.direcao === 'ENTRADA' ? 'ENTRADA' : 'SAIDA',
+        origem: i.origem, texto: r.textoParaGuardar(i.texto) || '', tipo: i.tipo || 'TEXTO',
+        status: i.direcao === 'ENTRADA' ? 'RECEBIDA' : 'ENVIADA',
+        idExterno: i.idExterno || null, autorNome: i.autorNome || null,
+        midiaChave: i.midiaChave || null, midiaMime: i.midiaMime || null, midiaNome: i.midiaNome || null,
+        midiaTamanho: i.midiaTamanho ?? null, midiaSegundos: i.midiaSegundos ?? null,
+        extra: i.extra ?? undefined, criadoEm: i.criadoEm,
+      })),
+    });
+    mensagensNovas += novas.length;
+    const ultima = novas[novas.length - 1];
+    const ultimaEntrada = [...novas].reverse().find((i) => i.direcao === 'ENTRADA');
+    const dados = {};
+    if (!conversa.ultimaMensagemTexto || ultima.criadoEm > conversa.ultimaMensagemEm) {
+      Object.assign(dados, {
+        ultimaMensagemEm: ultima.criadoEm,
+        ultimaMensagemTexto: (ultima.texto || midia.rotuloDoTipo(ultima.tipo) || '').slice(0, 200),
+        ultimaMensagemOrigem: ultima.origem,
+      });
+    }
+    if (ultimaEntrada && (!conversa.ultimaEntradaEm || ultimaEntrada.criadoEm > conversa.ultimaEntradaEm)) dados.ultimaEntradaEm = ultimaEntrada.criadoEm;
+    if (!conversa.nomeContato && nomeContato) dados.nomeContato = String(nomeContato).slice(0, 120);
+    if (Object.keys(dados).length) await prisma.conversa.update({ where: { id: conversa.id }, data: dados });
+  }
+  if (conversasNovas || mensagensNovas) await publicar(clienteId, 'conversas_importadas', { conversasNovas, mensagensNovas }).catch(() => {});
+  return { conversasNovas, mensagensNovas };
+}
+
 module.exports = {
+  importarHistorico,
   CANAL_EVENTOS,
   publicar,
   registrarMensagem,

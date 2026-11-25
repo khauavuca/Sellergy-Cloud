@@ -174,6 +174,7 @@ export default function WhatsAppPage() {
   // ---------- tempo real ----------
   useConversasTempoReal({
     ativo: Boolean(canal),
+    onImportadas: () => { carregarLista(); },
     onMensagem: ({ conversa, mensagem }) => {
       const aberta = selecionadaRef.current === conversa.id;
       if (aberta) {

@@ -24,6 +24,10 @@ export default function ConteudoMensagem({ m, conversaId }) {
   const legenda = m.texto ? <div className="mt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">{m.texto}</div> : null;
   const falhou = m.extra?.falhaDownload;
 
+  if (m.extra?.historicoSemArquivo) {
+    const rotulo = { IMAGEM: 'Foto', VIDEO: 'Vídeo', GIF: 'GIF', AUDIO: 'Áudio', VOZ: 'Mensagem de voz', DOCUMENTO: m.midiaNome || 'Documento', FIGURINHA: 'Figurinha' }[m.tipo] || 'Arquivo';
+    return <div className="text-[12px] italic text-[var(--text-muted)]">{rotulo} antigo (de antes da conexão, arquivo não baixado){legenda}</div>;
+  }
   if (falhou) {
     return <div className="text-[12px] italic text-[var(--text-muted)]">Não foi possível baixar este arquivo do WhatsApp.{legenda}</div>;
   }

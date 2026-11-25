@@ -21,6 +21,8 @@ export function useConversasTempoReal({ ativo, onMensagem, onStatus, onConversa 
     socket.on('conversa_mensagem', (d) => handlers.current.onMensagem?.(d));
     socket.on('conversa_mensagem_status', (d) => handlers.current.onStatus?.(d));
     socket.on('conversa_atualizada', (d) => handlers.current.onConversa?.(d));
+    // Historico importado ao conectar o numero: recarrega a lista.
+    socket.on('conversas_importadas', (d) => handlers.current.onImportadas?.(d));
     return () => socket.disconnect();
   }, [ativo]);
 }
