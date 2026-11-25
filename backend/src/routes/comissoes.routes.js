@@ -16,6 +16,8 @@ const { requerTenant, requerModuloLiberado, requerPapelPrivilegiado } = require(
 const { regraTexto, resumirPessoa } = require('../agenda/comissoes');
 const { reconciliarEstornos } = require('../agenda/eventosAgenda');
 const { competenciaBRT, intervaloCompetencia, round2, brl, digitos } = require('../agenda/utilAgenda');
+const { lerDinheiro } = require('../utils/numero');
+const { proximaCompetencia, lerTexto } = require('../financeiro/regras');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -31,7 +33,9 @@ function clienteDe(req, res) {
 
 function lerCompetencia(valor) {
   const c = typeof valor === 'string' && valor ? valor : competenciaBRT();
-  return intervaloCompetencia(c) ? c : null;
+  if (!intervaloCompetencia(c)) return null;
+  const ano = Number(c.slice(0, 4));
+  return ano >= 2000 && ano <= 2100 ? c : null;
 }
 
 function nomeDoMes(competencia) {
@@ -131,14 +135,17 @@ roteador.post('/vale', async (req, res) => {
     const { especialistaId, valor, descricao } = req.body || {};
     const competencia = lerCompetencia(req.body?.competencia);
     const campos = [];
-    const v = Number(valor);
-    if (!Number.isFinite(v) || v <= 0 || v > 1000000) campos.push('valor');
+    const lido = lerDinheiro(valor, { min: 0.01, max: 1_000_000 });
+    const v = lido.ok ? lido.valor : NaN;
+    if (!lido.ok) campos.push('valor');
     if (!competencia) campos.push('competencia');
+    const desc = lerTexto(descricao, { rotulo: 'Descrição', max: 120 });
+    if (!desc.ok) campos.push('descricao');
     const esp = typeof especialistaId === 'string' ? await prisma.especialista.findFirst({ where: { id: especialistaId, clienteId }, select: { id: true } }) : null;
     if (!esp) campos.push('especialistaId');
     if (campos.length) return res.status(422).json({ erro: 'Confira os campos destacados.', campos });
-    const texto = typeof descricao === 'string' && descricao.trim()
-      ? descricao.trim().slice(0, 120)
+    const texto = desc.valor
+      ? desc.valor
       : `Vale adiantado em ${new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' })}`;
     const vale = await prisma.comissao.create({
       data: { clienteId, especialistaId: esp.id, tipo: 'VALE', descricao: texto, base: 0, valor: -round2(v), competencia, status: 'A_PAGAR' },
@@ -188,6 +195,18 @@ roteador.post('/pagar', async (req, res) => {
       const r = await tx.comissao.updateMany({ where: { id: { in: abertas.map((a) => a.id) }, status: 'A_PAGAR' }, data: { status: 'PAGA', pagaEm: agora } });
       if (r.count !== abertas.length) throw Object.assign(new Error('Outra pessoa pagou ao mesmo tempo. Atualize a tela.'), { status: 409 });
       const total = round2(abertas.reduce((s, a) => s + a.valor, 0));
+      // Vale maior que a comissao: o que sobrou de vale (saldo negativo) vai
+      // para o mes seguinte como desconto, em vez de sumir.
+      let saldoLevado = null;
+      if (total < 0) {
+        const proxima = proximaCompetencia(competencia);
+        saldoLevado = await tx.comissao.create({
+          data: {
+            clienteId, especialistaId: esp.id, tipo: 'AJUSTE', base: 0, valor: total, competencia: proxima, status: 'A_PAGAR',
+            descricao: `Saldo de vale de ${nomeDoMes(competencia)} (descontar)`,
+          },
+        });
+      }
       let lancamento = null;
       if (lancarFinanceiro === true && total > 0) {
         lancamento = await tx.lancamentoFinanceiro.create({
@@ -203,7 +222,7 @@ roteador.post('/pagar', async (req, res) => {
           },
         });
       }
-      return { abertas, total, lancamento };
+      return { abertas, total, lancamento, saldoLevado };
     });
     if (!resultado) return res.status(409).json({ erro: 'Não há nada a pagar pra essa pessoa nesse mês.' });
 
@@ -220,7 +239,8 @@ roteador.post('/pagar', async (req, res) => {
           ...resumo.vales.map((v) => `• ${v.descricao}: ${brl(v.valor)}`),
           ...resumo.ajustes.map((v) => `• ${v.descricao}: ${brl(v.valor)}`),
         ];
-        const texto = `Recibo de comissão — ${cliente?.brandNome || cliente?.nome || ''}\n${esp.nome}, ${nomeDoMes(competencia)}\n\n${linhas.join('\n')}\n\nTotal pago: ${brl(resultado.total)}\nPago em ${agora.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}.`;
+        const saldoTxt = resultado.saldoLevado ? `\nSaldo de vale para ${nomeDoMes(resultado.saldoLevado.competencia)}: ${brl(resultado.saldoLevado.valor)}` : '';
+        const texto = `Recibo de comissão — ${cliente?.brandNome || cliente?.nome || ''}\n${esp.nome}, ${nomeDoMes(competencia)}\n\n${linhas.join('\n')}\n\nTotal pago: ${brl(Math.max(0, resultado.total))}${saldoTxt}\nPago em ${agora.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}.`;
         try {
           const { enviarMensagemTenant } = require('../services/mensagemTenant');
           const r = await enviarMensagemTenant({ clienteId, para, texto, tipo: 'conversa' });
@@ -232,7 +252,17 @@ roteador.post('/pagar', async (req, res) => {
       }
     }
 
-    res.json({ ok: true, total: resultado.total, itens: resultado.abertas.length, lancamentoId: resultado.lancamento?.id || null, recibo });
+    res.json({
+      ok: true,
+      total: Math.max(0, resultado.total),
+      itens: resultado.abertas.length,
+      lancamentoId: resultado.lancamento?.id || null,
+      saldoLevado: resultado.saldoLevado
+        ? { valor: resultado.saldoLevado.valor, competencia: resultado.saldoLevado.competencia,
+            mensagem: `O vale passou a comissão em ${brl(Math.abs(resultado.total))}. Esse valor ficou para descontar em ${nomeDoMes(resultado.saldoLevado.competencia)}.` }
+        : null,
+      recibo,
+    });
   } catch (e) {
     if (e?.status) return res.status(e.status).json({ erro: e.message });
     console.error('[comissoes/pagar]', e);

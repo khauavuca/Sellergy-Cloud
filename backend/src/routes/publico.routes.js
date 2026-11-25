@@ -28,7 +28,7 @@ const { lockClienteAdvisory } = require('../utils/locks');
 const sinal = require('../agenda/sinal');
 const pacotes = require('../agenda/pacotes');
 const encaixe = require('../agenda/encaixe');
-const { partesBRT } = require('../agenda/utilAgenda');
+const { partesBRT, mesmoTelefone } = require('../agenda/utilAgenda');
 
 const roteador = express.Router();
 
@@ -66,6 +66,13 @@ async function negocioComAgendaOnline(slug) {
   return cliente;
 }
 
+/** Preco entre 0 e 1 milhao e duracao (se houver) de 5 min a 12 h. */
+function variacaoPublicavel(v) {
+  if (!v || !Number.isFinite(v.preco) || v.preco < 0 || v.preco > 1_000_000) return false;
+  if (v.duracaoMin != null && (!Number.isInteger(v.duracaoMin) || v.duracaoMin < 5 || v.duracaoMin > 720)) return false;
+  return true;
+}
+
 const indisponivel = (res) => res.status(404).json({ erro: 'Agenda online indisponível para este endereço.', codigo: 'AGENDA_INDISPONIVEL' });
 
 roteador.get('/agenda/:slug', limitadorLeitura, async (req, res) => {
@@ -90,13 +97,16 @@ roteador.get('/agenda/:slug', limitadorLeitura, async (req, res) => {
           id: s.id,
           nome: s.nome,
           descricao: s.descricao,
-          variacoes: s.variacoes.map((v) => ({ ...v, duracaoMin: v.duracaoMin || DURACAO_PADRAO_MIN })),
+          // Variacao com preco/duracao fora do razoavel (cadastro antigo) nao vai pro link.
+          variacoes: s.variacoes
+            .filter(variacaoPublicavel)
+            .map((v) => ({ ...v, duracaoMin: v.duracaoMin || DURACAO_PADRAO_MIN })),
           profissionais: s.especialistas
             .map((e) => e.especialista)
             .filter((e) => e.ativo)
             .map((e) => ({ id: e.id, nome: String(e.nome).trim().split(/\s+/)[0] })),
         }))
-        .filter((s) => s.variacoes.length > 0 && s.profissionais.length > 0),
+        .filter((s) => String(s.nome || '').trim() && s.variacoes.length > 0 && s.profissionais.length > 0),
     });
   } catch (e) {
     console.error('[publico/agenda]', e);
@@ -121,7 +131,7 @@ async function validarCombinacao(clienteId, especialistaId, variacaoId) {
     where: { id: variacaoId, produto: { clienteId, tipo: 'SERVICO', visibilidade: 'ATIVO' } },
     select: { id: true, nome: true, preco: true, duracaoMin: true, produtoId: true, produto: { select: { nome: true } } },
   });
-  if (!variacao) return null;
+  if (!variacao || !variacaoPublicavel(variacao)) return null;
   const vinculo = await prisma.especialistaServico.findFirst({
     where: { especialistaId, produtoId: variacao.produtoId, especialista: { clienteId, ativo: true } },
     select: { id: true },
@@ -193,7 +203,9 @@ roteador.post('/agenda/:slug/agendamentos', limitadorEscrita, async (req, res) =
 
       // Lead: reaproveita pelo telefone (so digitos) ou cria.
       const leads = await tx.lead.findMany({ where: { clienteId: cliente.id, telefone: { not: null } }, select: { id: true, telefone: true } });
-      let lead = leads.find((l) => String(l.telefone).replace(/\D/g, '').slice(-8) === telefoneDigitos.slice(-8)) || null;
+      // Numero COMPLETO com DDD (antes eram so os 8 ultimos: outro DDD virava
+      // a cliente errada e gastava o pacote dela).
+      let lead = leads.find((l) => mesmoTelefone(l.telefone, telefoneDigitos)) || null;
       if (!lead) {
         lead = await tx.lead.create({ data: { clienteId: cliente.id, nome: nomeLimpo, telefone: telefoneDigitos, origem: 'AGENDA_ONLINE', valor: 0 } });
       }
@@ -337,7 +349,7 @@ roteador.post('/agenda/:slug/fila', limitadorFila, async (req, res) => {
     if (r.erro) return res.status(422).json({ erro: r.erro, campos: r.campos });
 
     const leads = await prisma.lead.findMany({ where: { clienteId: cliente.id, telefone: { not: null } }, select: { id: true, telefone: true } });
-    const lead = leads.find((l) => String(l.telefone).replace(/\D/g, '').slice(-8) === r.dados.telefone.slice(-8));
+    const lead = leads.find((l) => mesmoTelefone(l.telefone, r.dados.telefone));
     try {
       await encaixe.adicionarNaFila({ clienteId: cliente.id, dados: { ...r.dados, leadId: lead?.id || null } });
     } catch (e) {

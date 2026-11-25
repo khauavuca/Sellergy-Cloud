@@ -24,7 +24,7 @@ function podeConfigurarEtapas(perfil) {
 const fmtBRL = (v) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const PRIORIDADES = [
   { value: 'LOW', label: 'Baixa' },
-  { value: 'MEDIUM', label: 'Media' },
+  { value: 'MEDIUM', label: 'Média' },
   { value: 'HIGH', label: 'Alta' },
 ];
 const ROTULO_PRIORIDADE = { HIGH: 'Alta', MEDIUM: 'Média', LOW: 'Baixa' };
@@ -34,6 +34,8 @@ const SLUGS_ETAPA_FECHADA = new Set(['fechado-ganho', 'fechado-perdido']);
 const DIA_MS = 24 * 60 * 60 * 1000;
 const DIAS_PARADO = 60;
 const POR_PAGINA = 25;
+// Kanban mostra os mais recentes de uma vez (a busca acha o resto).
+const LIMITE_KANBAN = 200;
 
 // Preco efetivo da variacao (regra: usar preco-catalogo se ativado).
 // Espelha resolverPrecoVenda no backend pra UI calcular total localmente.
@@ -50,20 +52,6 @@ function ultimaAtividade(lead) {
     .map((d) => new Date(d).getTime())
     .filter((t) => !Number.isNaN(t));
   return datas.length ? Math.max(...datas) : null;
-}
-
-// Aniversario nos proximos 7 dias (contando hoje). A data vem em ISO meia-noite
-// UTC, entao dia/mes sao lidos em UTC pra nao escorregar um dia.
-function aniversarioNaSemana(lead, hoje) {
-  if (!lead.dataNascimento) return false;
-  const nasc = new Date(lead.dataNascimento);
-  if (Number.isNaN(nasc.getTime())) return false;
-  const base = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(base.getTime() + i * DIA_MS);
-    if (d.getMonth() === nasc.getUTCMonth() && d.getDate() === nasc.getUTCDate()) return true;
-  }
-  return false;
 }
 
 function formatarAniversario(iso) {
@@ -109,14 +97,19 @@ export default function CRMPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [stages, setStages] = useState([]);
-  const [leads, setLeads] = useState([]);
+  // Pagina atual vinda do servidor (busca, aba, etapa e paginacao no backend:
+  // negocio com milhares de clientes nao baixa tudo de uma vez).
+  const [resposta, setResposta] = useState({ itens: [], total: 0, totalPaginas: 1, contagens: {}, numeros: {} });
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState('');
+  const [buscaAplicada, setBuscaAplicada] = useState('');
   const [view, setView] = useState('lista');
   const [aba, setAba] = useState('todos');
   const [filtroEtapa, setFiltroEtapa] = useState('');
   const [pagina, setPagina] = useState(0);
   const [selecionadoId, setSelecionadoId] = useState(null);
+  const [leadAvulso, setLeadAvulso] = useState(null); // aberto por link direto
+  const [versao, setVersao] = useState(0);
   const fichaRef = useRef(null);
   // "Agora" fixo por montagem: as contas de parado/novo/aniversario nao
   // precisam andar sozinhas enquanto a tela esta aberta.
@@ -125,26 +118,36 @@ export default function CRMPage() {
   const [modalLead, setModalLead] = useState({ open: false, data: null });
   const [modalCatalogoEtapas, setModalCatalogoEtapas] = useState(false);
 
-  // Busca sem setState sincrono (o estado ja nasce carregando); o "carregar"
-  // das acoes liga o carregando antes de buscar de novo.
-  const buscarDados = useCallback(() => Promise.all([
-    api.get('/crm/stages').catch(() => ({ data: [] })),
-    api.get('/crm/leads').catch(() => ({ data: [] })),
-  ]).then(([s, l]) => {
-    setStages(s.data || []);
-    setLeads(l.data || []);
-  }).finally(() => {
-    setCarregando(false);
-  }), []);
+  // Busca digitada so vai pro servidor depois de uma pausa.
+  useEffect(() => {
+    const t = setTimeout(() => setBuscaAplicada(busca.trim()), 350);
+    return () => clearTimeout(t);
+  }, [busca]);
 
   useEffect(() => {
-    buscarDados();
-  }, [buscarDados]);
+    let ativo = true;
+    const params = new URLSearchParams({
+      pagina: String(pagina + 1),
+      limite: String(view === 'kanban' ? LIMITE_KANBAN : POR_PAGINA),
+      aba,
+    });
+    if (buscaAplicada) params.set('busca', buscaAplicada);
+    if (filtroEtapa) params.set('etapaId', filtroEtapa);
+    Promise.all([
+      api.get('/crm/stages').catch(() => ({ data: [] })),
+      api.get(`/crm/leads?${params.toString()}`).catch(() => null),
+    ]).then(([s, l]) => {
+      if (!ativo) return;
+      setStages(s.data || []);
+      if (l?.data && Array.isArray(l.data.itens)) setResposta(l.data);
+      else if (l === null) toast.error('Não foi possível carregar os clientes. Tente de novo.');
+    }).finally(() => { if (ativo) setCarregando(false); });
+    return () => { ativo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagina, view, aba, buscaAplicada, filtroEtapa, versao]);
 
-  const carregar = () => {
-    setCarregando(true);
-    return buscarDados();
-  };
+  const leads = resposta.itens;
+  const carregar = () => { setCarregando(true); setVersao((v) => v + 1); };
 
   const selecionarLead = (lead) => {
     setSelecionadoId(lead.id);
@@ -154,29 +157,21 @@ export default function CRMPage() {
     }
   };
 
-  // Suporte a deep-link `?lead=<id>` (vindo de Vendas, Financeiro etc).
-  // Seleciona o lead na ficha assim que os leads chegam (ajuste de estado no
-  // render, guardando o lead ja aberto pra nao repetir); o efeito so limpa o
-  // query param pra nao reabrir em refresh.
+  // Link direto `?lead=<id>` (vindo de Vendas, Financeiro etc.): busca o lead
+  // no servidor (ele pode nao estar na pagina atual) e limpa o parametro.
   const leadIdDeepLink = searchParams.get('lead');
-  const alvoDeepLink = leadIdDeepLink ? leads.find((l) => l.id === leadIdDeepLink) || null : null;
-  const [deepLinkAberto, setDeepLinkAberto] = useState(null);
-  if (alvoDeepLink !== deepLinkAberto) {
-    setDeepLinkAberto(alvoDeepLink);
-    if (alvoDeepLink) {
-      setSelecionadoId(alvoDeepLink.id);
-      setAba('todos');
-      setFiltroEtapa('');
-      setBusca('');
-    }
-  }
-
   useEffect(() => {
-    if (!alvoDeepLink) return;
-    const next = new URLSearchParams(searchParams);
-    next.delete('lead');
-    setSearchParams(next, { replace: true });
-  }, [alvoDeepLink, searchParams, setSearchParams]);
+    if (!leadIdDeepLink) return;
+    api.get(`/crm/leads/${leadIdDeepLink}`)
+      .then((r) => { setLeadAvulso(r.data); setSelecionadoId(r.data.id); })
+      .catch(() => toast.error('Cliente não encontrado.'))
+      .finally(() => {
+        const next = new URLSearchParams(searchParams);
+        next.delete('lead');
+        setSearchParams(next, { replace: true });
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leadIdDeepLink]);
 
   const stagesPorId = useMemo(() => {
     const m = {};
@@ -184,58 +179,27 @@ export default function CRMPage() {
     return m;
   }, [stages]);
 
-  // Situacao calculada uma vez por lead.
+  const leadSelecionado = leads.find((l) => l.id === selecionadoId)
+    || (leadAvulso && leadAvulso.id === selecionadoId ? leadAvulso : null)
+    || leads[0] || null;
+
+  // Situacao calculada uma vez por lead (os da pagina + o aberto por link).
   const situacoes = useMemo(() => {
     const m = {};
-    leads.forEach((l) => { m[l.id] = situacaoDoLead(l, stagesPorId[l.etapaId] || l.etapa, agora); });
+    [...leads, ...(leadAvulso ? [leadAvulso] : [])].forEach((l) => { m[l.id] = situacaoDoLead(l, stagesPorId[l.etapaId] || l.etapa, agora); });
     return m;
-  }, [leads, stagesPorId, agora]);
+  }, [leads, leadAvulso, stagesPorId, agora]);
 
-  const hoje = useMemo(() => new Date(agora), [agora]);
-
-  // Faixa de numeros: tudo calculado sobre os leads ja carregados.
-  const numeros = useMemo(() => {
-    const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1).getTime();
-    let emAberto = 0;
-    let valorAberto = 0;
-    let novosMes = 0;
-    let parados = 0;
-    let aniversariantes = 0;
-    let ganhos = 0;
-    leads.forEach((l) => {
-      const sit = situacoes[l.id];
-      const fechado = sit?.chave === 'ganho' || sit?.chave === 'perdido';
-      if (!fechado) {
-        emAberto += 1;
-        valorAberto += Number(l.valor || 0);
-      }
-      if (sit?.chave === 'ganho') ganhos += 1;
-      if (sit?.chave === 'parado') parados += 1;
-      if (l.criadoEm && new Date(l.criadoEm).getTime() >= inicioMes) novosMes += 1;
-      if (aniversarioNaSemana(l, hoje)) aniversariantes += 1;
-    });
-    return { emAberto, valorAberto, novosMes, parados, aniversariantes, ganhos };
-  }, [leads, situacoes, hoje]);
-
-  const leadsBusca = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    return leads.filter((l) => {
-      if (filtroEtapa && (filtroEtapa === '_sem_etapa' ? (l.etapaId && stagesPorId[l.etapaId]) : l.etapaId !== filtroEtapa)) return false;
-      if (!q) return true;
-      return l.nome?.toLowerCase().includes(q) ||
-             l.telefone?.includes(q) ||
-             l.email?.toLowerCase().includes(q) ||
-             l.tags?.toLowerCase().includes(q);
-    });
-  }, [leads, busca, filtroEtapa, stagesPorId]);
-
-  const filtrosAba = useMemo(() => ({
-    todos: () => true,
-    aberto: (l) => !['ganho', 'perdido'].includes(situacoes[l.id]?.chave),
-    ganho: (l) => situacoes[l.id]?.chave === 'ganho',
-    parado: (l) => situacoes[l.id]?.chave === 'parado',
-    aniversario: (l) => aniversarioNaSemana(l, hoje),
-  }), [situacoes, hoje]);
+  // Faixa de numeros: calculada no servidor sobre o negocio inteiro.
+  const numeros = {
+    emAberto: resposta.numeros?.emAberto ?? 0,
+    valorAberto: resposta.numeros?.valorAberto ?? 0,
+    novosMes: resposta.numeros?.novosMes ?? 0,
+    parados: resposta.numeros?.parados ?? 0,
+    aniversariantes: resposta.numeros?.aniversariantes ?? 0,
+    ganhos: resposta.numeros?.ganhos ?? 0,
+    total: resposta.numeros?.total ?? 0,
+  };
 
   const abas = [
     { valor: 'todos', rotulo: 'Todos' },
@@ -243,71 +207,70 @@ export default function CRMPage() {
     { valor: 'ganho', rotulo: 'Ganhos' },
     { valor: 'parado', rotulo: 'Parados' },
     { valor: 'aniversario', rotulo: 'Aniversário' },
-  ].map((a) => ({ ...a, qtd: leadsBusca.filter(filtrosAba[a.valor]).length }));
-
-  const leadsFiltered = useMemo(
-    () => leadsBusca.filter(filtrosAba[aba] || filtrosAba.todos),
-    [leadsBusca, filtrosAba, aba]
-  );
+  ].map((a) => ({ ...a, qtd: resposta.contagens?.[a.valor] ?? 0 }));
 
   const leadsPorEtapa = useMemo(() => {
     const map = {};
     stages.forEach((s) => { map[s.id] = []; });
     map['_sem_etapa'] = [];
-    leadsFiltered.forEach((l) => {
+    leads.forEach((l) => {
       if (l.etapaId && map[l.etapaId]) map[l.etapaId].push(l);
       else map['_sem_etapa'].push(l);
     });
     return map;
-  }, [stages, leadsFiltered]);
+  }, [stages, leads]);
 
-  const totalPaginas = Math.max(1, Math.ceil(leadsFiltered.length / POR_PAGINA));
+  const totalPaginas = Math.max(1, resposta.totalPaginas || 1);
   const paginaAtual = Math.min(pagina, totalPaginas - 1);
-  const leadsPagina = leadsFiltered.slice(paginaAtual * POR_PAGINA, (paginaAtual + 1) * POR_PAGINA);
-
-  // Lead da ficha: o escolhido (mesmo que um filtro o esconda da lista) ou o
-  // primeiro da lista visivel. Lido sempre do array atual, entao reflete a
-  // ultima versao depois de editar/mover.
-  const leadSelecionado = leads.find((l) => l.id === selecionadoId) || leadsFiltered[0] || null;
 
   const trocarAba = (v) => { setAba(v); setPagina(0); };
+
+  const avisarDuplicados = (r) => {
+    for (const a of r?.data?.avisos || []) toast.warning(a.mensagem);
+  };
 
   const handleSalvarLead = async (dados) => {
     try {
       if (dados.id) {
-        await api.put(`/crm/leads/${dados.id}`, dados);
-        toast.success('Lead atualizado');
+        const r = await api.put(`/crm/leads/${dados.id}`, dados);
+        toast.success('Cliente atualizado');
+        avisarDuplicados(r);
+        if (leadAvulso?.id === dados.id) setLeadAvulso(r.data);
       } else {
         const r = await api.post('/crm/leads', dados);
-        toast.success('Lead criado');
-        if (r?.data?.id) setSelecionadoId(r.data.id);
+        toast.success('Cliente cadastrado');
+        avisarDuplicados(r);
+        if (r?.data?.id) { setSelecionadoId(r.data.id); setLeadAvulso(r.data); }
       }
       setModalLead({ open: false, data: null });
       carregar();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao salvar');
+      toast.error(e.response?.data?.erro || e.response?.data?.error || 'Não foi possível salvar. Confira os campos.');
     }
   };
 
   const handleExcluirLead = async (lead) => {
-    if (!confirm(`Excluir lead "${lead.nome}"?`)) return;
+    if (!confirm(`Excluir o cliente "${lead.nome}"?`)) return;
     try {
       await api.delete(`/crm/leads/${lead.id}`);
-      toast.success('Lead excluido');
+      toast.success('Cliente excluído');
       setSelecionadoId(null);
+      setLeadAvulso(null);
       carregar();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao excluir');
+      toast.error(e.response?.data?.erro || e.response?.data?.error || 'Erro ao excluir');
     }
   };
 
+  // Mover manda so a etapa (nao reenvia o cadastro inteiro).
   const handleMoverLead = async (lead, etapaId) => {
     try {
-      await api.put(`/crm/leads/${lead.id}`, { ...lead, etapaId });
-      toast.success('Lead movido');
+      const r = await api.put(`/crm/leads/${lead.id}`, { etapaId });
+      toast.success('Cliente movido');
+      if (leadAvulso?.id === lead.id) setLeadAvulso(r.data);
       carregar();
-    } catch {
-      toast.error('Erro ao mover');
+    } catch (e) {
+      toast.error(e.response?.data?.erro || 'Erro ao mover');
     }
   };
 
@@ -315,28 +278,27 @@ export default function CRMPage() {
   const handleHabilitarEtapa = async (slug) => {
     try {
       await api.post(`/crm/stages/catalogo/${slug}`);
-      toast.success('Etapa habilitada');
-      await carregar();
+      toast.success('Etapa ligada');
+      carregar();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao habilitar etapa');
+      toast.error(e.response?.data?.erro || 'Erro ao ligar a etapa');
     }
   };
 
-  // Desabilita. Bloqueia (409) se houver leads na etapa — toast explicativo.
+  // Desliga. Bloqueia (409) se houver clientes na etapa — toast explicativo.
   const handleDesabilitarEtapa = async (slug) => {
     try {
       await api.delete(`/crm/stages/catalogo/${slug}`);
-      toast.success('Etapa desabilitada');
-      await carregar();
+      toast.success('Etapa desligada');
+      carregar();
     } catch (e) {
-      const msg = e.response?.data?.error || 'Erro ao desabilitar etapa';
-      toast.error(msg);
+      toast.error(e.response?.data?.erro || 'Erro ao desligar a etapa');
     }
   };
 
   const stagesOrdenadas = [...stages].sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0));
   const carregandoInicial = carregando && leads.length === 0 && stages.length === 0;
-  const crmVazio = !carregando && leads.length === 0 && stages.length === 0;
+  const crmVazio = !carregando && numeros.total === 0 && !buscaAplicada && !filtroEtapa;
 
   const botoesTopo = (
     <>
@@ -347,7 +309,7 @@ export default function CRMPage() {
         </Button>
       )}
       <Button variant="primary" size="sm" icon={Plus} onClick={() => setModalLead({ open: true, data: null })}>
-        Novo lead
+        Novo cliente
       </Button>
     </>
   );
@@ -358,7 +320,7 @@ export default function CRMPage() {
         <Numero
           rotulo="Leads no funil"
           valor={numeros.emAberto}
-          detalhe={`${leads.length} no total · ${numeros.ganhos} ganhos`}
+          detalhe={`${numeros.total} no total · ${numeros.ganhos} ganhos`}
           carregando={carregandoInicial}
           onClick={() => trocarAba('aberto')}
         />
@@ -396,21 +358,13 @@ export default function CRMPage() {
         <Painel>
           <EmptyState
             icon={LayoutGrid}
-            title="CRM ainda vazio"
-            description={
-              podeConfigurar
-                ? 'Habilite as etapas do funil que você vai usar (ex.: Novo, Qualificado, Em negociação, Fechado) e depois cadastre os primeiros leads.'
-                : 'Peça ao dono da conta pra habilitar as etapas do funil. Depois disso você já pode cadastrar leads.'
-            }
+            title="Nenhum cliente ainda"
+            description="Cadastre o primeiro cliente ou importe a sua planilha. O funil de etapas é opcional: dá pra usar só a lista de clientes."
+
             action={
               <div className="flex gap-2 justify-center">
-                {podeConfigurar && (
-                  <Button variant="secondary" icon={Settings} onClick={() => setModalCatalogoEtapas(true)}>
-                    Habilitar etapas
-                  </Button>
-                )}
                 <Button variant="primary" icon={Plus} onClick={() => setModalLead({ open: true, data: null })}>
-                  Criar primeiro lead
+                  Cadastrar primeiro cliente
                 </Button>
               </div>
             }
@@ -488,6 +442,12 @@ export default function CRMPage() {
             {carregandoInicial ? (
               <div className="text-center py-12 text-[var(--text-muted)] text-[13px]">Carregando...</div>
             ) : view === 'kanban' ? (
+              <>
+              {resposta.total > leads.length && (
+                <div className="px-3 pt-2 text-xs text-[var(--text-muted)]">
+                  Mostrando os {leads.length} mais recentes de {resposta.total}. Use a busca ou o filtro de etapa para achar os outros.
+                </div>
+              )}
               <KanbanView
                 stages={stagesOrdenadas}
                 leadsPorEtapa={leadsPorEtapa}
@@ -496,10 +456,11 @@ export default function CRMPage() {
                 onConfigurarEtapas={podeConfigurar ? () => setModalCatalogoEtapas(true) : null}
                 onMoverLead={handleMoverLead}
               />
+              </>
             ) : (
               <TabelaLeads
-                leads={leadsPagina}
-                total={leadsFiltered.length}
+                leads={leads}
+                total={resposta.total}
                 pagina={paginaAtual}
                 totalPaginas={totalPaginas}
                 onPagina={setPagina}
@@ -518,7 +479,7 @@ export default function CRMPage() {
         isOpen={modalLead.open}
         onClose={() => setModalLead({ open: false, data: null })}
         lead={modalLead.data}
-        stages={stages}
+        stages={stagesOrdenadas}
         onSalvar={handleSalvarLead}
       />
 
@@ -819,7 +780,8 @@ function ModalLead({ isOpen, onClose, lead, stages, onSalvar }) {
     }
     : {
       nome: '', telefone: '', email: '', cpf: '', dataNascimento: '',
-      etapaId: '', tags: '', prioridade: 'MEDIUM', origem: 'MANUAL', observacoes: '',
+      // Cliente novo ja entra na primeira etapa ligada do funil (se houver).
+      etapaId: stages[0]?.id || '', tags: '', prioridade: 'MEDIUM', origem: 'MANUAL', observacoes: '',
     }));
   // Itens selecionados: [{ variacaoId, quantidade, observacao, _v: { ...variacao+produto } }].
   // O _v fica em memoria so pra UI calcular total/exibir; backend recebe sem ele.
@@ -883,13 +845,16 @@ function ModalLead({ isOpen, onClose, lead, stages, onSalvar }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!form.nome.trim()) { toast.error('Coloca o nome do cliente'); return; }
+    if (!form.nome.trim()) { toast.error('Coloque o nome do cliente'); return; }
+    if (form.cpf && limparCpf(form.cpf).length !== 11) { toast.error('CPF incompleto: são 11 números.'); return; }
     onSalvar({
       ...form,
       // CPF: manda so digitos pro backend. Vazio = null (limpa o campo).
       cpf: limparCpf(form.cpf) || null,
       // Data nascimento: '' do input type=date vira null pro backend.
       dataNascimento: form.dataNascimento || null,
+      // Sem etapa = null (cliente fora do funil e permitido).
+      etapaId: form.etapaId || null,
       // Backend recalcula 'valor' pela soma dos itens — nao mandamos mais.
       variacoes: itens.map((i) => ({
         variacaoId: i.variacaoId,
@@ -901,7 +866,7 @@ function ModalLead({ isOpen, onClose, lead, stages, onSalvar }) {
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={lead ? 'Editar lead' : 'Novo lead'} description="Cadastre quem é o cliente e o que ele quer comprar." size="2xl">
+    <Modal isOpen={isOpen} onClose={onClose} title={lead ? 'Editar cliente' : 'Novo cliente'} description="Cadastre quem é o cliente e o que ele quer comprar." size="2xl">
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Secao 1: Quem e */}
         <div>
@@ -1067,7 +1032,7 @@ function ModalLead({ isOpen, onClose, lead, stages, onSalvar }) {
               onChange={(e) => setForm({ ...form, etapaId: e.target.value })}
               placeholder="Sem etapa"
               options={stages.map((s) => ({ value: s.id, label: s.nome }))}
-              hint={stages.length === 0 ? 'Habilite etapas em "Configurar etapas" primeiro' : null}
+              hint={stages.length === 0 ? 'Opcional: o funil de etapas pode ser ligado depois em "Configurar etapas".' : null}
             />
             <Select
               size="lg"
@@ -1092,6 +1057,7 @@ function ModalLead({ isOpen, onClose, lead, stages, onSalvar }) {
             value={form.observacoes}
             onChange={(e) => setForm({ ...form, observacoes: e.target.value })}
             rows={3}
+            maxLength={2000}
             placeholder="O que você sabe sobre esse cliente: necessidades, prazo, restrições..."
             className="mt-4"
           />
@@ -1099,7 +1065,7 @@ function ModalLead({ isOpen, onClose, lead, stages, onSalvar }) {
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={onClose} type="button">Cancelar</Button>
-          <Button variant="primary" type="submit">{lead ? 'Salvar' : 'Criar lead'}</Button>
+          <Button variant="primary" type="submit">{lead ? 'Salvar' : 'Cadastrar cliente'}</Button>
         </div>
       </form>
     </Modal>
@@ -1153,7 +1119,7 @@ function ModalCatalogoEtapas({ isOpen, onClose, onHabilitar, onDesabilitar }) {
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Configurar etapas do funil" description="Ligue so as etapas que voce usa. O resto fica de fora pra nao poluir o kanban." size="md">
+    <Modal isOpen={isOpen} onClose={onClose} title="Configurar etapas do funil" description="Ligue só as etapas que você usa. O resto fica de fora para não poluir o quadro." size="md">
       <div className="space-y-2">
         {carregando ? (
           <div className="text-center py-8 text-sm text-[var(--text-muted)]">Carregando...</div>
@@ -1178,7 +1144,7 @@ function ModalCatalogoEtapas({ isOpen, onClose, onHabilitar, onDesabilitar }) {
         <div className="flex items-start gap-2 p-3 border border-[var(--border-subtle)] bg-[var(--info-soft)] text-[var(--info-text)] mt-3">
           <Lock size={14} strokeWidth={2} className="flex-shrink-0 mt-0.5" />
           <div className="text-xs leading-relaxed">
-            <strong>Etapa com leads nao pode ser desabilitada.</strong> Mova ou exclua os leads dela primeiro pra liberar o desligamento.
+            <strong>Etapa com clientes não pode ser desligada.</strong> Mova os clientes dela para outra etapa primeiro.
           </div>
         </div>
 
@@ -1229,8 +1195,8 @@ function FichaLead({ lead, stages, etapa, situacao, agora, carregando, onEditar,
       setHistorico(r.data || []);
       setNovaObs('');
       toast.success('Observação adicionada');
-    } catch {
-      toast.error('Erro ao adicionar');
+    } catch (e) {
+      toast.error(e.response?.data?.erro || 'Erro ao adicionar');
     } finally {
       setCarregandoObs(false);
     }
@@ -1412,6 +1378,7 @@ function FichaLead({ lead, stages, etapa, situacao, agora, carregando, onEditar,
             onChange={(e) => setNovaObs(e.target.value)}
             placeholder="Adicionar observação..."
             rows={2}
+            maxLength={2000}
             aria-label="Nova observação"
           />
           <Button variant="secondary" size="sm" onClick={adicionarObs} loading={carregandoObs} disabled={!novaObs.trim()}>Adicionar</Button>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import {
   Box, ArrowDownToLine, ArrowUpFromLine, AlertTriangle, TrendingUp,
   Plus, Edit2, Trash2, MoreHorizontal, Tag, Image as ImageIcon, ArrowLeftRight,
@@ -99,7 +99,9 @@ export default function EstoquePage() {
   const [busca, setBusca] = useState('');
 
   const [modalMov, setModalMov] = useState({ open: false });
-  const [modalProduto, setModalProduto] = useState({ open: false, data: null });
+  // ?novo=produto (atalho do "Registrar venda" sem produto) ja abre o cadastro.
+  const [searchParams] = useSearchParams();
+  const [modalProduto, setModalProduto] = useState(() => ({ open: searchParams.get('novo') === 'produto', data: null }));
   const [modalEditarVar, setModalEditarVar] = useState({ open: false, variacao: null });
   const [modalCategoria, setModalCategoria] = useState({ open: false, data: null });
 
@@ -672,11 +674,11 @@ function ListaMovimentacoes({ movimentacoes, onVerProduto }) {
 // vai virar positiva (entrada) ou negativa (saida) no submit.
 // AJUSTE_POSITIVO/NEGATIVO sao "atalhos" do mesmo tipo AJUSTE no backend —
 // a direcao e definida pela quantidade gravada (positiva ou negativa).
+// Venda NAO e lancada por aqui: vai pela tela de Vendas (caixa, numero, cupom).
 const TIPOS_MOVIMENTACAO = [
   { value: 'COMPRA_FORNECEDOR', label: 'Compra de fornecedor', sentido: 'in', sublabel: 'entrada', icone: '📦', tipoBackend: 'COMPRA_FORNECEDOR' },
   { value: 'DEVOLUCAO',          label: 'Devolução do cliente', sentido: 'in', sublabel: 'entrada', icone: '↩️', tipoBackend: 'DEVOLUCAO' },
   { value: 'AJUSTE_POSITIVO',    label: 'Ajuste para mais', sentido: 'in', sublabel: 'corrigir contagem', icone: '➕', tipoBackend: 'AJUSTE' },
-  { value: 'VENDA',              label: 'Venda manual', sentido: 'out', sublabel: 'saída', icone: '🛒', tipoBackend: 'VENDA' },
   { value: 'AJUSTE_NEGATIVO',    label: 'Ajuste para menos', sentido: 'out', sublabel: 'corrigir contagem (perda/quebra)', icone: '➖', tipoBackend: 'AJUSTE' },
   { value: 'RESERVA',            label: 'Reserva', sentido: 'out', sublabel: 'separar pra cliente', icone: '🔒', tipoBackend: 'RESERVA' },
 ];
@@ -711,17 +713,19 @@ function ModalMovimentacao({ isOpen, onClose, variacoes, onSalvar, variacaoIdIni
     ? qtdNum * parseFloat(form.precoCusto)
     : null;
 
+  const [salvando, setSalvando] = useState(false);
   const estoqueAtualBaixo = variacaoSel && variacaoSel.produto?.tipo === 'FISICO' && estoqueAtual <= estoqueMinimo;
   const estoqueDepoisBaixo = variacaoSel && variacaoSel.produto?.tipo === 'FISICO' && estoqueDepois !== null && estoqueDepois <= estoqueMinimo;
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    if (salvando) return;
     if (!form.variacaoId) { alert('Selecione um produto'); return; }
     if (!tipoCfg) { alert('Tipo invalido'); return; }
 
-    let quantidade = parseInt(form.quantidade, 10);
-    if (isNaN(quantidade) || quantidade < 1) {
-      alert('Quantidade deve ser maior que zero');
+    let quantidade = Number(String(form.quantidade).replace(',', '.'));
+    if (!Number.isInteger(quantidade) || quantidade < 1) {
+      alert('Quantidade deve ser um número inteiro maior que zero');
       return;
     }
 
@@ -735,18 +739,24 @@ function ModalMovimentacao({ isOpen, onClose, variacoes, onSalvar, variacaoIdIni
       quantidade = Math.abs(quantidade);
     }
 
-    onSalvar({
-      variacaoId: form.variacaoId,
-      tipo: tipoCfg.tipoBackend, // mapeia AJUSTE_POSITIVO/NEGATIVO -> AJUSTE
-      quantidade,
-      motivo: form.motivo,
-      precoCusto: form.precoCusto || undefined,
-      precoVenda: form.precoVenda || undefined,
-    });
+    // Trava o botao enquanto salva (clique duplo nao lanca 2 vezes).
+    setSalvando(true);
+    try {
+      await onSalvar({
+        variacaoId: form.variacaoId,
+        tipo: tipoCfg.tipoBackend, // mapeia AJUSTE_POSITIVO/NEGATIVO -> AJUSTE
+        quantidade,
+        motivo: form.motivo,
+        precoCusto: form.precoCusto || undefined,
+        precoVenda: form.precoVenda || undefined,
+      });
+    } finally {
+      setSalvando(false);
+    }
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Registrar movimentação" description="Compra, venda, devolução ou ajuste manual." size="lg">
+    <Modal isOpen={isOpen} onClose={onClose} title="Registrar movimentação" description="Compra, devolução, reserva ou ajuste manual. Venda é pela tela de Vendas." size="lg">
       <form onSubmit={handleSubmit} className="space-y-4">
         <Select
           label="Produto"
@@ -859,7 +869,7 @@ function ModalMovimentacao({ isOpen, onClose, variacoes, onSalvar, variacaoIdIni
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={onClose} type="button">Cancelar</Button>
-          <Button variant="primary" type="submit">Registrar</Button>
+          <Button variant="primary" type="submit" disabled={salvando}>{salvando ? 'Registrando...' : 'Registrar'}</Button>
         </div>
       </form>
     </Modal>

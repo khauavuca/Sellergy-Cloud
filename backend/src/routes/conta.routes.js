@@ -15,7 +15,7 @@ const { requerTenant, requerPapelPrivilegiado, ehAdmin } = require('../middlewar
 const { situacaoAssinatura } = require('../assinatura/situacao');
 const { obterPlano, planosPublicos } = require('../planos/catalogo');
 const { carregarPassos } = require('../onboarding/passos');
-const { slugBase } = require('../onboarding/cadastro');
+const { validarSlug } = require('../seguranca/validarConta');
 const { configLembreteEfetiva, contarLembretesDoMes } = require('../agenda/lembretes');
 const { limiteDo } = require('../planos/recursos');
 const { contarNotasDoMes } = require('../fiscal/limiteNotas');
@@ -104,15 +104,21 @@ roteador.put('/configuracoes', requerPapelPrivilegiado, async (req, res) => {
     const data = {};
 
     if (slugPublico !== undefined) {
-      const slug = slugBase(slugPublico);
-      if (slug.length < 3) return res.status(422).json({ erro: 'O endereço precisa de pelo menos 3 letras ou números.', campos: ['slugPublico'] });
+      // Endereco invalido ou reservado ("admin", "api"...) e recusado, nunca
+      // trocado calado por outro.
+      const v = validarSlug(slugPublico);
+      if (v.erro) return res.status(422).json({ erro: v.erro, campos: v.campos });
+      const slug = v.valor;
       const dono = await prisma.cliente.findUnique({ where: { slugPublico: slug }, select: { id: true } });
       if (dono && dono.id !== clienteId) return res.status(409).json({ erro: 'Esse endereço já está em uso. Tente outro.', campos: ['slugPublico'] });
       data.slugPublico = slug;
     }
-    if (caixaAutomatico !== undefined) data.caixaAutomatico = caixaAutomatico === true;
+    if (caixaAutomatico !== undefined) {
+      if (typeof caixaAutomatico !== 'boolean') return res.status(422).json({ erro: 'caixaAutomatico precisa ser verdadeiro ou falso.', campos: ['caixaAutomatico'] });
+      data.caixaAutomatico = caixaAutomatico;
+    }
     if (configLembrete !== undefined) {
-      if (configLembrete !== null && typeof configLembrete !== 'object') {
+      if (configLembrete !== null && (typeof configLembrete !== 'object' || Array.isArray(configLembrete))) {
         return res.status(422).json({ erro: 'configLembrete invalida.', campos: ['configLembrete'] });
       }
       data.configLembrete = configLembrete === null ? null : configLembreteEfetiva(configLembrete);
@@ -124,6 +130,9 @@ roteador.put('/configuracoes', requerPapelPrivilegiado, async (req, res) => {
     });
     res.json({ ...atualizado, configLembrete: configLembreteEfetiva(atualizado.configLembrete) });
   } catch (e) {
+    // Dois negocios pegando o mesmo endereco ao mesmo tempo: o indice unico
+    // barra o segundo.
+    if (e?.code === 'P2002') return res.status(409).json({ erro: 'Esse endereço já está em uso. Tente outro.', campos: ['slugPublico'] });
     console.error('[conta/configuracoes]', e);
     res.status(500).json({ erro: 'Erro ao salvar as configurações.' });
   }
@@ -199,7 +208,8 @@ roteador.post('/cancelar', limitadorAssinatura, async (req, res) => {
   }
 });
 
-roteador.get('/faturas', async (req, res) => {
+// Faturas da assinatura: so a dona ou administrador (vendedor nao ve).
+roteador.get('/faturas', requerPapelPrivilegiado, async (req, res) => {
   try {
     const clienteId = clienteIdDe(req);
     if (!clienteId) return res.status(400).json({ erro: 'clienteId obrigatorio.' });

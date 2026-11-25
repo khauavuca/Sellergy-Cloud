@@ -5,6 +5,9 @@ const {
   segmentoPermiteEspecialista,
 } = require('../utils/modulosSegmento');
 const { garantirDentroDoLimite } = require('../planos/recursos');
+const { travarNegocio } = require('../utils/travaNegocio');
+const sessaoUsuario = require('../seguranca/sessaoUsuario');
+const { normalizarEmail, emailValido, validarNome, erroSenhaNova } = require('../seguranca/validarConta');
 
 // Perfis que um colaborador de tenant pode ter (o Prisma só conhece estes).
 // "Especialista" e "Recepção" são TIPOS de UI que persistem como VENDEDOR:
@@ -13,9 +16,18 @@ const { garantirDentroDoLimite } = require('../planos/recursos');
 const PERFIS_COLABORADOR_VALIDOS = ['ADMINISTRADOR', 'VENDEDOR'];
 const ACOES = ['visualizar', 'criar', 'editar', 'excluir'];
 
-// Senha inicial de qualquer usuário criado pela tela (telas §13): fixa e simples;
-// deveTrocarSenha força a troca no primeiro acesso.
-const SENHA_PADRAO = '123456';
+// Senha inicial: quem cadastra define (minimo 8, igual ao resto do sistema) e
+// deveTrocarSenha obriga a troca no primeiro acesso — a API so libera perfil e
+// trocar senha ate la (auth.middleware). Nao existe mais senha padrao "123456".
+const PERFIS_QUE_GERENCIAM = ['CLIENT', 'ADMINISTRADOR'];
+
+async function emailEmUso(email, excetoId = null, client = prisma) {
+  const outro = await client.usuario.findFirst({
+    where: { email: { equals: email, mode: 'insensitive' }, ...(excetoId ? { id: { not: excetoId } } : {}) },
+    select: { id: true },
+  });
+  return Boolean(outro);
+}
 
 // Acoes especificas de modulos que fogem do CRUD padrao (sync com o frontend).
 // Vazio por enquanto — a Inbox/MENSAGENS (unico caso) saiu no pivo ERP-first.
@@ -139,8 +151,12 @@ class CrmUsuariosController {
    */
   async listar(req, res) {
     try {
-      const { clienteId } = req.usuario;
+      const { clienteId, perfil: perfilSolicitante } = req.usuario;
       if (!clienteId) return res.status(403).json({ error: 'Acesso negado: ID do cliente ausente.' });
+      // Lista da equipe (com e-mails e permissoes) e so de quem gerencia.
+      if (!PERFIS_QUE_GERENCIAM.includes(perfilSolicitante)) {
+        return res.status(403).json({ error: 'Só a dona da conta ou um administrador vê a equipe.' });
+      }
 
       const usuarios = await prisma.usuario.findMany({
         where: {
@@ -192,22 +208,17 @@ class CrmUsuariosController {
         return res.status(403).json({ error: 'Voce nao tem permissao para cadastrar usuarios.' });
       }
 
-      const { nome, email, senha, perfil, permissoes, especialista } = req.body;
-      const ehEspecialista = !!especialista && typeof especialista === 'object';
+      const { nome, email, senha, perfil, permissoes, especialista } = req.body || {};
+      const ehEspecialista = !!especialista && typeof especialista === 'object' && !Array.isArray(especialista);
 
-      if (!nome || !email) {
-        return res.status(400).json({ error: 'Campos obrigatorios: nome e email.' });
+      const vNome = validarNome(nome);
+      if (vNome.erro) return res.status(400).json({ error: vNome.erro, campos: vNome.campos });
+      const emailNorm = normalizarEmail(email);
+      if (!emailValido(emailNorm)) {
+        return res.status(400).json({ error: 'E-mail invalido.', campos: ['email'] });
       }
-      const emailNorm = String(email).trim().toLowerCase();
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailNorm)) {
-        return res.status(400).json({ error: 'E-mail invalido.' });
-      }
-
-      // Senha inicial fixa (123456) quando não informada; aceita override (>=6).
-      if (senha !== undefined && (typeof senha !== 'string' || senha.length < 6)) {
-        return res.status(400).json({ error: 'Senha deve ter ao menos 6 caracteres.' });
-      }
-      const senhaParaUsar = senha || SENHA_PADRAO;
+      const erroSenha = erroSenhaNova(senha);
+      if (erroSenha) return res.status(400).json({ error: erroSenha, campos: ['senha'] });
 
       // Especialista persiste como VENDEDOR; demais respeitam o perfil enviado.
       const perfilFinal = ehEspecialista ? 'VENDEDOR' : perfil;
@@ -227,22 +238,8 @@ class CrmUsuariosController {
         return res.status(400).json({ error: 'Especialista nao esta disponivel para este segmento de negocio.' });
       }
 
-      const usuarioExistente = await prisma.usuario.findUnique({ where: { email: emailNorm }, select: { id: true } });
-      if (usuarioExistente) {
-        return res.status(400).json({ error: 'Este e-mail ja esta cadastrado.' });
-      }
-
-      // Limites do plano: usuarios do tenant (dono incluso) e, se for
-      // especialista, profissionais ativos.
-      await garantirDentroDoLimite({
-        clienteId, limite: 'usuarios',
-        usoAtual: await prisma.usuario.count({ where: { clienteId } }),
-      });
-      if (ehEspecialista) {
-        await garantirDentroDoLimite({
-          clienteId, limite: 'profissionais',
-          usoAtual: await prisma.especialista.count({ where: { clienteId, ativo: true } }),
-        });
+      if (await emailEmUso(emailNorm)) {
+        return res.status(400).json({ error: 'Este e-mail ja esta cadastrado.', campos: ['email'] });
       }
 
       // ADMINISTRADOR -> permissoes completas. Demais -> sanitizadas por segmento.
@@ -251,7 +248,7 @@ class CrmUsuariosController {
         : sanitizarPermissoes(permissoes, segmento);
       if (ehEspecialista) permissoesFinais = garantirAgendaPropria(permissoesFinais);
 
-      const senhaHasheada = await bcrypt.hash(senhaParaUsar, 12);
+      const senhaHasheada = await bcrypt.hash(senha, 12);
 
       // Valida serviços ANTES da transação (leitura).
       const servicosValidos = ehEspecialista
@@ -259,7 +256,7 @@ class CrmUsuariosController {
         : [];
 
       const dadosUsuario = {
-        nome: nome.trim(),
+        nome: vNome.valor,
         email: emailNorm,
         senha: senhaHasheada,
         clienteId,
@@ -268,40 +265,59 @@ class CrmUsuariosController {
         deveTrocarSenha: true,
       };
 
-      let criado;
-      if (ehEspecialista) {
-        criado = await prisma.$transaction(async (tx) => {
-          const usuario = await tx.usuario.create({ data: dadosUsuario, select: { id: true } });
-          await tx.especialista.create({
-            data: {
-              clienteId,
-              nome: nome.trim(),
-              ativo: especialista.ativo === false ? false : true,
-              usuarioId: usuario.id,
-              jornada: especialista.jornada && typeof especialista.jornada === 'object' ? especialista.jornada : null,
-              servicos: { create: servicosValidos.map((produtoId) => ({ produtoId })) },
-            },
+      // Contar e criar dentro da MESMA transacao, com a trava da equipe do
+      // negocio: pedidos ao mesmo tempo entram em fila e o limite do plano
+      // (e o e-mail unico) nao fura mais.
+      const criado = await prisma.$transaction(async (tx) => {
+        await travarNegocio(tx, 'equipe', clienteId);
+        if (await emailEmUso(emailNorm, null, tx)) {
+          throw Object.assign(new Error('Este e-mail ja esta cadastrado.'), { status: 400 });
+        }
+        // Limites do plano: usuarios do tenant (dono incluso) + convites
+        // abertos (ja ocupam vaga) e, se for especialista, profissionais ativos.
+        const [usuarios, convitesAbertos] = await Promise.all([
+          tx.usuario.count({ where: { clienteId } }),
+          tx.conviteEquipe.count({ where: { clienteId, aceitoEm: null, expiraEm: { gt: new Date() } } }),
+        ]);
+        await garantirDentroDoLimite({ clienteId, limite: 'usuarios', usoAtual: usuarios + convitesAbertos });
+        if (ehEspecialista) {
+          await garantirDentroDoLimite({
+            clienteId, limite: 'profissionais',
+            usoAtual: await tx.especialista.count({ where: { clienteId, ativo: true } }),
           });
-          return tx.usuario.findUnique({
-            where: { id: usuario.id },
-            select: {
-              id: true, nome: true, email: true, perfil: true, permissoes: true,
-              especialista: { select: { id: true, ativo: true, jornada: true, servicos: { select: { produtoId: true } } } },
-            },
+        }
+        if (!ehEspecialista) {
+          return tx.usuario.create({
+            data: dadosUsuario,
+            select: { id: true, nome: true, email: true, perfil: true, permissoes: true },
           });
+        }
+        const usuario = await tx.usuario.create({ data: dadosUsuario, select: { id: true } });
+        await tx.especialista.create({
+          data: {
+            clienteId,
+            nome: vNome.valor,
+            ativo: especialista.ativo === false ? false : true,
+            usuarioId: usuario.id,
+            jornada: especialista.jornada && typeof especialista.jornada === 'object' ? especialista.jornada : null,
+            servicos: { create: servicosValidos.map((produtoId) => ({ produtoId })) },
+          },
         });
-      } else {
-        criado = await prisma.usuario.create({
-          data: dadosUsuario,
-          select: { id: true, nome: true, email: true, perfil: true, permissoes: true },
+        return tx.usuario.findUnique({
+          where: { id: usuario.id },
+          select: {
+            id: true, nome: true, email: true, perfil: true, permissoes: true,
+            especialista: { select: { id: true, ativo: true, jornada: true, servicos: { select: { produtoId: true } } } },
+          },
         });
-      }
+      }, { timeout: 20000, maxWait: 15000 });
 
       res.status(201).json({ ...criado, tipo: tipoDerivado(criado), especialista: especialistaResumo(criado.especialista) });
     } catch (error) {
       if (error.codigo === 'LIMITE_DO_PLANO') {
         return res.status(403).json({ error: error.message, codigo: error.codigo, limite: error.limite, maximo: error.maximo, planoSugerido: error.planoSugerido });
       }
+      if (error.status) return res.status(error.status).json({ error: error.message });
       console.error('[CrmUsuariosController/criar]', error);
       if (error.code === 'P2002') return res.status(400).json({ error: 'Este e-mail ja esta cadastrado.' });
       res.status(500).json({ error: 'Erro ao criar usuario do CRM' });
@@ -320,11 +336,11 @@ class CrmUsuariosController {
       const { id } = req.params;
       const { clienteId, perfil: perfilSolicitante, id: idSolicitante } = req.usuario;
       if (!clienteId) return res.status(403).json({ error: 'Acesso negado: ID do cliente ausente.' });
-      const { nome, email, senha, perfil, permissoes, especialista } = req.body;
+      const { nome, email, senha, perfil, permissoes, especialista } = req.body || {};
 
       const alvo = await prisma.usuario.findFirst({
         where: { id, clienteId },
-        select: { id: true, perfil: true, especialista: { select: { id: true } } },
+        select: { id: true, perfil: true, email: true, especialista: { select: { id: true } } },
       });
       if (!alvo) return res.status(404).json({ error: 'Usuario nao encontrado.' });
 
@@ -337,23 +353,47 @@ class CrmUsuariosController {
       if (perfilSolicitante === 'VENDEDOR' && alvo.id !== idSolicitante) {
         return res.status(403).json({ error: 'Voce so pode alterar seu proprio cadastro.' });
       }
+      // Vendedor nao muda o proprio papel nem as proprias permissoes: recusa
+      // em vez de ignorar calado.
+      if (!PERFIS_QUE_GERENCIAM.includes(perfilSolicitante)
+        && ((perfil !== undefined && perfil !== alvo.perfil) || permissoes !== undefined || especialista !== undefined)) {
+        return res.status(403).json({ error: 'Voce nao pode mudar o proprio perfil nem as permissoes.' });
+      }
 
       const ehEspecialista = !!alvo.especialista;
       const segmento = await carregarSegmento(clienteId);
 
       const dadosUsuario = {};
+      let derrubarSessoes = false;
       if (nome !== undefined) {
-        if (typeof nome !== 'string' || !nome.trim()) return res.status(400).json({ error: 'Nome invalido.' });
-        dadosUsuario.nome = nome.trim();
+        const vNome = validarNome(nome);
+        if (vNome.erro) return res.status(400).json({ error: vNome.erro, campos: vNome.campos });
+        dadosUsuario.nome = vNome.valor;
       }
-      if (email !== undefined) dadosUsuario.email = String(email).trim().toLowerCase();
-
-      if (senha) {
-        if (typeof senha !== 'string' || senha.length < 6) {
-          return res.status(400).json({ error: 'Senha deve ter ao menos 6 caracteres.' });
+      if (email !== undefined) {
+        const emailNorm = normalizarEmail(email);
+        if (!emailValido(emailNorm)) return res.status(400).json({ error: 'E-mail invalido.', campos: ['email'] });
+        if (emailNorm !== String(alvo.email).toLowerCase()) {
+          // O e-mail e o login: a propria pessoa troca pelo Perfil (pede a senha).
+          if (alvo.id === idSolicitante) {
+            return res.status(400).json({ error: 'Para trocar o seu e-mail, use Meu perfil (pede a senha atual).', campos: ['email'] });
+          }
+          if (await emailEmUso(emailNorm, alvo.id)) return res.status(400).json({ error: 'Este e-mail ja esta em uso.', campos: ['email'] });
+          dadosUsuario.email = emailNorm;
         }
+      }
+
+      if (senha !== undefined && senha !== null && senha !== '') {
+        // A propria senha so muda com a senha atual (Meu perfil / trocar senha).
+        if (alvo.id === idSolicitante) {
+          return res.status(400).json({ error: 'Para trocar a sua senha, use Meu perfil > Trocar senha (pede a senha atual).', campos: ['senha'] });
+        }
+        const erroSenha = erroSenhaNova(senha);
+        if (erroSenha) return res.status(400).json({ error: erroSenha, campos: ['senha'] });
+        // Senha redefinida por quem gerencia: vira provisoria e as sessoes caem.
         dadosUsuario.senha = await bcrypt.hash(senha, 12);
-        if (alvo.id === idSolicitante) dadosUsuario.deveTrocarSenha = false;
+        dadosUsuario.deveTrocarSenha = true;
+        derrubarSessoes = true;
       }
 
       // Perfil/permissões: só CLIENT ou ADMINISTRADOR (sobre alvo não-admin).
@@ -370,6 +410,7 @@ class CrmUsuariosController {
           if (perfilSolicitante === 'ADMINISTRADOR' && perfil === 'ADMINISTRADOR') {
             return res.status(403).json({ error: 'Apenas o dono da conta pode promover a Administrador.' });
           }
+          if (perfil !== alvo.perfil) derrubarSessoes = true; // papel novo: entra de novo
           dadosUsuario.perfil = perfil;
           if (perfil === 'ADMINISTRADOR') {
             dadosUsuario.permissoes = gerarPermissoesCompletas();
@@ -395,7 +436,10 @@ class CrmUsuariosController {
 
       await prisma.$transaction(async (tx) => {
         if (Object.keys(dadosUsuario).length > 0) {
-          await tx.usuario.update({ where: { id }, data: dadosUsuario });
+          await tx.usuario.update({
+            where: { id },
+            data: { ...dadosUsuario, ...(derrubarSessoes ? { versaoSessao: { increment: 1 } } : {}) },
+          });
         }
         if (atualizarEspecialista) {
           const dataEsp = {};
@@ -417,6 +461,9 @@ class CrmUsuariosController {
           }
         }
       });
+
+      // Permissoes/papel novos valem no proximo pedido (cache da sessao limpo).
+      sessaoUsuario.invalidar(id);
 
       const atualizado = await prisma.usuario.findUnique({
         where: { id },
@@ -473,6 +520,8 @@ class CrmUsuariosController {
       } else {
         await prisma.usuario.delete({ where: { id } });
       }
+      // Excluido perde o acesso na hora (o middleware confere no banco).
+      sessaoUsuario.invalidar(id);
 
       res.json({ message: 'Usuario removido com sucesso.' });
     } catch (error) {

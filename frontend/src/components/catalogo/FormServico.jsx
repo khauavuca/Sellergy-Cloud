@@ -3,8 +3,13 @@
 // - EditorServico (coluna da direita da tela): edita o servico selecionado,
 //   em modo `compacto` (campos menores, visibilidade vira o interruptor
 //   "Aparece no link de agendamento" e o rodape tem Excluir/Arquivar/Salvar).
+//
+// Primeiro uso: conta nova pode nao ter categoria nem profissional. O proprio
+// formulario oferece criar a categoria ali e o "Eu mesmo atendo". Erros
+// aparecem no campo (nada de alert() do navegador).
 import { useRef, useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Trash2, Plus, UserCheck } from 'lucide-react';
 import {
   Button, IconButton, Input, Textarea, Select, Switch,
   UploadImagem, InputDuracao, LabelAjuda,
@@ -32,18 +37,38 @@ function formInicialProduto(produto) {
   // Default SERVICO porque Catalogo so cadastra servicos.
   return {
     nome: '', descricao: '', tipo: 'SERVICO', visibilidade: 'ATIVO',
-    categoriaId: '', imagemUrl: '', duracaoMin: '', especialistasIds: [],
+    categoriaId: '', imagemUrl: '', duracaoMin: '', preco: '', especialistasIds: [],
     sinalPercentual: '', sinalAlterado: false,
   };
 }
 
+// Erro da API ({ erro, campos }) -> { campo: mensagem }. Sem campo -> _geral.
+function errosDaApi(e) {
+  const d = e?.response?.data || {};
+  const msg = d.erro || d.error || 'Não foi possível salvar. Tente de novo.';
+  const campos = Array.isArray(d.campos) && d.campos.length ? d.campos : ['_geral'];
+  return Object.fromEntries(campos.map((c) => [c, msg]));
+}
+
+const PRECO_VALIDO = /^\d{1,7}([.,]\d{1,2})?$/;
+
 export default function FormServico({
   produto, categorias = [], especialistas = [], onSalvar, onCancelar, onExcluir, compacto = false, onAlterou, temps,
+  onCriarCategoria, onEuAtendo,
 }) {
   const [form, setFormBruto] = useState(() => formInicialProduto(produto));
+  const [erros, setErros] = useState({});
+  const [salvando, setSalvando] = useState(false);
+  const [novaCategoria, setNovaCategoria] = useState('');
+  const [criandoCategoria, setCriandoCategoria] = useState(false);
+  const [abrirNovaCategoria, setAbrirNovaCategoria] = useState(false);
+  const [criandoEu, setCriandoEu] = useState(false);
+  const semCategoria = categorias.length === 0;
+
   // Avisa o pai que ha alteracao nao salva (selo "Sem alterações salvas").
   const setForm = (valor) => {
     setFormBruto(valor);
+    setErros((e) => (Object.keys(e).length ? {} : e));
     onAlterou?.();
   };
   // Imagens temp (modo criacao) sao avisadas ao modal (ModalServico), que
@@ -57,6 +82,36 @@ export default function FormServico({
       ? f.especialistasIds.filter((x) => x !== id)
       : [...f.especialistasIds, id],
   }));
+
+  const criarCategoria = async () => {
+    const nome = novaCategoria.trim();
+    if (nome.length < 2) { setErros({ novaCategoria: 'Digite o nome da categoria (ex.: Serviços).' }); return; }
+    setCriandoCategoria(true);
+    try {
+      const cat = await onCriarCategoria(nome);
+      setNovaCategoria('');
+      setAbrirNovaCategoria(false);
+      if (cat?.id) setForm((f) => ({ ...f, categoriaId: cat.id }));
+    } catch (e) {
+      const d = e?.response?.data || {};
+      setErros({ novaCategoria: d.erro || d.error || 'Não foi possível criar a categoria.' });
+    } finally {
+      setCriandoCategoria(false);
+    }
+  };
+
+  const euAtendo = async () => {
+    setCriandoEu(true);
+    try {
+      const esp = await onEuAtendo();
+      if (esp?.id) setForm((f) => ({ ...f, especialistasIds: [...new Set([...(f.especialistasIds || []), esp.id])] }));
+    } catch (e) {
+      const d = e?.response?.data || {};
+      setErros({ especialistasIds: d.erro || d.error || 'Não foi possível cadastrar você como profissional.' });
+    } finally {
+      setCriandoEu(false);
+    }
+  };
 
   // Erro de upload sobe pro componente UploadImagem, que mostra a mensagem.
   const handleUpload = async (file) => {
@@ -84,28 +139,39 @@ export default function FormServico({
     setForm((prev) => ({ ...prev, imagemUrl: '' }));
   };
 
-  const enviar = (extra = {}) => {
-    if (!form.categoriaId) {
-      alert('Selecione uma categoria financeira (necessária para CMV/relatórios).');
-      return;
-    }
-    if (!form.especialistasIds || form.especialistasIds.length === 0) {
-      alert('Selecione ao menos um especialista que atende este serviço.');
-      return;
-    }
+  const enviar = async (extra = {}) => {
+    if (salvando) return;
+    const precoTexto = String(form.preco ?? '').trim();
+    const novos = {};
+    if (!String(form.nome || '').trim()) novos.nome = 'Informe o nome do serviço.';
+    if (!form.categoriaId) novos.categoriaId = semCategoria ? 'Crie a primeira categoria aqui embaixo.' : 'Escolha a categoria.';
+    if (!form.especialistasIds || form.especialistasIds.length === 0) novos.especialistasIds = 'Escolha quem atende este serviço.';
+    if (!produto && precoTexto && !PRECO_VALIDO.test(precoTexto)) novos.preco = 'Preço inválido. Ex.: 45,90';
+    if (Object.keys(novos).length) { setErros(novos); return; }
+
     // Catalogo cadastra SO servicos. Forcar tipo=SERVICO no payload pra
     // blindar contra qualquer estado inesperado.
     const duracao = form.duracaoMin === '' || form.duracaoMin == null
       ? null
       : (parseInt(form.duracaoMin, 10) || null);
-    onSalvar({
-      ...form,
-      ...extra,
-      tipo: 'SERVICO',
-      imagemUrl: form.imagemUrl || null,
-      duracaoMin: duracao,
-    });
-    temps?.limpar();
+    const { preco: _preco, ...resto } = form;
+    setSalvando(true);
+    try {
+      await onSalvar({
+        ...resto,
+        ...extra,
+        // Preco so no cadastro novo: o backend cria a variacao "Padrão" com ele.
+        ...(!produto && precoTexto ? { preco: precoTexto } : {}),
+        tipo: 'SERVICO',
+        imagemUrl: form.imagemUrl || null,
+        duracaoMin: duracao,
+      });
+      temps?.limpar();
+    } catch (e) {
+      setErros(errosDaApi(e));
+    } finally {
+      setSalvando(false);
+    }
   };
 
   const handleSubmit = (e) => {
@@ -115,9 +181,10 @@ export default function FormServico({
 
   const idBase = produto?.id || 'novo';
   const noLink = form.visibilidade === 'ATIVO';
+  const erroGeral = erros._geral || erros.duracaoMin || erros.descricao || erros.visibilidade || erros.imagemUrl;
 
   return (
-    <form onSubmit={handleSubmit} className={compacto ? 'space-y-3.5' : 'space-y-4'}>
+    <form onSubmit={handleSubmit} className={compacto ? 'space-y-3.5' : 'space-y-4'} noValidate>
       <div className={compacto ? 'flex items-start gap-3' : 'flex items-start gap-4'}>
         <UploadImagem
           imagemUrl={form.imagemUrl || null}
@@ -131,6 +198,8 @@ export default function FormServico({
             label={<LabelAjuda texto="Nome do serviço" ajuda="Ex.: Corte de cabelo, Consulta nutricional." />}
             value={form.nome}
             onChange={(e) => setForm({ ...form, nome: e.target.value })}
+            maxLength={120}
+            error={erros.nome}
             required
             autoFocus={!compacto}
           />
@@ -140,6 +209,7 @@ export default function FormServico({
               label={<LabelAjuda texto="Descrição" ajuda="O que está incluído no atendimento." />}
               value={form.descricao}
               onChange={(e) => setForm({ ...form, descricao: e.target.value })}
+              maxLength={2000}
               rows={3}
             />
           )}
@@ -151,6 +221,7 @@ export default function FormServico({
           label={<LabelAjuda texto="Descrição" ajuda="O que está incluído no atendimento." />}
           value={form.descricao}
           onChange={(e) => setForm({ ...form, descricao: e.target.value })}
+          maxLength={2000}
           rows={2}
         />
       )}
@@ -168,15 +239,64 @@ export default function FormServico({
             placeholder=""
           />
         )}
-        <Select
-          size={tam}
-          label={<LabelAjuda texto="Categoria financeira" ajuda="Necessária para vincular vendas e CMV." />}
-          value={form.categoriaId}
-          onChange={(e) => setForm({ ...form, categoriaId: e.target.value })}
-          placeholder="Selecione..."
-          options={categorias.map((c) => ({ value: c.id, label: c.nome }))}
-        />
+        <div className="min-w-0">
+          {!semCategoria && (
+            <Select
+              size={tam}
+              label={<LabelAjuda texto="Categoria" ajuda="Agrupa as vendas deste serviço nos relatórios." />}
+              value={form.categoriaId}
+              onChange={(e) => setForm({ ...form, categoriaId: e.target.value })}
+              placeholder="Selecione..."
+              options={categorias.map((c) => ({ value: c.id, label: c.nome }))}
+              error={erros.categoriaId}
+            />
+          )}
+          {onCriarCategoria && (semCategoria || abrirNovaCategoria) && (
+            <div className={semCategoria ? '' : 'mt-2'}>
+              <div className="flex items-end gap-2">
+                <div className="flex-1 min-w-0">
+                  <Input
+                    size={tam}
+                    label={semCategoria ? 'Categoria (crie a primeira)' : 'Nova categoria'}
+                    placeholder="Ex.: Serviços, Cabelo, Estética"
+                    value={novaCategoria}
+                    maxLength={60}
+                    onChange={(e) => { setNovaCategoria(e.target.value); setErros({}); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); criarCategoria(); } }}
+                    error={erros.novaCategoria || (semCategoria ? erros.categoriaId : undefined)}
+                  />
+                </div>
+                <Button type="button" variant="secondary" icon={Plus} onClick={criarCategoria} loading={criandoCategoria}>
+                  Criar
+                </Button>
+              </div>
+            </div>
+          )}
+          {onCriarCategoria && !semCategoria && !abrirNovaCategoria && (
+            <button
+              type="button"
+              onClick={() => setAbrirNovaCategoria(true)}
+              className="mt-1.5 p-0 bg-transparent border-0 text-xs font-semibold text-[var(--primary)] hover:underline cursor-pointer"
+            >
+              + Nova categoria
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Preco no cadastro novo: vira a variacao "Padrão". Na edicao o preco
+          fica em "Preço e variações" (cada variacao tem o seu). */}
+      {!produto && (
+        <Input
+          size={tam}
+          label={<LabelAjuda texto="Preço (R$)" ajuda="O valor que o cliente paga. Depois dá pra criar variações com outros preços." />}
+          inputMode="decimal"
+          placeholder="Ex.: 45,90"
+          value={form.preco ?? ''}
+          onChange={(e) => setForm({ ...form, preco: e.target.value.replace(/[^\d.,]/g, '') })}
+          error={erros.preco}
+        />
+      )}
 
       {/* Duracao sempre visivel — Catalogo so trata servicos.
           Persiste na variacao Padrao via backend. */}
@@ -200,15 +320,23 @@ export default function FormServico({
         />
       </div>
 
-      {/* Especialistas que atendem — obrigatório. A agenda usa este vínculo
-          pra reservar o horário do profissional escolhido. */}
+      {/* Quem atende — obrigatório. A agenda usa este vínculo pra reservar o
+          horário do profissional escolhido. */}
       <div>
         <div id={`quem-faz-${idBase}`} className={compacto ? 'text-xs font-semibold text-[var(--text-secondary)] mb-1.5' : 'block text-sm font-medium text-[var(--text-secondary)] mb-2'}>
-          {compacto ? 'Quem faz' : 'Especialistas que atendem este serviço'}
+          {compacto ? 'Quem faz' : 'Quem atende este serviço'}
         </div>
         {especialistas.length === 0 ? (
-          <div className="text-[13px] text-[var(--text-muted)] bg-[var(--bg-subtle)] rounded-lg p-3 leading-relaxed">
-            Cadastre um especialista antes (na tela <strong>Especialistas</strong>). O serviço precisa de pelo menos um profissional que o execute.
+          <div className="text-[13px] text-[var(--text-muted)] bg-[var(--bg-subtle)] rounded-lg p-3 leading-relaxed space-y-2">
+            <p className="m-0">
+              Ainda não tem ninguém cadastrado pra atender. Se é você quem faz o serviço, é só um clique.
+              Pra cadastrar outras pessoas, vá em <Link to="/app/usuarios" className="font-semibold underline">Equipe</Link>.
+            </p>
+            {onEuAtendo && (
+              <Button type="button" variant="secondary" size="sm" icon={UserCheck} onClick={euAtendo} loading={criandoEu}>
+                Eu mesmo atendo
+              </Button>
+            )}
           </div>
         ) : (
           <>
@@ -237,6 +365,9 @@ export default function FormServico({
             </p>
           </>
         )}
+        {erros.especialistasIds && (
+          <p className="text-xs mt-1.5 font-medium text-[var(--danger)]" role="alert">{erros.especialistasIds}</p>
+        )}
       </div>
 
       {compacto && (
@@ -257,21 +388,25 @@ export default function FormServico({
         </div>
       )}
 
+      {erroGeral && (
+        <p className="m-0 text-[13px] font-medium text-[var(--danger)]" role="alert">{erroGeral}</p>
+      )}
+
       {compacto ? (
         <div className="flex items-center gap-2 pt-1">
           {onExcluir && (
             <IconButton icon={Trash2} variant="ghost" size="sm" ariaLabel="Excluir serviço" onClick={onExcluir} />
           )}
           {form.visibilidade !== 'ARQUIVADO' && (
-            <Button variant="secondary" size="sm" type="button" onClick={() => enviar({ visibilidade: 'ARQUIVADO' })}>Arquivar</Button>
+            <Button variant="secondary" size="sm" type="button" onClick={() => enviar({ visibilidade: 'ARQUIVADO' })} disabled={salvando}>Arquivar</Button>
           )}
           <span className="flex-1" />
-          <Button variant="primary" size="sm" type="submit">Salvar</Button>
+          <Button variant="primary" size="sm" type="submit" loading={salvando}>Salvar</Button>
         </div>
       ) : (
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={onCancelar} type="button">Cancelar</Button>
-          <Button variant="primary" type="submit">{produto ? 'Salvar' : 'Criar serviço'}</Button>
+          <Button variant="primary" type="submit" loading={salvando}>{produto ? 'Salvar' : 'Criar serviço'}</Button>
         </div>
       )}
     </form>
@@ -280,7 +415,7 @@ export default function FormServico({
 
 // Modal de cadastro/edicao. Abre sempre com estado novo (o form remonta a
 // cada abertura pela `key`). Fechar pelo X tambem limpa as imagens temp.
-export function ModalServico({ isOpen, onClose, produto, categorias, especialistas, onSalvar }) {
+export function ModalServico({ isOpen, onClose, produto, categorias, especialistas, onSalvar, onCriarCategoria, onEuAtendo }) {
   if (!isOpen) return null;
   return (
     <ModalServicoConteudo
@@ -290,11 +425,13 @@ export function ModalServico({ isOpen, onClose, produto, categorias, especialist
       categorias={categorias}
       especialistas={especialistas}
       onSalvar={onSalvar}
+      onCriarCategoria={onCriarCategoria}
+      onEuAtendo={onEuAtendo}
     />
   );
 }
 
-function ModalServicoConteudo({ onClose, produto, categorias, especialistas, onSalvar }) {
+function ModalServicoConteudo({ onClose, produto, categorias, especialistas, onSalvar, onCriarCategoria, onEuAtendo }) {
   // Imagens temp subidas no modo criacao; fechar sem salvar (X ou Cancelar)
   // remove as orfas (best-effort). Em edicao o upload e direto no produto.
   const temps = useRef([]);
@@ -327,6 +464,8 @@ function ModalServicoConteudo({ onClose, produto, categorias, especialistas, onS
         onSalvar={onSalvar}
         onCancelar={fechar}
         temps={controleTemps}
+        onCriarCategoria={onCriarCategoria}
+        onEuAtendo={onEuAtendo}
       />
     </Modal>
   );

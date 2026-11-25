@@ -95,8 +95,9 @@ function ModalVariacaoConteudo({ isOpen, onClose, variacao, onSalvar }) {
     e.preventDefault();
     onSalvar({
       ...form,
-      preco: parseFloat(form.preco) || 0,
-      precoCusto: parseFloat(form.precoCusto) || 0,
+      ...(variacao?.id ? { id: variacao.id } : {}),
+      preco: form.preco === '' || form.preco == null ? 0 : String(form.preco),
+      precoCusto: form.precoCusto === '' || form.precoCusto == null ? 0 : String(form.precoCusto),
       // Catalogo so trata servicos: sem campos de estoque, sempre tem duracao.
       duracaoMin: form.duracaoMin === '' || form.duracaoMin == null
         ? null

@@ -781,6 +781,9 @@ function precoEfetivoVariacao(v) {
 }
 
 function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, profissionais = [], onSalvar }) {
+  const navigate = useNavigate();
+  // Trava o botao enquanto a venda e gravada (clique duplo nao vende 2 vezes).
+  const [salvando, setSalvando] = useState(false);
   const [form, setForm] = useState({
     metodoPagamento: 'PIX', observacoes: '', leadId: '', cupomCodigo: '', especialistaId: '',
     // 'parcelas' e metadata: anota na descricao mas nao gera lancamentos
@@ -874,8 +877,9 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, profissiona
   );
   const precisaClienteFinal = itensComDevolucao.length > 0 && !form.leadId;
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    if (salvando) return;
     if (itens.length === 0) { alert('Adicione pelo menos 1 produto.'); return; }
 
     if (itensComDevolucao.length > 0) {
@@ -890,7 +894,15 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, profissiona
       }
     }
 
-    onSalvar({
+    setSalvando(true);
+    try {
+      await onSalvar(montarDados());
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  const montarDados = () => ({
       itens: itens.map((i) => ({
         variacaoId: i.variacaoId,
         quantidade: i.quantidade,
@@ -905,8 +917,7 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, profissiona
       // categoriaId NAO vai mais — backend agrupa por categoria do produto.
       // Parcelas so faz sentido pra credito — backend ignora se outro metodo.
       parcelas: form.metodoPagamento === 'CREDITO' ? (parseInt(form.parcelas, 10) || 1) : 1,
-    });
-  };
+  });
 
   // Parcelas so aparece quando metodo e cartao de credito.
   const mostraParcelas = form.metodoPagamento === 'CREDITO';
@@ -941,6 +952,22 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, profissiona
             clearable
             hint={itens.length === 0 ? 'Comece adicionando o 1º produto.' : 'Pode adicionar quantos produtos quiser.'}
           />
+          {variacoes.length === 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-dashed border-[var(--border-main)] bg-[var(--bg-subtle)] px-4 py-3">
+              <span className="text-[13px] text-[var(--text-secondary)]">
+                Nenhum produto cadastrado ainda. Cadastre o primeiro para poder vender.
+              </span>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                icon={Plus}
+                onClick={() => { onClose(); navigate('/app/estoque/produtos?novo=produto'); }}
+              >
+                Cadastrar produto
+              </Button>
+            </div>
+          )}
 
           {/* Carrinho */}
           <div className="rounded-[10px] border border-[var(--border-main)] bg-[var(--bg-card)]">
@@ -1207,10 +1234,10 @@ function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, profissiona
               </div>
             )}
 
-            <Button variant="primary" type="submit" size="lg" fullWidth disabled={itens.length === 0}>
-              {itens.length === 0 ? 'Adicione um item' : `Registrar venda · ${fmtBRL(valorTotal)}`}
+            <Button variant="primary" type="submit" size="lg" fullWidth disabled={itens.length === 0 || salvando}>
+              {salvando ? 'Registrando...' : itens.length === 0 ? 'Adicione um item' : `Registrar venda · ${fmtBRL(valorTotal)}`}
             </Button>
-            <Button variant="secondary" onClick={onClose} type="button" fullWidth>Cancelar</Button>
+            <Button variant="secondary" onClick={onClose} type="button" fullWidth disabled={salvando}>Cancelar</Button>
           </div>
         </aside>
       </form>

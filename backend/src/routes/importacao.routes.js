@@ -114,6 +114,8 @@ roteador.post('/', lerCorpo, async (req, res) => {
     });
     res.status(r.falha ? 207 : 201).json(r);
   } catch (e) {
+    // 409: outra importacao do mesmo negocio ainda esta gravando.
+    if (e.status) return res.status(e.status).json({ erro: e.message, codigo: e.codigo });
     console.error('[importacao/importar]', e);
     res.status(500).json({ erro: 'Não foi possível importar. Nada foi gravado.' });
   }

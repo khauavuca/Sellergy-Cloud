@@ -7,6 +7,7 @@ import {
   BookOpen, RotateCcw, Receipt, FileUp, Palette, ArrowUpRight
 } from 'lucide-react';
 import api from '../services/api';
+import { reduzirImagem } from '../utils/reduzirImagem';
 import notificacaoService from '../services/notificacaoService';
 import catalogoService from '../services/catalogoService';
 import devolucaoService from '../services/devolucaoService';
@@ -22,7 +23,7 @@ import {
   Button, Input, Select, Badge, useToast, Switch, Pagina, Painel
 } from '../components/ui';
 
-const MAX_LOGO_SIZE = 1024 * 1024; // 1 MB
+const MAX_LOGO_SIZE = 10 * 1024 * 1024; // arquivo escolhido; e reduzido antes de enviar
 
 /**
  * Configurações do CLIENTE — central de ajustes.
@@ -372,12 +373,13 @@ function BlocoBranding({ user, refreshUser, toast }) {
       return;
     }
     if (file.size > MAX_LOGO_SIZE) {
-      toast.error('Imagem muito grande. Máximo 1 MB.');
+      toast.error('Imagem muito grande. Máximo 10 MB.');
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => setLogo(reader.result);
-    reader.readAsDataURL(file);
+    // Reduz pra 512 px (PNG mantem a transparencia do logo); a API aceita ate ~300 KB.
+    reduzirImagem(file, { lado: 512, png: file.type === 'image/png' })
+      .then(setLogo)
+      .catch((err) => toast.error(err.message));
   };
 
   const handleSalvar = async () => {

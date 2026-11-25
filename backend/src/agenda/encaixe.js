@@ -478,13 +478,18 @@ async function adicionarNaFila({ clienteId, dados }) {
     const l = await prisma.lead.findFirst({ where: { id: dados.leadId, clienteId }, select: { id: true } });
     if (!l) throw erro(422, 'Cliente inválida.', 'CAMPOS');
   }
-  const ativos = await prisma.listaEspera.findMany({
-    where: { clienteId, status: { in: ['AGUARDANDO', 'OFERTADO'] } }, select: { telefone: true, produtoId: true },
+  // Conferir + gravar com a trava do negocio: cliques/pedidos ao mesmo tempo
+  // nao poem a mesma pessoa 2x na fila.
+  return prisma.$transaction(async (tx) => {
+    await lockClienteAdvisory(tx, clienteId);
+    const ativos = await tx.listaEspera.findMany({
+      where: { clienteId, status: { in: ['AGUARDANDO', 'OFERTADO'] } }, select: { telefone: true, produtoId: true },
+    });
+    if (ativos.some((a) => mesmoTelefone(a.telefone, dados.telefone) && (a.produtoId || null) === (dados.produtoId || null))) {
+      throw erro(409, 'Essa pessoa já está na fila para esse serviço.', 'JA_NA_FILA');
+    }
+    return tx.listaEspera.create({ data: { clienteId, ...dados, servico } });
   });
-  if (ativos.some((a) => mesmoTelefone(a.telefone, dados.telefone) && (a.produtoId || null) === (dados.produtoId || null))) {
-    throw erro(409, 'Essa pessoa já está na fila para esse serviço.', 'JA_NA_FILA');
-  }
-  return prisma.listaEspera.create({ data: { clienteId, ...dados, servico } });
 }
 
 /** Tarefa do worker: vence ofertas, vagas passadas e entradas da fila vencidas. */

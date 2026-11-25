@@ -5,6 +5,7 @@ import {
   Upload, Trash2, ArrowLeft, ShieldAlert
 } from 'lucide-react';
 import api from '../services/api';
+import { reduzirImagem } from '../utils/reduzirImagem';
 import { useAuthStore } from '../store/auth.store';
 import {
   Avatar, Button, Input, Badge, useToast, Pagina, ColunasPagina, Painel
@@ -14,7 +15,7 @@ import LateralPerfil from '../components/conta/LateralPerfil';
 import { usePerfilNegocio } from '../components/conta/usePerfilNegocio';
 import { AcaoTopoContext, useAcaoTopo } from '../hooks/useAcaoTopo';
 
-const MAX_FOTO_SIZE = 1024 * 1024; // 1 MB
+const MAX_FOTO_SIZE = 10 * 1024 * 1024; // arquivo escolhido; e reduzido antes de enviar
 const ID_FORM_DADOS = 'perfil-dados-pessoais';
 const PERFIL_LABEL = {
   ADMIN: 'Administrador do sistema',
@@ -36,6 +37,8 @@ export default function PerfilPage() {
   const negocio = usePerfilNegocio(user);
 
   const [dados, setDados] = useState(() => ({ nome: user?.nome || '', email: user?.email || '', foto: user?.foto || '' }));
+  // Trocar o e-mail de acesso pede a senha atual (a API recusa sem ela).
+  const [senhaEmail, setSenhaEmail] = useState('');
   // Quando o usuario muda no store (refreshUser), recarrega o formulario
   // durante o render, sem efeito (evita render em cascata).
   const [userDoFormulario, setUserDoFormulario] = useState(user);
@@ -58,12 +61,13 @@ export default function PerfilPage() {
       return;
     }
     if (file.size > MAX_FOTO_SIZE) {
-      toast.error('Imagem muito grande. Máximo 1 MB.');
+      toast.error('Imagem muito grande. Máximo 10 MB.');
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => setDados((d) => ({ ...d, foto: reader.result }));
-    reader.readAsDataURL(file);
+    // Reduz pra 256 px antes de enviar (a API aceita ate ~300 KB).
+    reduzirImagem(file, { lado: 256 })
+      .then((foto) => setDados((d) => ({ ...d, foto })))
+      .catch((err) => toast.error(err.message));
   };
 
   const handleRemoverFoto = () => {
@@ -74,7 +78,13 @@ export default function PerfilPage() {
     e.preventDefault();
     setSalvandoDados(true);
     try {
-      await api.put('/autenticacao/perfil', dados);
+      const emailMudou = dados.email.trim().toLowerCase() !== String(user?.email || '').toLowerCase();
+      if (emailMudou && !senhaEmail) {
+        toast.error('Para trocar o e-mail, digite a sua senha atual.');
+        return;
+      }
+      await api.put('/autenticacao/perfil', { ...dados, ...(emailMudou ? { senhaAtual: senhaEmail } : {}) });
+      setSenhaEmail('');
       await refreshUser();
       toast.success('Perfil atualizado');
     } catch (err) {
@@ -85,7 +95,7 @@ export default function PerfilPage() {
   };
 
   const validacoesSenha = [
-    { label: 'Pelo menos 6 caracteres', ok: senha.nova.length >= 6 },
+    { label: 'Pelo menos 8 caracteres', ok: senha.nova.length >= 8 && senha.nova.trim().length > 0 },
     { label: 'Diferente da senha atual', ok: senha.nova.length > 0 && senha.nova !== senha.atual },
     { label: 'Confirmação confere', ok: senha.nova.length > 0 && senha.nova === senha.confirmar },
   ];
@@ -226,6 +236,16 @@ export default function PerfilPage() {
                 onChange={(e) => setDados({ ...dados, email: e.target.value })}
                 required
               />
+              {dados.email.trim().toLowerCase() !== String(user?.email || '').toLowerCase() && (
+                <Input
+                  label="Senha atual (para trocar o e-mail)"
+                  type="password"
+                  autoComplete="current-password"
+                  value={senhaEmail}
+                  onChange={(e) => setSenhaEmail(e.target.value)}
+                  required
+                />
+              )}
             </div>
             {!temAcaoTopo && (
               <div className="flex justify-end px-4 py-3 border-t border-[var(--border-subtle)]">

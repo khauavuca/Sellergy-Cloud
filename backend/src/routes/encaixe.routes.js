@@ -13,7 +13,8 @@ const prisma = require('../prisma');
 const middlewareAutenticacao = require('../middlewares/auth.middleware');
 const { requerTenant, requerModuloLiberado, requerPermissao } = require('../middlewares/permissoes.middleware');
 const encaixe = require('../agenda/encaixe');
-const { primeiroNome, competenciaBRT } = require('../agenda/utilAgenda');
+const { primeiroNome, competenciaBRT, mesmoTelefone } = require('../agenda/utilAgenda');
+const { especialistaDoEscopo } = require('../agenda/escopoAgenda');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -37,11 +38,15 @@ roteador.get('/', requerPermissao('AGENDA', 'visualizar'), async (req, res) => {
     const clienteId = clienteDe(req, res);
     if (!clienteId) return;
     const agora = new Date();
+    // Escopo "so os proprios": so as vagas e a fila da propria profissional.
+    const espEscopo = await especialistaDoEscopo(req);
+    const filtroEsp = espEscopo ? { especialistaId: espEscopo } : {};
 
     const [ofertas, filaBruta, cliente, especialistas] = await Promise.all([
       prisma.ofertaEncaixe.findMany({
         where: {
           clienteId,
+          ...filtroEsp,
           OR: [
             { status: { in: ['VAGA', 'ABERTA', 'EXPIRADA'] }, data: { gt: agora } },
             { status: 'PREENCHIDA', criadoEm: { gte: new Date(agora.getTime() - 2 * 86400000) } },
@@ -54,6 +59,7 @@ roteador.get('/', requerPermissao('AGENDA', 'visualizar'), async (req, res) => {
       prisma.listaEspera.findMany({
         where: {
           clienteId,
+          ...filtroEsp,
           OR: [
             { status: { in: ['AGUARDANDO', 'OFERTADO'] } },
             { status: 'AGENDADO', atualizadoEm: { gte: new Date(agora.getTime() - 7 * 86400000) } },
@@ -137,11 +143,25 @@ roteador.patch('/fila/:id', requerPermissao('AGENDA', 'editar'), async (req, res
     if (!clienteId) return;
     const { status } = req.body || {};
     if (status !== 'DESISTIU' && status !== 'AGUARDANDO') return res.status(422).json({ erro: 'Status inválido.', campos: ['status'] });
-    const entrada = await prisma.listaEspera.findFirst({ where: { id: req.params.id, clienteId }, select: { id: true, status: true } });
+    const espEscopo = await especialistaDoEscopo(req);
+    const entrada = await prisma.listaEspera.findFirst({
+      where: { id: req.params.id, clienteId, ...(espEscopo ? { especialistaId: espEscopo } : {}) },
+      select: { id: true, status: true, telefone: true, produtoId: true },
+    });
     if (!entrada) return res.status(404).json({ erro: 'Pessoa não encontrada na fila.' });
     if (entrada.status === 'AGENDADO') return res.status(409).json({ erro: 'Essa pessoa já foi encaixada na agenda.' });
-    const atualizada = await prisma.listaEspera.update({ where: { id: entrada.id }, data: { status } });
-    res.json(atualizada);
+    if (status === 'AGUARDANDO' && entrada.status !== 'AGUARDANDO' && entrada.status !== 'OFERTADO') {
+      const outras = await prisma.listaEspera.findMany({
+        where: { clienteId, status: { in: ['AGUARDANDO', 'OFERTADO'] }, NOT: { id: entrada.id } }, select: { telefone: true, produtoId: true },
+      });
+      if (outras.some((o) => mesmoTelefone(o.telefone, entrada.telefone) && (o.produtoId || null) === (entrada.produtoId || null))) {
+        return res.status(409).json({ erro: 'Essa pessoa já está na fila para esse serviço.', codigo: 'JA_NA_FILA' });
+      }
+    }
+    // Condicional: so muda se ninguem mexeu (ex.: foi encaixada agora).
+    const r = await prisma.listaEspera.updateMany({ where: { id: entrada.id, status: entrada.status }, data: { status } });
+    if (!r.count) return res.status(409).json({ erro: 'Essa entrada acabou de mudar. Recarregue a tela.' });
+    res.json(await prisma.listaEspera.findUnique({ where: { id: entrada.id } }));
   } catch (e) {
     responderErro(res, e, 'fila-status');
   }

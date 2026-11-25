@@ -101,6 +101,14 @@ function BuscaTelas({ atalhos }) {
           ))}
         </ul>
       )}
+      {aberta && termo.trim() && achados.length === 0 && (
+        <div
+          role="status"
+          className="absolute left-0 right-0 top-12 z-50 px-3 py-2.5 rounded-xl border border-[var(--border-main)] bg-[var(--bg-elevated)] shadow-[var(--shadow-lg)] text-sm text-[var(--text-muted)]"
+        >
+          Nenhuma tela com “{termo.trim()}”. Tente agenda, vendas, caixa…
+        </div>
+      )}
     </div>
   );
 }

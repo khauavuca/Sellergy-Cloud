@@ -7,7 +7,11 @@
 //   NOVO/AGUARDANDO ──cancelar ou 24 h sem pagar──> CANCELADO
 //
 // Estoque so baixa quando vira PAGO (venda registrada pelo vendaService, com
-// caixa automatico) — cancelar nao devolve nada porque nada saiu.
+// caixa automatico) — cancelar nao devolve nada porque nada saiu. Como o
+// dinheiro ja entrou, a baixa nao trava por falta de estoque (exigirEstoque
+// false): o negocio e avisado. Cancelar a VENDA de um pedido pago leva o
+// pedido para CANCELADO (VendaController.cancelarVenda). O frete entra no
+// valor da venda.
 // Numero sequencial por tenant: criado dentro de uma transacao com lock
 // advisory proprio do tenant (pedido:<clienteId>), entao dois pedidos
 // simultaneos nunca pegam o mesmo numero.
@@ -288,6 +292,7 @@ async function registrarPagamento(pedidoId, clienteId, { automatico = false, met
           leadId: pedido.leadId,
           metodoPagamento,
           descricaoVenda: `Pedido #${pedido.numero} (${pedido.origem === 'CATALOGO' ? 'loja online' : 'WhatsApp'})`,
+          exigirEstoque: false, // ja pago: registra e avisa (estoqueInsuficiente)
           tx,
         });
 
@@ -306,6 +311,12 @@ async function registrarPagamento(pedidoId, clienteId, { automatico = false, met
               dataVencimento: new Date(),
               dataPagamento: new Date(),
             },
+          });
+          // O valor da venda e o que o cliente pagou (produtos + entrega), pra
+          // bater com a soma dos lancamentos e com os relatorios.
+          resultado.venda = await tx.venda.update({
+            where: { id: resultado.venda.id },
+            data: { valor: Math.round((Number(resultado.venda.valor) + Number(pedido.frete)) * 100) / 100 },
           });
         }
 

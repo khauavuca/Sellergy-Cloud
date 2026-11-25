@@ -28,10 +28,20 @@
 // Converte um array de objetos em string CSV com separador de vírgula.
 // Escapa aspas duplas, envolve em aspas quando o valor contém vírgula,
 // quebra de linha ou aspas. UTF-8 BOM no início para Excel reconhecer.
+// Texto que comeca com = + - @ (ou tab/CR) vira formula no Excel/Sheets
+// ("injecao de CSV"). Prefixa com apostrofo pra ficar texto. Numero de
+// verdade (typeof number) passa intacto, inclusive negativo.
+export function protegerCelula(v) {
+  if (v === null || v === undefined) return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return v;
+  const s = String(v);
+  return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+}
+
 function arrayParaCsv(colunas, linhas) {
   const escapar = (v) => {
     if (v === null || v === undefined) return '';
-    const s = String(v);
+    const s = String(protegerCelula(v));
     if (s.includes(',') || s.includes('"') || s.includes('\n')) {
       return `"${s.replace(/"/g, '""')}"`;
     }
@@ -62,7 +72,7 @@ function baixar(blob, nomeArquivo) {
 // branco e o título da seção.
 export function exportarCSV({ nome, titulo, periodo, filtrosAtivos = [], secoes = [] }) {
   const partes = [];
-  if (titulo) partes.push(titulo);
+  if (titulo) partes.push(String(protegerCelula(titulo)));
   if (periodo) partes.push(`Período: ${periodo}`);
   if (filtrosAtivos.length > 0) partes.push(`Filtros: ${filtrosAtivos.join('; ')}`);
   partes.push(`Gerado em: ${new Date().toLocaleString('pt-BR')}`);
@@ -70,7 +80,7 @@ export function exportarCSV({ nome, titulo, periodo, filtrosAtivos = [], secoes 
 
   for (const secao of secoes) {
     if (!secao.linhas || secao.linhas.length === 0) continue;
-    partes.push(secao.titulo);
+    partes.push(String(protegerCelula(secao.titulo ?? '')));
     partes.push(arrayParaCsv(secao.colunas, secao.linhas));
     partes.push(''); // linha em branco entre seções
   }
@@ -111,7 +121,7 @@ export async function exportarXLSX({ nome, titulo, periodo, filtrosAtivos = [], 
     // Linhas
     for (const linha of secao.linhas) {
       aoa.push(secao.colunas.map((c) =>
-        typeof c.valor === 'function' ? c.valor(linha) : linha[c.chave]
+        protegerCelula(typeof c.valor === 'function' ? c.valor(linha) : linha[c.chave])
       ));
     }
     const sheet = XLSX.utils.aoa_to_sheet(aoa);

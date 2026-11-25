@@ -5,10 +5,13 @@ const rateLimit = require('express-rate-limit');
 const prisma = require('../prisma');
 const middlewareAutenticacao = require('../middlewares/auth.middleware');
 const { SEGREDO_JWT } = require('../middlewares/auth.middleware');
-const { definirSessao, garantirCsrf, limparSessao } = require('../utils/sessaoCookie');
+const { definirSessao, garantirCsrf, limparSessao, lerCookie, nomeSessao } = require('../utils/sessaoCookie');
 const { validarCadastro, criarContaComTeste } = require('../onboarding/cadastro');
 const totp = require('../seguranca/totp');
 const acessoAdmin = require('../seguranca/acessoAdmin');
+const sessaoUsuario = require('../seguranca/sessaoUsuario');
+const validarConta = require('../seguranca/validarConta');
+const { ipDoCliente } = require('../seguranca/ipCliente');
 
 const roteador = express.Router();
 
@@ -18,7 +21,21 @@ const limitadorLogin = rateLimit({
   max: 10, // 10 tentativas por IP por janela
   standardHeaders: true,
   legacyHeaders: false,
+  // IP real do visitante (pelo tunel do Cloudflare); X-Forwarded-For falso
+  // nao zera mais o contador (ver seguranca/ipCliente.js e o trust proxy).
+  keyGenerator: (req) => ipDoCliente(req),
   message: { erro: 'Muitas tentativas de login. Tente novamente em alguns minutos.' }
+});
+
+// Codigo em 2 etapas: limite proprio (nao gasta a cota do login). Com sessao,
+// conta por usuario; sem sessao (/login/2fa), por IP.
+const limitador2fa = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.usuario?.id ? `u:${req.usuario.id}` : `ip:${ipDoCliente(req)}`),
+  message: { erro: 'Muitas tentativas do código. Espere alguns minutos e tente de novo.' }
 });
 
 // Limitador do cadastro proprio: evita criacao de contas em massa.
@@ -40,11 +57,7 @@ roteador.post('/cadastro', limitadorCadastro, async (req, res) => {
     if (erro) return res.status(422).json({ erro, campos });
 
     const { usuario } = await criarContaComTeste(dados);
-    const token = jwt.sign(
-      { id: usuario.id, perfil: usuario.perfil, clienteId: usuario.clienteId },
-      SEGREDO_JWT,
-      { expiresIn: '7d' }
-    );
+    const token = sessaoUsuario.assinarToken(usuario, SEGREDO_JWT);
     const csrfToken = definirSessao(res, token);
     const corpo = await montarUsuarioDaSessao(usuario);
     res.status(201).json({ usuario: corpo, csrfToken });
@@ -96,11 +109,8 @@ async function responderSessao(res, usuario, { mfa = false, status = 200 } = {})
   if (usuario.perfil === 'ADMIN' && usuario.papelAdmin === 'DESATIVADO') {
     return res.status(403).json({ erro: 'Seu acesso ao painel foi desativado.', codigo: 'ADMIN_DESATIVADO' });
   }
-  const token = jwt.sign(
-    { id: usuario.id, perfil: usuario.perfil, clienteId: usuario.clienteId, mfa },
-    SEGREDO_JWT,
-    { expiresIn: usuario.perfil === 'ADMIN' ? '12h' : '7d' }
-  );
+  // Token com a versao da sessao (sv): trocar senha/papel derruba os antigos.
+  const token = sessaoUsuario.assinarToken(usuario, SEGREDO_JWT, { mfa });
 
   let modulosLiberados = null;
   let branding = null;
@@ -194,7 +204,7 @@ roteador.post('/login', limitadorLogin, async (req, res) => {
 });
 
 // Segunda etapa do login com 2FA.
-roteador.post('/login/2fa', limitadorLogin, async (req, res) => {
+roteador.post('/login/2fa', limitador2fa, async (req, res) => {
   try {
     const { desafio, codigo } = req.body || {};
     let dados;
@@ -259,7 +269,7 @@ async function conferirCodigoTotp(usuario, codigo) {
   return true;
 }
 
-roteador.post('/2fa/configurar', middlewareAutenticacao, limitadorLogin, async (req, res) => {
+roteador.post('/2fa/configurar', middlewareAutenticacao, limitador2fa, async (req, res) => {
   try {
     const usuario = await prisma.usuario.findUnique({ where: { id: req.usuario.id }, select: { id: true, email: true, totpAtivo: true } });
     if (!usuario) return res.status(404).json({ erro: 'Usuario nao encontrado' });
@@ -275,7 +285,7 @@ roteador.post('/2fa/configurar', middlewareAutenticacao, limitadorLogin, async (
   }
 });
 
-roteador.post('/2fa/ativar', middlewareAutenticacao, limitadorLogin, async (req, res) => {
+roteador.post('/2fa/ativar', middlewareAutenticacao, limitador2fa, async (req, res) => {
   try {
     const usuario = await prisma.usuario.findUnique({ where: { id: req.usuario.id } });
     if (!usuario?.totpSegredoCifrado) return res.status(400).json({ erro: 'Configure primeiro.' });
@@ -291,7 +301,7 @@ roteador.post('/2fa/ativar', middlewareAutenticacao, limitadorLogin, async (req,
   }
 });
 
-roteador.post('/2fa/desativar', middlewareAutenticacao, limitadorLogin, async (req, res) => {
+roteador.post('/2fa/desativar', middlewareAutenticacao, limitador2fa, async (req, res) => {
   try {
     const usuario = await prisma.usuario.findUnique({ where: { id: req.usuario.id } });
     if (!usuario?.totpAtivo) return res.status(400).json({ erro: 'O código em 2 etapas não está ativo.' });
@@ -315,7 +325,12 @@ roteador.post('/2fa/desativar', middlewareAutenticacao, limitadorLogin, async (r
 // Sem autenticacao de proposito — a rota so apaga os cookies de quem chamou, e
 // exigir sessao valida impediria a limpeza justamente no caso em que ela mais
 // importa (cookie corrompido ou token vencido).
-roteador.post('/logout', (req, res) => {
+roteador.post('/logout', async (req, res) => {
+  // O token sai da validade de verdade: vai pra lista negra ate vencer (antes
+  // o cookie antigo continuava abrindo a API depois de sair).
+  const token = lerCookie(req, nomeSessao(req))
+    || (/^Bearer\s+(\S+)$/i.exec(req.headers.authorization || '') || [])[1];
+  await sessaoUsuario.revogarToken(token, SEGREDO_JWT);
   limparSessao(res);
   res.json({ mensagem: 'Sessao encerrada.' });
 });
@@ -387,39 +402,40 @@ roteador.get('/perfil', middlewareAutenticacao, async (req, res) => {
 // Tambem zera a flag deveTrocarSenha.
 roteador.post('/trocar-senha', middlewareAutenticacao, async (req, res) => {
   try {
-    const { senhaAtual, novaSenha } = req.body;
+    const { senhaAtual, novaSenha } = req.body || {};
 
-    if (!senhaAtual || !novaSenha) {
-      return res.status(400).json({ erro: 'senhaAtual e novaSenha sao obrigatorias.' });
+    if (typeof senhaAtual !== 'string' || !senhaAtual || typeof novaSenha !== 'string' || !novaSenha) {
+      return res.status(400).json({ erro: 'Informe a senha atual e a nova senha.' });
     }
-
-    if (typeof novaSenha !== 'string' || novaSenha.length < 6) {
-      return res.status(400).json({ erro: 'A nova senha deve ter ao menos 6 caracteres.' });
-    }
-
+    const erroSenha = validarConta.erroSenhaNova(novaSenha);
+    if (erroSenha) return res.status(400).json({ erro: erroSenha, campos: ['novaSenha'] });
     if (senhaAtual === novaSenha) {
-      return res.status(400).json({ erro: 'A nova senha deve ser diferente da atual.' });
+      return res.status(400).json({ erro: 'A nova senha deve ser diferente da atual.', campos: ['novaSenha'] });
     }
 
     const usuario = await prisma.usuario.findUnique({ where: { id: req.usuario.id } });
     if (!usuario) return res.status(404).json({ erro: 'Usuario nao encontrado.' });
 
-    const senhaConfere = await bcrypt.compare(senhaAtual, usuario.senha);
+    const senhaConfere = senhaAtual.length <= 200 && await bcrypt.compare(senhaAtual, usuario.senha);
     if (!senhaConfere) {
-      return res.status(401).json({ erro: 'Senha atual incorreta.' });
+      return res.status(401).json({ erro: 'Senha atual incorreta.', campos: ['senhaAtual'] });
     }
 
     const novaHash = await bcrypt.hash(novaSenha, 12);
-
-    await prisma.usuario.update({
+    // versaoSessao + 1: todas as outras sessoes (outros aparelhos, token
+    // vazado) caem; esta recebe um cookie novo logo abaixo.
+    const atualizado = await prisma.usuario.update({
       where: { id: usuario.id },
-      data: {
-        senha: novaHash,
-        deveTrocarSenha: false,
-      }
+      data: { senha: novaHash, deveTrocarSenha: false, versaoSessao: { increment: 1 } },
     });
+    sessaoUsuario.invalidar(usuario.id);
+    await sessaoUsuario.revogarToken(req.tokenSessao, SEGREDO_JWT);
 
-    res.json({ mensagem: 'Senha atualizada com sucesso.' });
+    let csrfToken = null;
+    if (req.sessaoPorCookie) {
+      csrfToken = definirSessao(res, sessaoUsuario.assinarToken(atualizado, SEGREDO_JWT, { mfa: req.usuario.mfa === true }));
+    }
+    res.json({ mensagem: 'Senha atualizada com sucesso.', csrfToken, entrarDeNovo: !req.sessaoPorCookie });
   } catch (erro) {
     console.error('[auth/trocar-senha]', erro);
     res.status(500).json({ erro: 'Erro ao trocar senha.' });
@@ -430,11 +446,37 @@ roteador.post('/trocar-senha', middlewareAutenticacao, async (req, res) => {
 // Nao permite mudar perfil/permissoes/clienteId (proteger contra escalada).
 roteador.put('/perfil', middlewareAutenticacao, async (req, res) => {
   try {
-    const { nome, email, foto } = req.body;
+    const { nome, email, foto, senhaAtual } = req.body || {};
     const dataUpdate = {};
-    if (nome !== undefined) dataUpdate.nome = nome;
-    if (email !== undefined) dataUpdate.email = email;
-    if (foto !== undefined) dataUpdate.foto = foto || null;
+    if (nome !== undefined) {
+      const n = validarConta.validarNome(nome);
+      if (n.erro) return res.status(400).json({ erro: n.erro, campos: n.campos });
+      dataUpdate.nome = n.valor;
+    }
+    if (foto !== undefined) {
+      const f = validarConta.validarImagem(foto);
+      if (f.erro) return res.status(400).json({ erro: f.erro, campos: ['foto'] });
+      dataUpdate.foto = f.valor;
+    }
+
+    const atual = await prisma.usuario.findUnique({ where: { id: req.usuario.id }, select: { id: true, email: true, senha: true } });
+    if (!atual) return res.status(404).json({ erro: 'Usuario nao encontrado.' });
+
+    if (email !== undefined) {
+      const emailNorm = validarConta.normalizarEmail(email);
+      if (!validarConta.emailValido(emailNorm)) return res.status(400).json({ erro: 'E-mail inválido.', campos: ['email'] });
+      if (emailNorm !== String(atual.email).toLowerCase()) {
+        // E-mail e o login: trocar exige a senha atual.
+        const senhaOk = typeof senhaAtual === 'string' && senhaAtual.length > 0 && senhaAtual.length <= 200
+          && await bcrypt.compare(senhaAtual, atual.senha);
+        if (!senhaOk) return res.status(401).json({ erro: 'Para trocar o e-mail, confirme a sua senha atual.', campos: ['senhaAtual'], codigo: 'SENHA_ATUAL' });
+        const outro = await prisma.usuario.findFirst({
+          where: { email: { equals: emailNorm, mode: 'insensitive' }, id: { not: atual.id } }, select: { id: true },
+        });
+        if (outro) return res.status(409).json({ erro: 'Este e-mail já está em uso.', campos: ['email'] });
+        dataUpdate.email = emailNorm;
+      }
+    }
 
     const usuario = await prisma.usuario.update({
       where: { id: req.usuario.id },
@@ -444,10 +486,10 @@ roteador.put('/perfil', middlewareAutenticacao, async (req, res) => {
 
     res.json(usuario);
   } catch (erro) {
-    console.error('[auth/perfil-put]', erro);
     if (erro.code === 'P2002') {
-      return res.status(400).json({ erro: 'Este e-mail ja esta em uso.' });
+      return res.status(409).json({ erro: 'Este e-mail já está em uso.', campos: ['email'] });
     }
+    console.error('[auth/perfil-put]', erro);
     res.status(500).json({ erro: 'Erro ao atualizar perfil.' });
   }
 });
@@ -463,13 +505,22 @@ roteador.put('/branding', middlewareAutenticacao, async (req, res) => {
       return res.status(400).json({ erro: 'Usuario sem tenant.' });
     }
 
-    const { brandLogo, brandNome } = req.body;
+    const { brandLogo, brandNome } = req.body || {};
+    const data = {};
+    if (brandLogo !== undefined) {
+      const l = validarConta.validarImagem(brandLogo);
+      if (l.erro) return res.status(400).json({ erro: l.erro, campos: ['brandLogo'] });
+      data.brandLogo = l.valor;
+    }
+    if (brandNome !== undefined) {
+      if (brandNome !== null && typeof brandNome !== 'string') return res.status(400).json({ erro: 'Nome da marca inválido.', campos: ['brandNome'] });
+      const nomeMarca = (brandNome || '').trim();
+      if (nomeMarca.length > 60) return res.status(400).json({ erro: 'O nome da marca pode ter no máximo 60 caracteres.', campos: ['brandNome'] });
+      data.brandNome = nomeMarca || null;
+    }
     const cliente = await prisma.cliente.update({
       where: { id: req.usuario.clienteId },
-      data: {
-        brandLogo: brandLogo === undefined ? undefined : (brandLogo || null),
-        brandNome: brandNome === undefined ? undefined : (brandNome || null),
-      },
+      data,
       select: { id: true, brandLogo: true, brandNome: true }
     });
 
@@ -492,23 +543,16 @@ roteador.put('/horario-funcionamento', middlewareAutenticacao, async (req, res) 
       return res.status(400).json({ erro: 'Usuario sem tenant.' });
     }
 
-    const { abertura, fechamento, dias } = req.body;
-    // Valida formato HH:MM (basico — front ja restringe via type="time").
-    const ehHora = (h) => typeof h === 'string' && /^\d{1,2}:\d{2}$/.test(h);
-    if (abertura && !ehHora(abertura)) return res.status(422).json({ erro: 'abertura invalida (use HH:MM)' });
-    if (fechamento && !ehHora(fechamento)) return res.status(422).json({ erro: 'fechamento invalido (use HH:MM)' });
-
-    // dias = array de 0-6 (0=domingo, 6=sabado). Default = seg-sab.
-    let diasValidos = [1, 2, 3, 4, 5, 6];
-    if (Array.isArray(dias)) {
-      diasValidos = dias.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6);
-    }
-
-    const horarioFuncionamento = {
-      abertura: abertura || '08:00',
-      fechamento: fechamento || '18:00',
-      dias: diasValidos,
-    };
+    // HH:MM valido, fechamento depois da abertura e ao menos um dia (0-6).
+    // Campo ausente usa o padrao (08:00-18:00, seg-sab); valor errado e recusado.
+    const corpo = req.body || {};
+    const v = validarConta.validarHorario({
+      abertura: corpo.abertura === undefined ? '08:00' : corpo.abertura,
+      fechamento: corpo.fechamento === undefined ? '18:00' : corpo.fechamento,
+      dias: corpo.dias === undefined ? [1, 2, 3, 4, 5, 6] : corpo.dias,
+    });
+    if (v.erro) return res.status(422).json({ erro: v.erro, campos: v.campos });
+    const horarioFuncionamento = v.dados;
 
     const cliente = await prisma.cliente.update({
       where: { id: req.usuario.clienteId },

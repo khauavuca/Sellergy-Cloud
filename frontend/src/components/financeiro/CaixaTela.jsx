@@ -59,6 +59,8 @@ export default function CaixaTela({
     const totalEntradas = entradas.reduce((s, l) => s + (Number(l.valor) || 0), 0);
     const suprimentos = movsSaldo.filter((m) => m.tipo === 'SUPRIMENTO').reduce((s, m) => s + m.valor, 0);
     const sangrias = movsSaldo.filter((m) => m.tipo === 'SANGRIA').reduce((s, m) => s + m.valor, 0);
+    // Ajuste manual tem sinal (+ sobra / − falta) e entra no saldo esperado.
+    const ajustes = movsSaldo.filter((m) => m.tipo === 'AJUSTE').reduce((s, m) => s + m.valor, 0);
 
     const movimentos = [
       ...entradas.map((l) => ({
@@ -80,8 +82,8 @@ export default function CaixaTela({
         detalhe: m.motivo || '—',
         quem: m.usuarioNome || '—',
         forma: 'Dinheiro',
-        valor: `${m.tipo === 'SANGRIA' ? '−' : '+'} ${fmtBRL(m.valor)}`,
-        tom: m.tipo === 'SANGRIA' ? 'text-[var(--danger-text)]' : 'text-[var(--success-text)]',
+        valor: `${m.tipo === 'SANGRIA' || m.valor < 0 ? '−' : '+'} ${fmtBRL(Math.abs(m.valor))}`,
+        tom: m.tipo === 'SANGRIA' || m.valor < 0 ? 'text-[var(--danger-text)]' : 'text-[var(--success-text)]',
       })),
     ];
     if (sessao) {
@@ -99,7 +101,7 @@ export default function CaixaTela({
     }
     movimentos.sort((a, b) => new Date(b.data) - new Date(a.data));
 
-    return { porForma, totalEntradas, qtdEntradas: entradas.length, suprimentos, sangrias, movimentos };
+    return { porForma, totalEntradas, qtdEntradas: entradas.length, suprimentos, sangrias, ajustes, movimentos };
   }, [det, sessao]);
 
   const movimentosVisiveis = dados.movimentos.filter((m) => aba === 'todos' || m.grupo === aba);
@@ -308,6 +310,9 @@ export default function CaixaTela({
                 <ItemConferencia rotulo="Entradas da sessão" valor={`+ ${fmtBRL(dados.totalEntradas)}`} />
                 <ItemConferencia rotulo="Entradas de dinheiro" valor={`+ ${fmtBRL(dados.suprimentos)}`} />
                 <ItemConferencia rotulo="Retiradas" valor={`− ${fmtBRL(dados.sangrias)}`} />
+                {dados.ajustes !== 0 && (
+                  <ItemConferencia rotulo="Ajustes" valor={`${dados.ajustes < 0 ? '−' : '+'} ${fmtBRL(Math.abs(dados.ajustes))}`} />
+                )}
                 <ItemConferencia rotulo="Saldo esperado" valor={fmtBRL(saldoEsperado)} forte />
               </div>
             </Painel>

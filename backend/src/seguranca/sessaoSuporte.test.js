@@ -7,6 +7,12 @@ const middlewareAutenticacao = require('../middlewares/auth.middleware');
 const { SEGREDO_JWT } = require('../middlewares/auth.middleware');
 const { criarTokenSuporte } = require('./sessaoSuporte');
 
+// O middleware confere o usuario no banco (seguranca/sessaoUsuario.js): aqui
+// o "banco" e o Redis sao falsos, com o dono do negocio u1 existindo.
+const sessaoUsuario = require('./sessaoUsuario');
+sessaoUsuario._definirPrisma({ usuario: { findUnique: async ({ where }) => (where.id === 'u1' ? { id: 'u1', perfil: 'CLIENT', clienteId: 'c1', versaoSessao: 0, permissoes: {} } : null) } });
+sessaoUsuario._definirRedis({ exists: async () => 0, set: async () => 'OK' });
+
 function chamar(metodo, url, token) {
   return new Promise((resolve) => {
     const req = { method: metodo, originalUrl: url, headers: { authorization: `Bearer ${token}` } };

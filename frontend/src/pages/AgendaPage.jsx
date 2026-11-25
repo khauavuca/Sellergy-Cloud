@@ -106,54 +106,72 @@ export default function AgendaPage() {
 
   const handleSalvar = async (dados) => {
     try {
-      if (dados.id) {
-        await api.put(`/agenda/${dados.id}`, dados);
-        toast.success('Agendamento atualizado');
-      } else {
-        const r = await api.post('/agenda', dados);
-        if (r.data?.sinal) {
-          toast.success(`Agendamento criado. Sinal de ${fmtBRL(r.data.sinal.valor)} enviado por Pix; vence às ${fmtHora(r.data.sinal.expiraEm)}.`);
-        } else if (r.data?.sinalMotivo) {
-          const motivos = {
-            SEM_PAGAMENTO: 'sem sinal: o recebimento por Pix não está configurado em Pagamentos',
-            MUITO_PERTO: 'sem sinal: o horário está muito perto pra esperar o Pix',
-            SEM_SINAL: 'sem sinal: o valor ficou abaixo de R$ 1,00',
-            FALHA_COBRANCA: 'sem sinal: não foi possível gerar o Pix agora',
-            SEM_CPF: 'sem sinal: o Asaas pede o CPF ou CNPJ de quem paga',
-            CPF_INVALIDO: 'sem sinal: o CPF ou CNPJ informado não confere',
-          };
-          toast.warning(`Agendamento criado ${motivos[r.data.sinalMotivo] || 'sem sinal'}.`);
-        } else {
-          toast.success(r.data?.pacoteClienteId ? 'Agendamento criado usando o pacote' : 'Agendamento criado');
-        }
-        if (r.data?.id) setSelId(r.data.id);
-      }
-      fecharModal();
-      carregar();
+      await salvarAgendamento(dados);
     } catch (e) {
+      // Passado / fora do expediente: o servidor avisa; a pessoa confirma.
+      if (e.response?.data?.codigo === 'CONFIRMAR_AVISOS' && !dados.confirmarAvisos) {
+        if (confirm(e.response.data.erro)) {
+          try {
+            await salvarAgendamento({ ...dados, confirmarAvisos: true });
+          } catch (e2) {
+            toast.error(e2.response?.data?.erro || 'Erro ao salvar');
+          }
+        }
+        return;
+      }
       toast.error(e.response?.data?.erro || 'Erro ao salvar');
     }
+  };
+
+  const salvarAgendamento = async (dados) => {
+    if (dados.id) {
+      await api.put(`/agenda/${dados.id}`, dados);
+      toast.success('Agendamento atualizado');
+    } else {
+      const r = await api.post('/agenda', dados);
+      if (r.data?.sinal) {
+        toast.success(`Agendamento criado. Sinal de ${fmtBRL(r.data.sinal.valor)} enviado por Pix; vence às ${fmtHora(r.data.sinal.expiraEm)}.`);
+      } else if (r.data?.sinalMotivo) {
+        const motivos = {
+          SEM_PAGAMENTO: 'sem sinal: o recebimento por Pix não está configurado em Pagamentos',
+          MUITO_PERTO: 'sem sinal: o horário está muito perto pra esperar o Pix',
+          SEM_SINAL: 'sem sinal: o valor ficou abaixo de R$ 1,00',
+          FALHA_COBRANCA: 'sem sinal: não foi possível gerar o Pix agora',
+          SEM_CPF: 'sem sinal: o Asaas pede o CPF ou CNPJ de quem paga',
+          CPF_INVALIDO: 'sem sinal: o CPF ou CNPJ informado não confere',
+        };
+        toast.warning(`Agendamento criado ${motivos[r.data.sinalMotivo] || 'sem sinal'}.`);
+      } else {
+        toast.success(r.data?.pacoteClienteId ? 'Agendamento criado usando o pacote' : 'Agendamento criado');
+      }
+      if (r.data?.id) setSelId(r.data.id);
+    }
+    fecharModal();
+    carregar();
   };
 
   const handleExcluir = async (ag) => {
     if (!confirm(`Excluir agendamento de ${ag.nomeCliente}?`)) return;
     try {
       await api.delete(`/agenda/${ag.id}`);
-      toast.success('Agendamento excluído');
+      toast.success(ag.status === 'COMPLETED' ? 'Agendamento excluído e a venda dele cancelada' : 'Agendamento excluído');
       setSelId(null);
       carregar();
-    } catch {
-      toast.error('Erro ao excluir');
+    } catch (e) {
+      toast.error(e.response?.data?.erro || 'Erro ao excluir');
+      carregar();
     }
   };
 
   const handleMudarStatus = async (ag, status) => {
     try {
-      await api.patch(`/agenda/${ag.id}/status`, { status });
-      toast.success(`Marcado como ${STATUS_LABELS[status]?.label?.toLowerCase()}`);
+      const r = await api.patch(`/agenda/${ag.id}/status`, { status });
+      const v = r.data?.vendaCancelada;
+      toast.success(`Marcado como ${STATUS_LABELS[status]?.label?.toLowerCase()}${v ? ` · venda #${v.numero} cancelada` : ''}`);
       carregar();
-    } catch {
-      toast.error('Erro ao mudar status');
+    } catch (e) {
+      toast.error(e.response?.data?.erro || 'Erro ao mudar status');
+      carregar();
     }
   };
 
@@ -174,6 +192,7 @@ export default function AgendaPage() {
       carregar();
     } catch (e) {
       toast.error(e.response?.data?.erro || 'Erro ao concluir o atendimento');
+      carregar();
     }
   };
 

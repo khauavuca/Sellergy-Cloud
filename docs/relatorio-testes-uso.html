@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relatório de testes de uso · Sellergy</title>
+<style>
+  :root {
+    --fundo: #F4F5F2; --cartao: #FFFFFF; --texto: #15171A; --suave: #5E6662; --borda: #E3E5E1;
+    --verde: #136F4D; --verde-claro: #E3F1EA;
+    --critico: #7F1D1D; --critico-claro: #FDE2E2; --alto: #9A3412; --alto-claro: #FDE7DD;
+    --medio: #7A4B00; --medio-claro: #FDF1DC; --baixo: #1F4E79; --baixo-claro: #EEF4FB;
+    --melhoria: #3B2A7A; --melhoria-claro: #EEEAF9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fundo: #0E1311; --cartao: #161C19; --texto: #EEF2EF; --suave: #A3ADA8; --borda: #2A332F;
+      --verde: #3DBE8B; --verde-claro: #14281F;
+      --critico: #FCA5A5; --critico-claro: #3A1515; --alto: #F4A585; --alto-claro: #2E1A14;
+      --medio: #F2C46B; --medio-claro: #2B2210; --baixo: #9DB8DC; --baixo-claro: #142233;
+      --melhoria: #C4B5FD; --melhoria-claro: #221B3A;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fundo); color: var(--texto); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--cartao); border-bottom: 1px solid var(--borda); }
+  .topo { max-width: 1040px; margin: 0 auto; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  h1 { margin: 0; font-size: 19px; }
+  .barra { flex: 1 1 200px; height: 10px; background: var(--borda); border-radius: 5px; overflow: hidden; }
+  .barra > div { height: 100%; background: var(--verde); width: 0; transition: width .2s; }
+  .placar { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .filtros { display: flex; gap: 6px; flex-wrap: wrap; }
+  button { font: inherit; font-size: 13px; font-weight: 600; padding: 6px 11px; border-radius: 8px; border: 1px solid var(--borda); background: var(--cartao); color: var(--texto); cursor: pointer; }
+  button.on { background: var(--texto); color: var(--cartao); border-color: var(--texto); }
+  main { max-width: 1040px; margin: 0 auto; padding: 16px; }
+  .resumo { background: var(--cartao); border: 1px solid var(--borda); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+  .resumo p { margin: 4px 0; }
+  .numeros { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-top: 10px; }
+  .numeros div { border-radius: 10px; padding: 8px 10px; font-size: 13px; }
+  .numeros b { display: block; font-size: 22px; }
+  h2 { font-size: 16px; margin: 22px 0 8px; }
+  .item { background: var(--cartao); border: 1px solid var(--borda); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; display: grid; grid-template-columns: 24px 1fr; gap: 10px; }
+  .item input { width: 19px; height: 19px; margin-top: 3px; accent-color: var(--verde); cursor: pointer; }
+  .item.feito { opacity: .55; }
+  .item.feito .tit { text-decoration: line-through; }
+  .tit { font-weight: 650; margin: 0; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px; }
+  .tag { font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 10px; }
+  .CRITICO { background: var(--critico-claro); color: var(--critico); }
+  .ALTO { background: var(--alto-claro); color: var(--alto); }
+  .MEDIO { background: var(--medio-claro); color: var(--medio); }
+  .BAIXO { background: var(--baixo-claro); color: var(--baixo); }
+  .MELHORIA { background: var(--melhoria-claro); color: var(--melhoria); }
+  .area { background: var(--fundo); color: var(--suave); }
+  .det { margin: 4px 0 0; color: var(--texto); font-size: 14px; }
+  .onde { margin: 4px 0 0; font-size: 12px; color: var(--suave); font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
+  .esconder .item.feito { display: none; }
+  footer { max-width: 1040px; margin: 0 auto; padding: 8px 16px 40px; color: var(--suave); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="topo">
+    <h1>Relatório de testes de uso</h1>
+    <div class="barra" aria-hidden="true"><div id="progresso"></div></div>
+    <span class="placar" id="placar">0 de 0 corrigidos</span>
+    <div class="filtros" id="filtros" role="group" aria-label="Filtrar por gravidade"></div>
+    <button type="button" id="soPendentes">Esconder corrigidos</button>
+  </div>
+</header>
+<main>
+  <section class="resumo">
+    <p><b>O que foi feito (25/11/2026):</b> 4 agentes testaram o sistema pela API como "cliente maluco", em 5 negócios de teste (salão, loja, clínica, studio e um negócio só para testar isolamento), e eu usei as telas no navegador, no local e no site ao vivo. Foram cerca de <b>1.300 casos</b>.</p>
+    <p><b>O que mais pesa:</b> (1) um negócio conseguir mexer ou ver dados de outro; (2) clique duplo / pedidos ao mesmo tempo duplicando venda, estoque, cupom e agendamento; (3) telas de cadastro que quebram para conta nova; (4) erros mostrando código interno do servidor.</p>
+    <p><b>Como usar:</b> marque a caixinha quando o item for corrigido e conferido. As marcações ficam salvas neste navegador.</p>
+    <div class="numeros" id="numeros"></div>
+  </section>
+  <div id="lista"></div>
+</main>
+<footer>Sellergy Cloud · relatório de testes de uso · 25/11/2026</footer>
+<script>
+// s: gravidade · a: área · t: título · d: detalhe simples · o: onde está no código
+const ITENS = [
+  // ---------------- CRÍTICOS ----------------
+  { s: 'CRITICO', a: 'Segurança', t: 'Um negócio apaga e altera preço/variação de serviço ou produto de outro', d: 'Excluir variação não confere de quem ela é (confirmado: o negócio E apagou a variação do D). Editar variação aceita qualquer campo, inclusive id, produtoId, estoque e preço negativo, e pode mover a variação para produto de outro negócio.', o: 'controllers/CatalogoController.js:354 (editar) e :376 (excluir), :178 (criar)' },
+  { s: 'CRITICO', a: 'Segurança', t: 'Um negócio vê clientes e vendas de outro pelo Financeiro', d: 'Criar lançamento com leadId/vendaId de outro negócio é aceito; a lista passa a mostrar nome, telefone e a venda do outro. Também infla o faturamento com venda que já existe.', o: 'controllers/FinanceiroController.js:307-308 e :382' },
+  { s: 'CRITICO', a: 'Segurança', t: 'Pessoa rebaixada ou excluída da equipe continua com o acesso antigo por até 7 dias', d: 'O papel fica gravado no login e não é conferido no banco a cada pedido.', o: 'middlewares/permissoes.middleware.js (requerPermissao, requerPapelPrivilegiado)' },
+  { s: 'CRITICO', a: 'Clientes', t: 'Cadastrar cliente quebra e mostra código interno do servidor', d: 'O formulário vem com "Sem etapa" e isso sempre dá erro do banco (etapa vazia). Conta nova nem tem etapa ligada. A tela mostra o erro com caminho e linhas do código. Lead importado (sem etapa) também não pode ser editado.', o: 'routes/crm.routes.js:276-281 e :340; frontend CRMPage.jsx:814' },
+  { s: 'CRITICO', a: 'Vendas/Estoque', t: 'Último item vendido várias vezes ao mesmo tempo; estoque fica negativo', d: '20 vendas paralelas do último item: vendeu 8 e o estoque foi a −7. Saídas manuais paralelas também ficam negativas.', o: 'controllers/VendaController.js:145; services/vendaService.js:84; EstoqueController.js:32-50' },
+  { s: 'CRITICO', a: 'Vendas', t: 'Cupom de 1 uso aplicado em várias vendas ao mesmo tempo', d: '10 vendas paralelas: desconto saiu em 6.', o: 'VendaController.js:208-215; services/cupomService.js:51' },
+  { s: 'CRITICO', a: 'Vendas/Estoque', t: 'Cancelar venda ou concluir devolução várias vezes devolve estoque várias vezes', d: 'Cancelar a mesma venda 5x em paralelo devolveu o estoque 5x. Concluir a mesma devolução de aluguel soma estoque a cada clique. Devolução de venda já cancelada devolve 2x.', o: 'VendaController.js:334-391; routes/devolucoes.routes.js:114' },
+  // ---------------- ALTOS ----------------
+  { s: 'ALTO', a: 'Serviços', t: 'Conta nova não consegue cadastrar o 1º serviço', d: 'Exige categoria financeira (de serviço) e especialista; a conta nova não tem nenhum e o formulário não deixa criar ali. Categoria criada no Estoque não aparece. Avisos por alert() do navegador. Diz "nome, foto, preço" mas não tem campo de preço. Manda ir na tela "Especialistas", que não existe.', o: 'frontend components/catalogo/FormServico.jsx:88-95, :209' },
+  { s: 'ALTO', a: 'Geral', t: 'Tela branca depois de atualização do site', d: 'Quem está com o sistema aberto quando sai versão nova pega tela branca ao trocar de tela (arquivo antigo some). Precisa recarregar sozinho e avisar.', o: 'frontend App.jsx (lazy import) — falta tratar erro de carregamento' },
+  { s: 'ALTO', a: 'Geral', t: 'Mensagem de erro genérica em muitas telas', d: '276 respostas da API usam "error" e as telas leem "erro"; o cliente vê "Erro ao salvar" em vez da mensagem certa.', o: 'controllers/*.js e routes/*.js; corrigir no frontend services/api.js' },
+  { s: 'ALTO', a: 'Geral', t: 'Erros mostram detalhes internos do servidor', d: 'Vários erros 500 devolvem a mensagem do banco com caminho de arquivo e código (caixa, conta a pagar, estoque em lote, origem bloqueada).', o: 'CaixaController.js:159/213/273; ContaPagarController.js:262; EstoqueController.js:150; index.js:69' },
+  { s: 'ALTO', a: 'Segurança', t: 'Sair (logout) e trocar senha não derrubam a sessão', d: 'O cookie antigo continua valendo depois de sair ou trocar a senha.', o: 'routes/auth.routes.js:318' },
+  { s: 'ALTO', a: 'Segurança', t: 'Limite de tentativas de login pode ser burlado', d: 'Mandando um cabeçalho de IP falso (X-Forwarded-For) o contador zera. O código de 2 etapas gasta a mesma cota do login.', o: 'index.js:78 (trust proxy); auth.routes.js:16/278' },
+  { s: 'ALTO', a: 'Agenda', t: 'Duas pessoas marcadas no mesmo horário (agenda manual)', d: 'Cliques/pedidos paralelos criam vários agendamentos no mesmo horário e profissional. O link público está certo (usa trava).', o: 'routes/agenda.routes.js:478-530' },
+  { s: 'ALTO', a: 'Agenda', t: '"Concluído" sem venda e sessão de pacote de graça', d: 'Mudar status direto para concluído não gera venda (e depois o Concluir recusa). Voltar e concluir de novo pelo status devolve a sessão do pacote sem gastar.', o: 'agenda.routes.js:617-631 e :710-726; agenda/eventosAgenda.js:18-21' },
+  { s: 'ALTO', a: 'Agenda', t: 'Cancelar ou excluir atendimento concluído deixa a venda valendo', d: 'A comissão e a sessão voltam, mas a venda e o caixa continuam.', o: 'agenda/eventosAgenda.js:14-26' },
+  { s: 'ALTO', a: 'Pacotes', t: 'Venda de pacote duplicada em clique duplo', d: '3 cliques = 3 vendas.', o: 'routes/pacotes.routes.js:198-245' },
+  { s: 'ALTO', a: 'Agenda', t: 'Link público usa cadastro e pacote de outra pessoa', d: 'Compara só os 8 últimos dígitos do telefone: um telefone de outro DDD virou a cliente "Rita" e gastou o pacote dela.', o: 'routes/publico.routes.js:196; agenda/utilAgenda.js:89-93' },
+  { s: 'ALTO', a: 'Permissões', t: 'Profissional com "só os próprios" mexe na agenda da colega', d: 'Lê, edita (preço), muda status, exclui e cria na agenda de outra profissional.', o: 'agenda.routes.js:50-56 e :429-472' },
+  { s: 'ALTO', a: 'Permissões', t: 'Vendedor dá desconto sem limite', d: 'Vende por R$ 0,01 e cria cupom de 100% em Campanhas com a permissão padrão.', o: 'VendaController.js:154; routes/campanhas.routes.js:52' },
+  { s: 'ALTO', a: 'Plano', t: 'Limites do plano furados com pedidos ao mesmo tempo', d: 'Usuários (5 → 8), profissionais (5 → 8) e convites passam do limite.', o: 'CrmUsuariosController.js:237; convites.routes.js:135/148; especialistas.routes.js:128' },
+  { s: 'ALTO', a: 'Importar', t: 'Importar a mesma planilha em paralelo duplica tudo', d: '3 envios iguais = 600 clientes de 200. Desfazer em paralelo também conta em dobro.', o: 'importacao/servico.js:289 e :407' },
+  { s: 'ALTO', a: 'Clientes', t: 'Etapa do funil de outro negócio aceita no lead', d: 'O lead fica na etapa do outro, que depois não consegue desligar a etapa.', o: 'routes/crm.routes.js:281' },
+  { s: 'ALTO', a: 'Financeiro', t: 'Edição de lançamento e pagamento em lote sem validação', d: 'Aceita valor negativo e descrição vazia; lote sem status apaga a data de pagamento e muda mês fechado.', o: 'FinanceiroController.js:373-386 e :916-921' },
+  { s: 'ALTO', a: 'Financeiro', t: '"Adiar" soma dias como texto e vencimento aparece 1 dia antes', d: 'Adiar "5" dias jogou o vencimento para meses depois. A data entra em UTC e aparece no dia anterior (e como atrasada).', o: 'FinanceiroController.js:534-543, :289 e :58-60; FinanceiroPage.jsx:668' },
+  { s: 'ALTO', a: 'Caixa', t: 'Retirada maior que o dinheiro do caixa é aceita', d: 'Caixa com R$ 150,75 aceitou retirada de R$ 99.999 (saldo −R$ 99.848,25).', o: 'controllers/CaixaController.js' },
+  { s: 'ALTO', a: 'Telas', t: 'Janela aberta não prende o que você digita', d: 'Com "Registrar venda" aberto, o texto foi parar na busca do topo, atrás da janela. Listas de busca não põem o foco no campo "Buscar...".', o: 'frontend components/Modal.jsx e ui/Combobox.jsx' },
+  // ---------------- MÉDIOS ----------------
+  { s: 'MEDIO', a: 'Geral', t: 'Valor com vírgula é cortado sem aviso', d: '"10,50" vira 10 em agenda, venda, caixa, conta a pagar e nota de compra; quantidade 1,9 vende 1.', o: 'parseFloat/parseInt em VendaController.js:141/154, CaixaController.js:107/232, agenda.routes.js:524/589, NotaCompraController, ContaPagarController' },
+  { s: 'MEDIO', a: 'Geral', t: 'Preço, duração e valores negativos ou absurdos aceitos', d: 'Agenda com preço −80 gerou venda −80; serviço com duração negativa aparece no link público; custo R$ 1 trilhão na nota de compra; textos de 6.000+ caracteres.', o: 'agenda.routes.js:474-475/524; CatalogoController.js:178; publico.routes.js:175' },
+  { s: 'MEDIO', a: 'Financeiro', t: 'Parcelas quebradas e status sem regra', d: '0/−1/texto dá erro; 1,5 parcela cria 2 com soma errada; pagar cancelado, cancelar pago e sem motivo são aceitos.', o: 'FinanceiroController.js:235, 286-291, 333, 420-426, 842' },
+  { s: 'MEDIO', a: 'Relatórios', t: 'Totais diferentes entre telas', d: 'Relatório por categoria usa preço atual e inclui canceladas (R$ 405 bi vs R$ 2.177); CMV diferente entre Visão executiva e Vendas; Painel soma cancelado como pendente; movimentação tipo VENDA lança receita sem venda; frete do pedido fora da venda.', o: 'RelatoriosController.js:95-106, 825-837, 933-946; FinanceiroController.js:467-475; EstoqueController.js:73; pedidos/pedidoService.js:295' },
+  { s: 'MEDIO', a: 'Financeiro', t: '"Saldo atual" mostra a última movimentação', d: 'Depois de uma retirada de R$ 1.000 apareceu "saldo 1000".', o: 'FinanceiroController.js:725 e :741' },
+  { s: 'MEDIO', a: 'Financeiro', t: 'Excluir categoria em uso apaga sem avisar', d: 'Produtos e lançamentos ficam sem categoria. Etapa do funil com leads também pode ser apagada.', o: 'FinanceiroController.js:700/713; crm.routes.js:217' },
+  { s: 'MEDIO', a: 'Comissões', t: 'Vale maior que a comissão faz a dívida sumir', d: 'Vale de R$ 80 contra R$ 53 marcou tudo pago com total −R$ 27, sem levar para o mês seguinte.', o: 'routes/comissoes.routes.js:192' },
+  { s: 'MEDIO', a: 'Agenda', t: 'Conflito atravessando a meia-noite não é detectado', d: '23:30 + 60 min e 00:00 do dia seguinte com a mesma profissional são aceitos.', o: 'agenda.routes.js:152-163' },
+  { s: 'MEDIO', a: 'Agenda', t: 'Tela Hoje corta em 60 agendamentos', d: 'Com 69 no dia, os do fim do dia somem.', o: 'routes/hoje.routes.js:52' },
+  { s: 'MEDIO', a: 'Agenda', t: 'Concluir ignora a regra de atendimento travado', d: 'Item passado travado recebe 423 em editar, mas o Concluir passa e lança venda.', o: 'agenda.routes.js:782-800' },
+  { s: 'MEDIO', a: 'Vendas', t: 'Número de venda repetido com vendas ao mesmo tempo', d: 'Dá erro 500 depois de 5 tentativas.', o: 'services/vendaService.js:181' },
+  { s: 'MEDIO', a: 'Vendas', t: 'Forma de pagamento aceita qualquer texto', d: '"BITCOIN" e código HTML entram e aparecem no relatório.', o: 'VendaController.js:116' },
+  { s: 'MEDIO', a: 'Pedidos', t: 'Cancelar venda de pedido não atualiza o pedido', d: 'O pedido continua "ENTREGUE".', o: 'VendaController.js (cancelar)' },
+  { s: 'MEDIO', a: 'Conta', t: 'Perfil e configurações aceitam dados inválidos', d: 'E-mail inválido ou de outra pessoa sem pedir senha; foto/logo "javascript:"; horário 25:00 ou fechar antes de abrir; slug "admin".', o: 'routes/auth.routes.js:436, ~470, 496-511' },
+  { s: 'MEDIO', a: 'Equipe', t: 'Senha fraca e troca de senha sem a atual', d: 'Profissional com login nasce com senha "123456" e acessa antes de trocar; vendedor troca a própria senha sem a atual; senha "aaaaaa" aceita.', o: 'especialistas.routes.js:30; CrmUsuariosController' },
+  { s: 'MEDIO', a: 'Permissões', t: 'Vendedor/profissional veem mais do que deviam', d: 'Vendedor vê lista da equipe com e-mails, faturas e regras de comissão das colegas; profissional com escopo próprio vê fila e pacotes com telefones.', o: 'index.js:145; routes/especialistas.routes.js' },
+  { s: 'MEDIO', a: 'Clientes', t: 'CPF, e-mail e datas do cliente sem validação', d: 'CPF 111.111.111-11, 31/02 e ano 3000 aceitos; duplicados sem aviso.', o: 'routes/crm.routes.js' },
+  { s: 'MEDIO', a: 'Telas', t: 'Clique em "Fechar caixa" copiou algo para a área de transferência', d: 'Investigar qual botão dispara cópia sozinho.', o: 'frontend components/financeiro/CaixaTela.jsx' },
+  // ---------------- BAIXOS ----------------
+  { s: 'BAIXO', a: 'Geral', t: 'Dados errados dão erro 500 em vez de mensagem', d: 'Datas inválidas, tipos errados, ids inexistentes e campos faltando em agenda, catálogo, financeiro, estoque, relatórios e fechamento mensal.', o: 'vários controllers — validar entrada antes do banco' },
+  { s: 'BAIXO', a: 'Agenda', t: 'Clique duplo em Concluir/Excluir dá erro 500', d: 'Não duplica, mas deveria responder "já concluído".', o: 'agenda.routes.js:841/867 e :695' },
+  { s: 'BAIXO', a: 'Relatórios', t: 'Fechamento mensal aceita mês aberto, ano 1900 e 3000', d: 'E grava esses relatórios.', o: 'RelatorioMensalController.js:59-70' },
+  { s: 'BAIXO', a: 'Exportar', t: 'Planilha exportada sem proteção contra fórmula', d: 'Descrição começando com "=" vira fórmula no Excel.', o: 'frontend utils/exportar.js:31-45' },
+  { s: 'BAIXO', a: 'Conta a pagar', t: 'Dia 32, mês 13 e periodicidade inválida viram padrão sem aviso', d: 'Conta desativada ainda pode ser paga.', o: 'ContaPagarController.js' },
+  { s: 'BAIXO', a: 'Estoque', t: 'Custo médio errado com estoque negativo e quantidade zero aceita', d: '−5 a R$ 50 + 10 a R$ 60 deu custo R$ 70.', o: 'NotaCompraController.js:120' },
+  // ---------------- MELHORIAS ----------------
+  { s: 'MELHORIA', a: 'Primeiro uso', t: 'Conta nova já vir com o básico pronto', d: 'Criar no cadastro: categorias financeiras padrão (Serviços, Produtos, Despesas fixas), etapas do funil (Novo, Em conversa, Cliente) e o dono como profissional. Atalhos "cadastrar agora" quando uma lista está vazia (serviço no agendamento, produto na venda).', o: 'onboarding/cadastro.js' },
+  { s: 'MELHORIA', a: 'Clientes', t: 'Para salão/clínica, "Clientes" não devia exigir funil', d: 'Permitir cliente sem etapa e mostrar o funil só para quem usa.', o: 'CRMPage.jsx' },
+  { s: 'MELHORIA', a: 'Caixa', t: 'Diferença no fechamento pedir motivo', d: 'Falta grande exigir observação e, talvez, lançar "quebra de caixa".', o: 'CaixaTela.jsx' },
+  { s: 'MELHORIA', a: 'Telas', t: 'Pequenos ajustes de tela', d: 'Exemplo de dinheiro "100.00" → "100,00"; telefone de exemplo com o DDD do negócio; busca "Ir para" avisar quando não acha; faixa de números no celular ocupar menos; botão "Ajuda" não cobrir botões; textos sem acento no funil ("voce", "negociacao", "Media"); barra de rolagem horizontal no modal de produto.', o: 'frontend — vários' },
+  { s: 'MELHORIA', a: 'Geral', t: 'Limites de tamanho e de valor nos campos', d: 'Nome até ~120 caracteres, observação até ~2.000, valores até um teto razoável, quantidade inteira onde for unidade.', o: 'backend — validação central' },
+  { s: 'MELHORIA', a: 'Geral', t: 'Clique duplo em "criar" duplica', d: 'Lançamentos, fila de espera e convites duplicam com cliques repetidos. Travar o botão enquanto salva e usar chave de repetição na API.', o: 'frontend botões de salvar + backend' },
+  { s: 'MELHORIA', a: 'Clientes', t: 'Lista de clientes sem paginação', d: '5.700 clientes = 2,3 MB numa resposta só.', o: 'routes/crm.routes.js' },
+];
+
+const ORDEM = ['CRITICO', 'ALTO', 'MEDIO', 'BAIXO', 'MELHORIA'];
+const NOME = { CRITICO: 'Crítico', ALTO: 'Alto', MEDIO: 'Médio', BAIXO: 'Baixo', MELHORIA: 'Melhoria' };
+const CHAVE = 'sellergy-relatorio-testes-uso-v1';
+// Correções de 25/11/2026: tudo corrigido, menos os itens com nota abaixo.
+const NAO_CORRIGIDO = new Set([44]);
+const NOTAS = {
+  18: 'Corrigido no código e coberto por teste; não deu para conferir na API (a conta de teste da profissional está presa em "trocar senha").',
+  43: 'Validações feitas. CPF/telefone repetido só avisa na tela, não bloqueia (decisão sua).',
+  44: 'Não corrigido: nenhum código do caixa usa a área de transferência. Provavelmente veio da automação do navegador no teste.',
+  54: 'Feitos: "100,00", busca avisa quando não acha, faixa de números no celular, Ajuda sem cobrir botões, acentos do funil. Faltam: telefone de exemplo com o DDD do negócio e a rolagem horizontal do modal de produto.',
+};
+let salvo = {};
+try { salvo = JSON.parse(localStorage.getItem(CHAVE) || '{}'); } catch { salvo = {}; }
+ITENS.forEach((_, i) => { if (salvo[`i${i}`] === undefined) salvo[`i${i}`] = !NAO_CORRIGIDO.has(i); });
+const gravar = () => { try { localStorage.setItem(CHAVE, JSON.stringify(salvo)); } catch {} };
+let filtro = 'TODOS';
+
+const lista = document.getElementById('lista');
+const numeros = document.getElementById('numeros');
+ORDEM.forEach((s) => {
+  const qtd = ITENS.filter((i) => i.s === s).length;
+  const div = document.createElement('div');
+  div.className = s;
+  div.innerHTML = `<b>${qtd}</b>${NOME[s]}`;
+  numeros.appendChild(div);
+});
+
+const filtros = document.getElementById('filtros');
+['TODOS', ...ORDEM].forEach((f) => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = f === 'TODOS' ? 'Todos' : NOME[f];
+  b.className = f === filtro ? 'on' : '';
+  b.addEventListener('click', () => { filtro = f; [...filtros.children].forEach((x) => x.classList.remove('on')); b.classList.add('on'); desenhar(); });
+  filtros.appendChild(b);
+});
+
+function desenhar() {
+  lista.innerHTML = '';
+  ORDEM.forEach((s) => {
+    if (filtro !== 'TODOS' && filtro !== s) return;
+    const doGrupo = ITENS.map((it, i) => ({ ...it, id: `i${i}` })).filter((it) => it.s === s);
+    if (!doGrupo.length) return;
+    const h = document.createElement('h2');
+    h.textContent = `${NOME[s]} (${doGrupo.length})`;
+    lista.appendChild(h);
+    doGrupo.forEach((it) => {
+      const linha = document.createElement('div');
+      linha.className = 'item' + (salvo[it.id] ? ' feito' : '');
+      const cx = document.createElement('input');
+      cx.type = 'checkbox'; cx.id = it.id; cx.checked = Boolean(salvo[it.id]);
+      cx.setAttribute('aria-label', `Corrigido: ${it.t}`);
+      cx.addEventListener('change', () => { salvo[it.id] = cx.checked; gravar(); linha.classList.toggle('feito', cx.checked); placar(); });
+      const corpo = document.createElement('div');
+      const tit = document.createElement('label'); tit.className = 'tit'; tit.htmlFor = it.id; tit.textContent = it.t;
+      const tags = document.createElement('div'); tags.className = 'tags';
+      tags.innerHTML = `<span class="tag ${it.s}">${NOME[it.s]}</span><span class="tag area"></span>`;
+      tags.querySelector('.area').textContent = it.a;
+      const det = document.createElement('p'); det.className = 'det'; det.textContent = it.d;
+      const onde = document.createElement('p'); onde.className = 'onde'; onde.textContent = it.o;
+      corpo.append(tit, tags, det, onde);
+      const nota = NOTAS[Number(it.id.slice(1))];
+      if (nota) { const n = document.createElement('p'); n.className = 'onde'; n.style.fontStyle = 'italic'; n.textContent = `Nota: ${nota}`; corpo.append(n); }
+      linha.append(cx, corpo);
+      lista.appendChild(linha);
+    });
+  });
+}
+function placar() {
+  const total = ITENS.length;
+  const feitos = ITENS.filter((_, i) => salvo[`i${i}`]).length;
+  document.getElementById('placar').textContent = `${feitos} de ${total} corrigidos`;
+  document.getElementById('progresso').style.width = `${(feitos / total) * 100}%`;
+}
+document.getElementById('soPendentes').addEventListener('click', (ev) => {
+  const on = document.body.classList.toggle('esconder');
+  ev.target.textContent = on ? 'Mostrar corrigidos' : 'Esconder corrigidos';
+});
+desenhar(); placar();
+</script>
+</body>
+</html>

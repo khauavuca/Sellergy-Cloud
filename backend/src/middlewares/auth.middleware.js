@@ -3,6 +3,7 @@ const { nomeSessao, lerCookie } = require('../utils/sessaoCookie');
 const { requisicaoPermitidaEmSuporte } = require('../seguranca/sessaoSuporte');
 const { papelDe, escritaLiberadaPara, DESATIVADO } = require('../seguranca/papeis');
 const { camadaRecusada } = require('../seguranca/acessoAdmin');
+const sessaoUsuario = require('../seguranca/sessaoUsuario');
 
 if (!process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET nao configurado. Defina a variavel de ambiente antes de iniciar o servidor.');
@@ -115,6 +116,43 @@ const middlewareAutenticacao = (req, res, next) => {
   // Sinaliza a origem da credencial: so a sessao por cookie e enviada
   // automaticamente pelo navegador, logo so ela precisa de defesa de CSRF.
   req.sessaoPorCookie = Boolean(tokenCookie);
+  req.tokenSessao = token;
+
+  // Sessao conferida no BANCO (seguranca/sessaoUsuario.js): logout, troca de
+  // senha, papel novo ou usuario excluido valem na hora.
+  return conferirSessaoNoBanco(req, res, () => continuarAutenticacao(req, res, next, decodificado), decodificado, token);
+};
+
+async function conferirSessaoNoBanco(req, res, seguir, decodificado, token) {
+  try {
+    if (await sessaoUsuario.tokenRevogado(token)) {
+      return res.status(401).json({ erro: 'Sessão encerrada. Entre de novo.', codigo: 'SESSAO_ENCERRADA' });
+    }
+    // Sessao de suporte: o token e do dono do negocio; so confere que existe.
+    const atual = await sessaoUsuario.carregarUsuario(decodificado.id);
+    if (decodificado.suporte) {
+      if (!atual) return res.status(401).json({ erro: 'Sessão inválida. Entre de novo.' });
+      return seguir();
+    }
+    const r = sessaoUsuario.conferirSessao(decodificado, atual);
+    if (!r.ok) return res.status(401).json({ erro: 'Sua sessão expirou. Entre de novo.', codigo: 'SESSAO_INVALIDA' });
+    // Perfil e permissoes que valem sao os do banco, nao os do login.
+    req.usuario = { ...decodificado, perfil: atual.perfil, clienteId: atual.clienteId || null };
+    req.usuarioAtual = atual;
+    if (atual.deveTrocarSenha === true && atual.perfil !== 'ADMIN') {
+      const caminho = (req.originalUrl || '').split('?')[0];
+      if (!sessaoUsuario.rotaLiberadaSemTrocarSenha(req.method, caminho)) {
+        return res.status(403).json({ erro: 'Troque a senha provisória para continuar.', codigo: 'TROCAR_SENHA' });
+      }
+    }
+    return seguir();
+  } catch (e) {
+    console.error('[auth] falha ao conferir a sessao', e?.message);
+    return res.status(503).json({ erro: 'Não foi possível validar o acesso agora. Tente de novo.' });
+  }
+}
+
+function continuarAutenticacao(req, res, next, decodificado) {
 
   // Sessao de suporte (admin vendo a conta do cliente): SO LEITURA.
   // Ver seguranca/sessaoSuporte.js.
@@ -129,11 +167,11 @@ const middlewareAutenticacao = (req, res, next) => {
     return next();
   }
 
-  if (decodificado.perfil === 'ADMIN') {
+  if (req.usuario.perfil === 'ADMIN') {
     return conferirAdmin(req, res, next, decodificado);
   }
   return next();
-};
+}
 
 module.exports = middlewareAutenticacao;
 module.exports.SEGREDO_JWT = SEGREDO_JWT;

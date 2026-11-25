@@ -612,6 +612,7 @@ function ModalUsuario({ isOpen, onClose, usuario, ehDono, modulosLiberados, serv
   const editando = !!usuario;
   const agendaLiberada = moduloLiberado(modulosLiberados, 'AGENDA');
 
+  const [erroForm, setErroForm] = useState('');
   const [form, setForm] = useState({
     nome: '', email: '', senha: '', tipo: 'VENDEDOR', permissoes: permissoesVazias(),
     // campos de especialista
@@ -682,9 +683,14 @@ function ModalUsuario({ isOpen, onClose, usuario, ehDono, modulosLiberados, serv
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!usuario && !form.senha) {
-      alert('A senha é obrigatória para um novo usuário');
+      setErroForm('A senha inicial é obrigatória para um novo usuário.');
       return;
     }
+    if (form.senha && (form.senha.length < 8 || !form.senha.trim())) {
+      setErroForm('A senha precisa de pelo menos 8 caracteres (não pode ser só espaços).');
+      return;
+    }
+    setErroForm('');
     const payload = { nome: form.nome, email: form.email };
     if (form.senha) payload.senha = form.senha;
     if (form.id) payload.id = form.id;
@@ -725,10 +731,14 @@ function ModalUsuario({ isOpen, onClose, usuario, ehDono, modulosLiberados, serv
             type="password"
             value={form.senha}
             onChange={(e) => setForm({ ...form, senha: e.target.value })}
-            placeholder={usuario ? 'Deixe em branco para manter' : 'Mínimo de 6 caracteres'}
-            hint={!usuario ? 'A pessoa vai trocar a senha no primeiro login' : null}
+            placeholder={usuario ? 'Deixe em branco para manter' : 'Mínimo de 8 caracteres'}
+            minLength={8}
+            hint={!usuario ? 'A pessoa vai trocar a senha no primeiro login' : 'Ao redefinir, a pessoa sai de todos os aparelhos e troca a senha no próximo acesso.'}
           />
         </div>
+        {erroForm && (
+          <div role="alert" className="text-[13px] text-[var(--danger-text)]">{erroForm}</div>
+        )}
 
         {/* Tipo */}
         <div>

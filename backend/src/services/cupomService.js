@@ -45,10 +45,24 @@ async function buscarCupom(clienteId, codigo) {
   return prisma.cupom.findFirst({ where: { clienteId, codigo: codigoSan } });
 }
 
-// Incrementa o uso do cupom. Roda DENTRO de uma transacao existente (tx) —
-// quem chama ja validou o cupom antes; aqui so persiste o consumo.
-async function registrarUsoCupom(tx, cupomId) {
-  await tx.cupom.update({ where: { id: cupomId }, data: { usosAtuais: { increment: 1 } } });
+// Consome 1 uso do cupom. Roda DENTRO da transacao da venda (tx). O
+// incremento e CONDICIONAL (ativo, nao expirado e usosAtuais < usoMaximo) num
+// UPDATE so: com 10 vendas paralelas de um cupom de 1 uso, o Postgres trava a
+// linha e reavalia o WHERE, entao so 1 incrementa. Devolve true se consumiu;
+// false = esgotou/expirou entre a validacao e a gravacao (quem chama desfaz).
+async function registrarUsoCupom(tx, cupomId, agora = new Date()) {
+  const r = await tx.cupom.updateMany({
+    where: {
+      id: cupomId,
+      ativo: true,
+      AND: [
+        { OR: [{ validoAte: null }, { validoAte: { gte: agora } }] },
+        { OR: [{ usoMaximo: null }, { usosAtuais: { lt: prisma.cupom.fields.usoMaximo } }] },
+      ],
+    },
+    data: { usosAtuais: { increment: 1 } },
+  });
+  return r.count === 1;
 }
 
 module.exports = { validarCupom, buscarCupom, registrarUsoCupom, normalizarCodigo };

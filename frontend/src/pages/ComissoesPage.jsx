@@ -315,13 +315,15 @@ function ModalPagar({ pessoa, competencia, mes, onClose, onPago }) {
 
   const pagar = async (e) => {
     e.preventDefault();
+    if (salvando) return;
     setSalvando(true);
     try {
       const r = await api.post('/comissoes/pagar', {
         especialistaId: pessoa.id, competencia, lancarFinanceiro: lancar, enviarRecibo: recibo,
         telefone: recibo && telefone ? telefone : undefined, metodoPagamento: metodo,
       });
-      const partes = [`Comissão de ${fmtBRL(r.data.total)} paga.`];
+      const partes = [r.data.saldoLevado ? `Mês de ${mes} fechado.` : `Comissão de ${fmtBRL(r.data.total)} paga.`];
+      if (r.data.saldoLevado) partes.push(r.data.saldoLevado.mensagem);
       if (r.data.lancamentoId) partes.push('Saída lançada no financeiro.');
       if (r.data.recibo?.enviado) partes.push(`Recibo enviado pro WhatsApp de ${pessoa.nome.split(' ')[0]}.`);
       if (r.data.recibo && !r.data.recibo.enviado) partes.push(r.data.recibo.motivo);
@@ -337,6 +339,11 @@ function ModalPagar({ pessoa, competencia, mes, onClose, onPago }) {
   return (
     <Modal isOpen onClose={onClose} title={`Pagar ${pessoa.nome.split(' ')[0]}`} description={`${fmtBRL(pessoa.aPagar)} de ${mes}`}>
       <form onSubmit={pagar} className="space-y-4">
+        {pessoa.aPagar < 0 && (
+          <p role="note" className="m-0 p-3 rounded-xl bg-[var(--warning-soft)] text-[var(--warning-text)] text-xs leading-relaxed">
+            Os vales passaram a comissão em {fmtBRL(Math.abs(pessoa.aPagar))}. Ao confirmar, nada é pago agora e esse valor fica para descontar no mês seguinte.
+          </p>
+        )}
         <fieldset>
           <legend className="text-sm font-medium text-[var(--text-secondary)] mb-2">Pago como</legend>
           <div className="flex flex-wrap gap-2">

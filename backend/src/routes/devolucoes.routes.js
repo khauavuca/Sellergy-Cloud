@@ -10,8 +10,10 @@ const {
   requerPermissao,
 } = require('../middlewares/permissoes.middleware');
 const { fecharLeadAutomatico } = require('../services/etapaLeadAuto');
+const { lerInteiro } = require('../utils/numero');
 
 const roteador = express.Router();
+const RE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 roteador.use(middlewareAutenticacao);
 roteador.use(requerModuloLiberado('VENDAS'));
 
@@ -38,8 +40,9 @@ roteador.put('/config', requerPermissao('VENDAS', 'editar'), async (req, res) =>
     const { clienteId } = req.usuario;
     if (!clienteId) return res.status(403).json({ erro: 'Tenant indefinido.' });
     const { diasAvisoDevolucao } = req.body || {};
-    const n = parseInt(diasAvisoDevolucao, 10);
-    if (!Number.isInteger(n) || n < 0 || n > 30) {
+    const lido = lerInteiro(diasAvisoDevolucao, { min: 0, max: 30 });
+    const n = lido.ok ? lido.valor : NaN;
+    if (!Number.isInteger(n)) {
       return res.status(422).json({ erro: 'diasAvisoDevolucao deve ser um inteiro entre 0 e 30.' });
     }
     const cliente = await prisma.cliente.update({
@@ -73,8 +76,13 @@ roteador.get('/', requerPermissao('VENDAS', 'visualizar'), async (req, res) => {
     const onde = { clienteId };
     if (status === 'concluida') {
       onde.devolvidoEm = { not: null };
+    } else if (status === 'cancelada') {
+      onde.canceladaEm = { not: null };
     } else {
+      // Pendente = ainda fora e de venda que vale (venda cancelada encerra).
       onde.devolvidoEm = null;
+      onde.canceladaEm = null;
+      onde.venda = { status: { not: 'CANCELLED' } };
       if (status === 'atrasada') onde.dataDevolucao = { lt: new Date() };
     }
 
@@ -91,27 +99,48 @@ roteador.get('/', requerPermissao('VENDAS', 'visualizar'), async (req, res) => {
 });
 
 // PATCH /devolucoes/:id/concluir — marca como devolvida. Se o produto for
-// FISICO, estorna o estoque (MovimentacaoEstoque tipo DEVOLUCAO), mesma
-// mecânica do cancelamento de venda (VendaController.cancelarVenda).
-// Idempotente: se ja estava concluida, devolve 200 sem efeito colateral.
+// FISICO, estorna o estoque (MovimentacaoEstoque tipo DEVOLUCAO).
+// Clique duplo/pedidos paralelos: a marcacao e um UPDATE condicional
+// (devolvidoEm e canceladaEm nulos) dentro da transacao — so um passa e
+// devolve o estoque; os outros recebem "ja concluida". Devolucao de venda
+// cancelada nao conclui (o cancelamento ja devolveu o estoque): 409.
 roteador.patch('/:id/concluir', requerPermissao('VENDAS', 'editar'), async (req, res) => {
   try {
     const { clienteId } = req.usuario;
     if (!clienteId) return res.status(403).json({ erro: 'Tenant indefinido.' });
     const { id } = req.params;
-
-    const devolucao = await prisma.devolucao.findFirst({
-      where: { id, clienteId },
-      include: { variacao: { include: { produto: true } }, venda: { select: { numero: true } } },
-    });
-    if (!devolucao) return res.status(404).json({ erro: 'Devolução não encontrada.' });
-    if (devolucao.devolvidoEm) {
-      return res.status(200).json({ ok: true, jaConcluida: true, devolucao });
-    }
+    if (!RE_UUID.test(String(id))) return res.status(404).json({ erro: 'Devolução não encontrada.' });
 
     const agora = new Date();
-    const atualizada = await prisma.$transaction(async (tx) => {
-      const d = await tx.devolucao.update({ where: { id }, data: { devolvidoEm: agora } });
+    const resultado = await prisma.$transaction(async (tx) => {
+      const devolucao = await tx.devolucao.findFirst({
+        where: { id, clienteId },
+        include: { variacao: { include: { produto: true } }, venda: { select: { numero: true, status: true } } },
+      });
+      if (!devolucao) return { status: 404, corpo: { erro: 'Devolução não encontrada.' } };
+      if (devolucao.canceladaEm || devolucao.venda?.status === 'CANCELLED') {
+        return { status: 409, corpo: { erro: 'A venda deste aluguel foi cancelada; o estoque já voltou no cancelamento.', codigo: 'VENDA_CANCELADA' } };
+      }
+
+      const marcou = await tx.devolucao.updateMany({
+        where: { id, clienteId, devolvidoEm: null, canceladaEm: null },
+        data: { devolvidoEm: agora },
+      });
+      if (marcou.count === 0) {
+        const atual = await tx.devolucao.findFirst({ where: { id, clienteId } });
+        if (atual?.canceladaEm) {
+          return { status: 409, corpo: { erro: 'A venda deste aluguel foi cancelada; o estoque já voltou no cancelamento.', codigo: 'VENDA_CANCELADA' } };
+        }
+        return { status: 200, corpo: { ok: true, jaConcluida: true, devolucao: atual } };
+      }
+
+      // Confere a venda de novo com a linha travada: cancelamento em curso
+      // espera esta transacao e depois nao devolve de novo (saldo liquido).
+      const venda = await tx.venda.findFirst({ where: { id: devolucao.vendaId, clienteId }, select: { status: true } });
+      if (!venda || venda.status === 'CANCELLED') {
+        throw Object.assign(new Error('venda cancelada'), { cancelada: true });
+      }
+
       if (devolucao.variacao.produto.tipo === 'FISICO') {
         await tx.movimentacaoEstoque.create({
           data: {
@@ -138,11 +167,15 @@ roteador.patch('/:id/concluir', requerPermissao('VENDAS', 'editar'), async (req,
         });
       }
 
-      return d;
+      const d = await tx.devolucao.findFirst({ where: { id, clienteId } });
+      return { status: 200, corpo: { ok: true, devolucao: d } };
     });
 
-    res.json({ ok: true, devolucao: atualizada });
+    res.status(resultado.status).json(resultado.corpo);
   } catch (erro) {
+    if (erro?.cancelada) {
+      return res.status(409).json({ erro: 'A venda deste aluguel foi cancelada; o estoque já voltou no cancelamento.', codigo: 'VENDA_CANCELADA' });
+    }
     console.error('[devolucoes/concluir]', erro);
     res.status(500).json({ erro: 'Erro ao concluir devolução.' });
   }

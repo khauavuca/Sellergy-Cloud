@@ -17,6 +17,7 @@ const { exigeCpfCnpj } = require('../services/pagadorCobranca');
 const { intervaloDoDia, valorDosCentavos, ROTULO_STATUS_AGENDA, arred } = require('../hoje/regras');
 
 const roteador = express.Router();
+const LIMITE_HORARIOS_DIA = 1000;
 roteador.use(middlewareAutenticacao);
 roteador.use(requerTenant);
 roteador.use(requerPapelPrivilegiado);
@@ -49,7 +50,9 @@ roteador.get('/', async (req, res) => {
             especialista: { select: { nome: true } },
           },
           orderBy: { data: 'asc' },
-          take: 60,
+          // Sem corte em 60: dia cheio mostrava so ate o meio da tarde. O teto
+          // aqui so protege a resposta (um dia real nao chega perto disso).
+          take: LIMITE_HORARIOS_DIA,
         })
         : Promise.resolve(null),
       prisma.notificacao.findMany({

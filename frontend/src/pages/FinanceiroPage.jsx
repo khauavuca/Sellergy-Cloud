@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   DollarSign, AlertCircle, Plus, MoreHorizontal,
   Edit2, Trash2, CheckCircle2, XCircle, Tag, ArrowDownToLine, ArrowUpFromLine,
@@ -23,6 +23,38 @@ import {
 import Modal from '../components/Modal';
 
 const fmtBRL = (v) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// Datas de vencimento/pagamento sao dias de calendario de Brasilia (o
+// backend grava 12:00 UTC). Formata sempre no fuso de Brasilia.
+const fmtDia = (v) => (v ? new Date(v).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '—');
+const msgErro = (e, padrao) => e?.response?.data?.erro || e?.response?.data?.error || padrao;
+// Diferenca de caixa acima disso exige observacao (mesma regra do backend).
+const LIMITE_DIFERENCA_CAIXA = 10;
+
+// Trava de envio: o botao fica "carregando" e um 2o clique (ou Enter) e
+// ignorado enquanto a 1a requisicao nao termina.
+function useEnvio() {
+  const travado = useRef(false);
+  const [enviando, setEnviando] = useState(false);
+  const enviar = async (fn) => {
+    if (travado.current) return;
+    travado.current = true;
+    setEnviando(true);
+    try {
+      await fn();
+    } finally {
+      travado.current = false;
+      setEnviando(false);
+    }
+  };
+  return [enviando, enviar];
+}
+
+function novaChave() {
+  try {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  } catch { /* sem crypto */ }
+  return `k${Date.now()}${Math.random().toString(36).slice(2, 12)}`;
+}
 const STATUS_LABELS = {
   PENDENTE: { label: 'Pendente', variant: 'warning' },
   PAGO: { label: 'Pago', variant: 'success' },
@@ -195,15 +227,16 @@ export default function FinanceiroPage() {
     try {
       if (dados.id) {
         await api.put(`/financeiro/lancamentos/${dados.id}`, dados);
-        toast.success('Lancamento atualizado');
+        toast.success('Lançamento atualizado');
       } else {
-        await api.post('/financeiro/lancamentos', dados);
-        toast.success('Lancamento criado');
+        const { chaveRepeticao, ...corpo } = dados;
+        await api.post('/financeiro/lancamentos', corpo, chaveRepeticao ? { headers: { 'Idempotency-Key': chaveRepeticao } } : undefined);
+        toast.success('Lançamento criado');
       }
       setModalLanc({ open: false, data: null });
       carregar();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao salvar');
+      toast.error(msgErro(e, 'Erro ao salvar'));
     }
   };
 
@@ -222,11 +255,11 @@ export default function FinanceiroPage() {
   const handleStatus = async (l, status) => {
     try {
       await api.patch(`/financeiro/lancamentos/${l.id}/status`, { status });
-      toast.success('Status atualizado');
+      toast.success('Situação atualizada');
       setDrawer({ open: false, lanc: null });
       carregar();
-    } catch {
-      toast.error('Erro ao mudar status');
+    } catch (e) {
+      toast.error(msgErro(e, 'Erro ao mudar a situação'));
     }
   };
 
@@ -353,6 +386,8 @@ export default function FinanceiroPage() {
   };
 
   const handleFecharCaixa = async ({ saldoFinalReal, observacao }) => {
+    // (Nada aqui usa a area de transferencia: o relato de "Fechar caixa
+    // copiou algo" nao se reproduz no codigo — ver relatorio de correcoes.)
     try {
       const r = await api.post('/financeiro/caixa/fechar', { saldoFinalReal, observacao });
       const dif = r.data?.sessao?.diferenca ?? 0;
@@ -367,23 +402,31 @@ export default function FinanceiroPage() {
     }
   };
 
-  const handleMovimentacaoCaixa = async ({ tipo, valor, motivo }) => {
+  const handleMovimentacaoCaixa = async ({ tipo, valor, motivo }, confirmarSaldoNegativo = false) => {
     try {
       const url = tipo === 'SANGRIA' ? '/financeiro/caixa/sangria' : '/financeiro/caixa/suprimento';
-      await api.post(url, { valor, motivo });
+      await api.post(url, { valor, motivo, ...(confirmarSaldoNegativo ? { confirmarSaldoNegativo: true } : {}) });
       toast.success(tipo === 'SANGRIA' ? 'Retirada registrada' : 'Entrada registrada');
       setModalMovCaixa({ open: false, tipo: null });
       carregar();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao registrar movimentação');
+      // Retirada maior que o saldo: so passa com confirmacao explicita.
+      if (e.response?.data?.codigo === 'SALDO_INSUFICIENTE' && !confirmarSaldoNegativo) {
+        if (confirm(`${msgErro(e, '')}\n\nO caixa vai ficar negativo. Registrar mesmo assim?`)) {
+          return handleMovimentacaoCaixa({ tipo, valor, motivo }, true);
+        }
+        return undefined;
+      }
+      toast.error(msgErro(e, 'Erro ao registrar movimentação'));
     }
+    return undefined;
   };
 
   // Adia o vencimento em N dias. Backend default e 3 — passamos explicito.
   const handleAdiar = async (l, dias) => {
     try {
       const r = await api.post(`/financeiro/lancamentos/${l.id}/pausa`, { dias });
-      const novoVenc = new Date(r.data?.novoVencimento || Date.now()).toLocaleDateString('pt-BR');
+      const novoVenc = fmtDia(r.data?.novoVencimento || Date.now());
       toast.success(`Vencimento adiado pra ${novoVenc}`);
       setDrawer({ open: false, lanc: null });
       carregar();
@@ -403,19 +446,27 @@ export default function FinanceiroPage() {
       }
       setModalCat({ open: false, data: null });
       carregar();
-    } catch {
-      toast.error('Erro ao salvar categoria');
+    } catch (e) {
+      toast.error(msgErro(e, 'Erro ao salvar categoria'));
     }
   };
 
-  const handleExcluirCat = async (c) => {
-    if (!confirm(`Excluir categoria "${c.nome}"?`)) return;
+  // Categoria em uso nao some calada: o backend responde 409 e aqui a pessoa
+  // escolhe outra categoria do mesmo tipo pra ficar no lugar.
+  const [modalSubstCat, setModalSubstCat] = useState({ open: false, cat: null, mensagem: '' });
+  const handleExcluirCat = async (c, substituirPor = null) => {
+    if (!substituirPor && !confirm(`Excluir categoria "${c.nome}"?`)) return;
     try {
-      await api.delete(`/financeiro/categorias/${c.id}`);
-      toast.success('Categoria excluida');
+      await api.delete(`/financeiro/categorias/${c.id}`, substituirPor ? { data: { substituirPor } } : undefined);
+      toast.success('Categoria excluída');
+      setModalSubstCat({ open: false, cat: null, mensagem: '' });
       carregar();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao excluir');
+      if (e.response?.data?.codigo === 'CATEGORIA_EM_USO') {
+        setModalSubstCat({ open: true, cat: c, mensagem: msgErro(e, '') });
+        return;
+      }
+      toast.error(msgErro(e, 'Erro ao excluir'));
     }
   };
 
@@ -432,7 +483,7 @@ export default function FinanceiroPage() {
       setModalContaPagar({ open: false, data: null });
       carregar();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao salvar conta a pagar');
+      toast.error(msgErro(e, 'Erro ao salvar conta a pagar'));
     }
   };
 
@@ -466,7 +517,7 @@ export default function FinanceiroPage() {
     }
   };
 
-  const handlePagarConta = async ({ conta, valor, motivo, tirarDoCaixa }) => {
+  const handlePagarConta = async ({ conta, valor, motivo, tirarDoCaixa }, confirmarSaldoNegativo = false) => {
     // A conta pode vir de dois lugares:
     //   1. Pré-selecionada na lista de contas (modalPagarConta.conta != null)
     //   2. Escolhida no combobox do modal quando aberto pelo header do caixa
@@ -477,13 +528,20 @@ export default function FinanceiroPage() {
       return;
     }
     try {
-      await contaPagarService.pagar(contaAlvo.id, { valor, motivo, tirarDoCaixa });
+      await contaPagarService.pagar(contaAlvo.id, { valor, motivo, tirarDoCaixa, ...(confirmarSaldoNegativo ? { confirmarSaldoNegativo: true } : {}) });
       toast.success('Pagamento registrado');
       setModalPagarConta({ open: false, conta: null });
       carregar();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao pagar conta');
+      if (e.response?.data?.codigo === 'SALDO_INSUFICIENTE' && !confirmarSaldoNegativo) {
+        if (confirm(`${msgErro(e, '')}\n\nO caixa vai ficar negativo. Pagar mesmo assim?`)) {
+          return handlePagarConta({ conta: contaAlvo, valor, motivo, tirarDoCaixa }, true);
+        }
+        return undefined;
+      }
+      toast.error(msgErro(e, 'Erro ao pagar conta'));
     }
+    return undefined;
   };
 
   // Pagar despesa pelo caixa: abre o seletor se houver contas ativas.
@@ -665,7 +723,7 @@ export default function FinanceiroPage() {
                             />
                           </td>
                           <td className={`${TD} whitespace-nowrap tabular-nums ${l.status === 'PENDENTE' && diasAte(l.dataVencimento) < 0 ? 'text-[var(--danger-text)] font-semibold' : 'text-[var(--text-secondary)]'}`}>
-                            {new Date(l.dataVencimento).toLocaleDateString('pt-BR')}
+                            {fmtDia(l.dataVencimento)}
                           </td>
                           {/* Cancelado: cinza + tachado em descrição e valor. */}
                           <td className={TD}>
@@ -880,6 +938,15 @@ export default function FinanceiroPage() {
         onSalvar={handleSalvarLanc}
       />
 
+      <ModalSubstituirCategoria
+        key={modalSubstCat.open ? `subst-${modalSubstCat.cat?.id}` : 'subst-fechado'}
+        isOpen={modalSubstCat.open}
+        cat={modalSubstCat.cat}
+        mensagem={modalSubstCat.mensagem}
+        categorias={categorias}
+        onClose={() => setModalSubstCat({ open: false, cat: null, mensagem: '' })}
+        onConfirmar={(novaId) => handleExcluirCat(modalSubstCat.cat, novaId)}
+      />
       <ModalCategoria
         key={modalCat.open ? `cat-${modalCat.data?.id ?? 'nova'}` : 'cat-fechada'}
         isOpen={modalCat.open}
@@ -996,7 +1063,7 @@ function ModalLancamento({ isOpen, onClose, lanc, categorias, catalogo = [], onS
     }
     : {
       descricao: '', valor: 0, tipo: 'RECEITA',
-      dataVencimento: new Date().toISOString().split('T')[0],
+      dataVencimento: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }),
       dataPagamento: '', categoriaId: '', status: 'PENDENTE', parcelas: 1,
       produto: '', metodoPagamento: '',
       // variacaoId nao vai pro backend — guardamos so pra o Combobox manter
@@ -1004,22 +1071,53 @@ function ModalLancamento({ isOpen, onClose, lanc, categorias, catalogo = [], onS
       variacaoId: '',
     }));
 
+  const [enviando, enviar] = useEnvio();
+  // Uma chave por abertura do modal: 2 cliques (ou rede lenta + reenvio)
+  // devolvem o mesmo lancamento em vez de criar outro.
+  const [chaveRepeticao] = useState(novaChave);
+
   const handleSubmit = (e) => {
     e.preventDefault();
-    const valorNumber = parseFloat(form.valor);
-    if (isNaN(valorNumber) || valorNumber <= 0) {
+    const valorNumber = Number(String(form.valor).replace(',', '.'));
+    if (!Number.isFinite(valorNumber) || valorNumber <= 0) {
       alert('O valor deve ser maior que zero');
       return;
     }
-    const dados = { ...form, valor: valorNumber };
+    // So os campos que o backend aceita (nada de id/clienteId/lead/venda...).
+    const dados = {
+      id: form.id,
+      descricao: form.descricao,
+      valor: valorNumber,
+      tipo: form.tipo,
+      dataVencimento: form.dataVencimento,
+      dataPagamento: form.dataPagamento,
+      categoriaId: form.categoriaId,
+      produto: form.produto,
+      metodoPagamento: form.metodoPagamento,
+      status: form.status,
+      variacaoId: form.variacaoId,
+    };
+    if (lanc) {
+      delete dados.status;
+      delete dados.dataPagamento;
+    } else {
+      delete dados.id;
+      dados.chaveRepeticao = chaveRepeticao;
+    }
     // variacaoId so existe no front pra UX do Combobox — backend nao usa.
     delete dados.variacaoId;
     if (!form.dataPagamento) delete dados.dataPagamento;
     if (!form.categoriaId) delete dados.categoriaId;
     if (!form.produto) delete dados.produto;
     if (!form.metodoPagamento) delete dados.metodoPagamento;
-    if (!lanc) dados.parcelas = parseInt(form.parcelas) || 1;
-    onSalvar(dados);
+    if (!lanc) dados.parcelas = Number(form.parcelas) || 1;
+    if (lanc) {
+      // Na edicao, campo vazio = limpar.
+      dados.categoriaId = form.categoriaId || null;
+      dados.produto = form.produto || null;
+      dados.metodoPagamento = form.metodoPagamento || null;
+    }
+    enviar(() => onSalvar(dados));
   };
 
   // Selecionou item do catalogo: preenche nome do produto + valor (se ainda
@@ -1147,8 +1245,10 @@ function ModalLancamento({ isOpen, onClose, lanc, categorias, catalogo = [], onS
             label="Situação"
             value={form.status}
             onChange={(e) => setForm({ ...form, status: e.target.value })}
-            options={Object.entries(STATUS_LABELS).map(([k, v]) => ({ value: k, label: v.label }))}
+            options={['PENDENTE', 'PAGO'].map((k) => ({ value: k, label: STATUS_LABELS[k].label }))}
             placeholder=""
+            disabled={!!lanc}
+            hint={lanc ? 'Mude a situação pelo painel do lançamento.' : null}
           />
           <Select
             size="lg"
@@ -1238,7 +1338,7 @@ function ModalLancamento({ isOpen, onClose, lanc, categorias, catalogo = [], onS
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={onClose} type="button">Cancelar</Button>
-          <Button variant="primary" type="submit">{lanc ? 'Salvar' : 'Criar lançamento'}</Button>
+          <Button variant="primary" type="submit" loading={enviando}>{lanc ? 'Salvar' : 'Criar lançamento'}</Button>
         </div>
       </form>
     </Modal>
@@ -1258,10 +1358,15 @@ function ModalCategoria({ isOpen, onClose, cat, onSalvar }) {
     ? { nome: cat.nome, tipo: cat.tipo, subTipo: cat.subTipo || '', uso: cat.uso || '' }
     : { nome: '', tipo: 'RECEITA', subTipo: '', uso: '' }));
 
+  const [enviando, enviar] = useEnvio();
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!form.uso) {
       alert('Escolha onde esta categoria será usada.');
+      return;
+    }
+    if (form.nome.trim().length < 2) {
+      alert('O nome precisa ter pelo menos 2 letras.');
       return;
     }
     // Limpa subTipo se voltar pra RECEITA (consistência com o backend).
@@ -1271,13 +1376,14 @@ function ModalCategoria({ isOpen, onClose, cat, onSalvar }) {
       uso: form.uso,
       subTipo: form.tipo === 'DESPESA' && form.subTipo ? form.subTipo : null,
     };
-    onSalvar(payload);
+    if (cat?.id) payload.id = cat.id;
+    enviar(() => onSalvar(payload));
   };
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={cat ? 'Editar categoria' : 'Nova categoria'} size="sm">
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Input label="Nome" value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} required autoFocus />
+        <Input label="Nome" value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} required autoFocus maxLength={80} />
         <Select
           label="Onde esta categoria aparece"
           value={form.uso}
@@ -1312,7 +1418,7 @@ function ModalCategoria({ isOpen, onClose, cat, onSalvar }) {
         )}
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={onClose} type="button">Cancelar</Button>
-          <Button variant="primary" type="submit">{cat ? 'Salvar' : 'Criar'}</Button>
+          <Button variant="primary" type="submit" loading={enviando}>{cat ? 'Salvar' : 'Criar'}</Button>
         </div>
       </form>
     </Modal>
@@ -1434,8 +1540,8 @@ function DrawerLancamento({ isOpen, onClose, lanc, onEditar, onExcluir, onStatus
         )}
 
         <div className="grid grid-cols-2 gap-3">
-          <InfoBox label="Vencimento" valor={new Date(lanc.dataVencimento).toLocaleDateString('pt-BR')} />
-          <InfoBox label="Pagamento" valor={lanc.dataPagamento ? new Date(lanc.dataPagamento).toLocaleDateString('pt-BR') : '—'} />
+          <InfoBox label="Vencimento" valor={fmtDia(lanc.dataVencimento)} />
+          <InfoBox label="Pagamento" valor={fmtDia(lanc.dataPagamento)} />
           <InfoBox label="Categoria" valor={lanc.categoria?.nome || '—'} />
           <InfoBox label="Método" valor={lanc.metodoPagamento || '—'} />
           {lanc.produto && <InfoBox label="Produto" valor={lanc.produto} />}
@@ -1527,7 +1633,7 @@ const CAMPOS_LANC_LABEL = {
 function fmtValorLanc(campo, v) {
   if (v == null || v === '') return '—';
   if (campo === 'valor') return Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-  if (campo === 'dataVencimento') return new Date(v).toLocaleDateString('pt-BR');
+  if (campo === 'dataVencimento') return fmtDia(v);
   if (campo === 'status') return STATUS_LABELS[v]?.label || v;
   return String(v);
 }
@@ -1637,14 +1743,15 @@ function ModalAbrirCaixa({ isOpen, onClose, onConfirmar }) {
   const [fundoCaixa, setFundoCaixa] = useState('');
   const [observacao, setObservacao] = useState('');
 
+  const [enviando, enviar] = useEnvio();
   const handleSubmit = (e) => {
     e.preventDefault();
-    const v = parseFloat(fundoCaixa);
-    if (Number.isNaN(v) || v < 0) {
+    const v = Number(String(fundoCaixa).replace(',', '.'));
+    if (!Number.isFinite(v) || v < 0) {
       alert('Fundo de caixa precisa ser um número ≥ 0.');
       return;
     }
-    onConfirmar({ fundoCaixa: v, observacao: observacao.trim() || null });
+    enviar(() => onConfirmar({ fundoCaixa: v, observacao: observacao.trim() || null }));
   };
 
   return (
@@ -1664,7 +1771,7 @@ function ModalAbrirCaixa({ isOpen, onClose, onConfirmar }) {
           min="0"
           value={fundoCaixa}
           onChange={(e) => setFundoCaixa(e.target.value)}
-          placeholder="Ex.: 100.00"
+          placeholder="Ex.: 100,00"
           autoFocus
           required
         />
@@ -1679,7 +1786,7 @@ function ModalAbrirCaixa({ isOpen, onClose, onConfirmar }) {
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" type="button" onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" type="submit" icon={Wallet}>Abrir caixa</Button>
+          <Button variant="primary" type="submit" icon={Wallet} loading={enviando}>Abrir caixa</Button>
         </div>
       </form>
     </Modal>
@@ -1699,20 +1806,24 @@ function ModalFecharCaixa({ isOpen, onClose, sessao, onConfirmar }) {
     isOpen && sessao?.saldoEsperado != null ? String(sessao.saldoEsperado) : ''
   ));
   const [observacao, setObservacao] = useState('');
+  const [enviando, enviar] = useEnvio();
 
   if (!sessao) return null;
 
   const saldoEsperado = sessao.saldoEsperado ?? sessao.fundoCaixa ?? 0;
-  const saldoRealNum = parseFloat(saldoReal);
-  const diferenca = !Number.isNaN(saldoRealNum) ? Number((saldoRealNum - saldoEsperado).toFixed(2)) : null;
+  const saldoRealNum = saldoReal === '' ? NaN : Number(String(saldoReal).replace(',', '.'));
+  const diferenca = Number.isFinite(saldoRealNum) ? Number((saldoRealNum - saldoEsperado).toFixed(2)) : null;
+  const exigeObservacao = diferenca !== null && Math.abs(diferenca) > LIMITE_DIFERENCA_CAIXA;
+  const observacaoOk = !exigeObservacao || observacao.trim().length >= 3;
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (Number.isNaN(saldoRealNum)) {
+    if (!Number.isFinite(saldoRealNum) || saldoRealNum < 0) {
       alert('Informe o saldo real contado no caixa.');
       return;
     }
-    onConfirmar({ saldoFinalReal: saldoRealNum, observacao: observacao.trim() || null });
+    if (!observacaoOk) return;
+    enviar(() => onConfirmar({ saldoFinalReal: saldoRealNum, observacao: observacao.trim() || null }));
   };
 
   return (
@@ -1750,16 +1861,21 @@ function ModalFecharCaixa({ isOpen, onClose, sessao, onConfirmar }) {
         />
 
         <Textarea
-          label="Observação (opcional)"
+          label={exigeObservacao ? 'Observação (obrigatória)' : 'Observação (opcional)'}
           value={observacao}
           onChange={(e) => setObservacao(e.target.value)}
           rows={2}
+          maxLength={2000}
           placeholder="Anote algo se a diferença tiver explicação..."
+          required={exigeObservacao}
+          hint={exigeObservacao
+            ? `Diferença acima de ${fmtBRL(LIMITE_DIFERENCA_CAIXA)}: explique o motivo (mínimo 3 caracteres).`
+            : null}
         />
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" type="button" onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" type="submit" icon={Lock}>Fechar caixa</Button>
+          <Button variant="primary" type="submit" icon={Lock} loading={enviando} disabled={!observacaoOk}>Fechar caixa</Button>
         </div>
       </form>
     </Modal>
@@ -1938,11 +2054,22 @@ function ModalContaPagar({ isOpen, onClose, conta, categorias, onSalvar }) {
     observacoes: conta?.observacoes || '',
   }));
 
+  const [enviando, enviar] = useEnvio();
   const handleSubmit = (e) => {
     e.preventDefault();
-    const valor = parseFloat(form.valorPadrao);
-    if (!form.nome.trim() || Number.isNaN(valor) || valor < 0) {
+    const valor = Number(String(form.valorPadrao).replace(',', '.'));
+    if (!form.nome.trim() || !Number.isFinite(valor) || valor < 0) {
       alert('Preencha nome e valor padrão corretamente.');
+      return;
+    }
+    const dia = form.diaVencimento === '' ? null : Number(form.diaVencimento);
+    if (dia !== null && !(Number.isInteger(dia) && dia >= 1 && dia <= 31)) {
+      alert('Dia do vencimento deve ser de 1 a 31.');
+      return;
+    }
+    const mesNum = form.mesVencimento === '' ? null : Number(form.mesVencimento);
+    if (form.periodicidade === 'ANUAL' && mesNum !== null && !(Number.isInteger(mesNum) && mesNum >= 1 && mesNum <= 12)) {
+      alert('Mês do vencimento deve ser de 1 a 12.');
       return;
     }
     const dados = {
@@ -1950,13 +2077,12 @@ function ModalContaPagar({ isOpen, onClose, conta, categorias, onSalvar }) {
       valorPadrao: valor,
       categoriaId: form.categoriaId || null,
       periodicidade: form.periodicidade,
-      diaVencimento: form.diaVencimento ? parseInt(form.diaVencimento, 10) : null,
-      mesVencimento: form.periodicidade === 'ANUAL' && form.mesVencimento
-        ? parseInt(form.mesVencimento, 10) : null,
+      diaVencimento: dia,
+      mesVencimento: form.periodicidade === 'ANUAL' ? mesNum : null,
       observacoes: form.observacoes.trim() || null,
     };
     if (ehEdicao) dados.id = conta.id;
-    onSalvar(dados);
+    enviar(() => onSalvar(dados));
   };
 
   return (
@@ -1985,7 +2111,7 @@ function ModalContaPagar({ isOpen, onClose, conta, categorias, onSalvar }) {
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" type="button" onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" type="submit">{ehEdicao ? 'Salvar alterações' : 'Cadastrar'}</Button>
+          <Button variant="primary" type="submit" loading={enviando}>{ehEdicao ? 'Salvar alterações' : 'Cadastrar'}</Button>
         </div>
       </form>
     </Modal>
@@ -2017,16 +2143,17 @@ function ModalPagarConta({ isOpen, onClose, contaSelecionada, contas, sessaoCaix
     }
   };
 
+  const [enviando, enviar] = useEnvio();
   const handleSubmit = (e) => {
     e.preventDefault();
-    const v = parseFloat(valor);
-    if (!conta || Number.isNaN(v) || v <= 0) {
+    const v = Number(String(valor).replace(',', '.'));
+    if (!conta || !Number.isFinite(v) || v <= 0) {
       alert('Selecione a conta e informe um valor > 0.');
       return;
     }
     // Passa a conta resolvida (pré-selecionada ou escolhida no combobox)
     // pra o handler do pai não precisar adivinhar.
-    onConfirmar({ conta, valor: v, motivo: motivo.trim() || undefined, tirarDoCaixa });
+    enviar(() => onConfirmar({ conta, valor: v, motivo: motivo.trim() || undefined, tirarDoCaixa }));
   };
 
   return (
@@ -2108,7 +2235,7 @@ function ModalPagarConta({ isOpen, onClose, contaSelecionada, contas, sessaoCaix
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" type="button" onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" type="submit" disabled={tirarDoCaixa && !sessaoCaixaAberta}>Confirmar pagamento</Button>
+          <Button variant="primary" type="submit" loading={enviando} disabled={tirarDoCaixa && !sessaoCaixaAberta}>Confirmar pagamento</Button>
         </div>
       </form>
     </Modal>
@@ -2124,6 +2251,7 @@ function ModalMovimentacaoCaixa({ isOpen, tipo, onClose, onConfirmar }) {
   // O pai troca a `key` a cada abertura, entao os campos ja nascem limpos.
   const [valor, setValor] = useState('');
   const [motivo, setMotivo] = useState('');
+  const [enviando, enviar] = useEnvio();
 
   if (!tipo) return null;
 
@@ -2132,13 +2260,13 @@ function ModalMovimentacaoCaixa({ isOpen, tipo, onClose, onConfirmar }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    const v = parseFloat(valor);
-    if (Number.isNaN(v) || v <= 0) {
+    const v = Number(String(valor).replace(',', '.'));
+    if (!Number.isFinite(v) || v <= 0) {
       alert('Valor precisa ser > 0.');
       return;
     }
     if (!motivoValido) return;
-    onConfirmar({ valor: v, motivo: motivo.trim() });
+    enviar(() => onConfirmar({ valor: v, motivo: motivo.trim() }));
   };
 
   return (
@@ -2189,9 +2317,48 @@ function ModalMovimentacaoCaixa({ isOpen, tipo, onClose, onConfirmar }) {
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" type="button" onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" type="submit" disabled={!motivoValido}>
+          <Button variant="primary" type="submit" disabled={!motivoValido} loading={enviando}>
             Confirmar
           </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// =====================================================================
+// MODAL: excluir categoria em uso (escolher a substituta)
+// =====================================================================
+function ModalSubstituirCategoria({ isOpen, onClose, cat, mensagem, categorias, onConfirmar }) {
+  const [novaId, setNovaId] = useState('');
+  const [enviando, enviar] = useEnvio();
+  if (!cat) return null;
+  const opcoes = categorias.filter((c) => c.id !== cat.id && c.tipo === cat.tipo);
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!novaId) return;
+    enviar(() => onConfirmar(novaId));
+  };
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Categoria em uso" description={mensagem} size="md">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {opcoes.length === 0 ? (
+          <p className="m-0 text-sm text-[var(--text-secondary)]">
+            Não há outra categoria de {cat.tipo === 'RECEITA' ? 'receita' : 'despesa'} para ficar no lugar. Crie uma antes de excluir esta.
+          </p>
+        ) : (
+          <Select
+            label={`Trocar "${cat.nome}" por`}
+            value={novaId}
+            onChange={(e) => setNovaId(e.target.value)}
+            placeholder="Escolha a categoria..."
+            options={opcoes.map((c) => ({ value: c.id, label: c.nome }))}
+            hint="Lançamentos, produtos e contas a pagar passam para a categoria escolhida."
+          />
+        )}
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="secondary" type="button" onClick={onClose}>Voltar</Button>
+          <Button variant="danger" type="submit" icon={Trash2} disabled={!novaId} loading={enviando}>Trocar e excluir</Button>
         </div>
       </form>
     </Modal>
@@ -2208,16 +2375,17 @@ function ModalMovimentacaoCaixa({ isOpen, tipo, onClose, onConfirmar }) {
 function ModalCancelar({ isOpen, onClose, lanc, onConfirmar }) {
   // O pai troca a `key` a cada abertura, entao o motivo ja nasce vazio.
   const [motivo, setMotivo] = useState('');
+  const [enviando, enviar] = useEnvio();
 
   if (!lanc) return null;
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!motivo.trim()) {
-      alert('Explique o motivo do cancelamento pra rastrear depois.');
+    if (motivo.trim().length < 3) {
+      alert('Explique o motivo do cancelamento (mínimo 3 caracteres).');
       return;
     }
-    onConfirmar(motivo.trim());
+    enviar(() => onConfirmar(motivo.trim()));
   };
 
   return (
@@ -2248,7 +2416,7 @@ function ModalCancelar({ isOpen, onClose, lanc, onConfirmar }) {
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" type="button" onClick={onClose}>Voltar</Button>
-          <Button variant="danger" type="submit" icon={XCircle}>Confirmar cancelamento</Button>
+          <Button variant="danger" type="submit" icon={XCircle} loading={enviando}>Confirmar cancelamento</Button>
         </div>
       </form>
     </Modal>

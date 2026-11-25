@@ -20,6 +20,15 @@ const TD = 'px-4 py-2.5 border-b border-[var(--border-subtle)]';
 
 const ITEM_VAZIO = { variacaoId: '', quantidade: '', custoUnitario: '' };
 
+// "10,50" -> 10.5 (parseFloat cortava em 10). So pra conta da tela; o
+// servidor recebe o texto e valida de novo (quantidade inteira, custo >= 0).
+const numeroBR = (v) => {
+  const t = String(v ?? '').trim();
+  if (!t) return NaN;
+  const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t);
+  return Number.isFinite(n) ? n : NaN;
+};
+
 function normalizarTexto(s) {
   return String(s || '')
     .normalize('NFD')
@@ -310,7 +319,7 @@ function NovaNotaDrawer({ aberto, xmlInicial, onClose, aoSalvar }) {
   }, [aberto, xmlInicial]);
 
   const total = useMemo(
-    () => itens.reduce((s, it) => s + (parseFloat(it.quantidade) || 0) * (parseFloat(it.custoUnitario) || 0), 0),
+    () => itens.reduce((s, it) => s + (numeroBR(it.quantidade) || 0) * (numeroBR(it.custoUnitario) || 0), 0),
     [itens],
   );
 
@@ -318,11 +327,15 @@ function NovaNotaDrawer({ aberto, xmlInicial, onClose, aoSalvar }) {
 
   const salvar = async () => {
     const validos = itens.filter(
-      (it) => it.variacaoId && parseFloat(it.quantidade) > 0 && it.custoUnitario !== '' && Number(it.custoUnitario) >= 0,
+      (it) => it.variacaoId && numeroBR(it.quantidade) > 0 && it.custoUnitario !== '' && numeroBR(it.custoUnitario) >= 0,
     );
     if (validos.length === 0) {
       return toast.error('Adicione ao menos um item com produto, quantidade e custo.');
     }
+    if (validos.some((it) => !Number.isInteger(numeroBR(it.quantidade)))) {
+      return toast.error('A quantidade é em unidades: use um número inteiro.');
+    }
+    if (salvando) return;
     setSalvando(true);
     try {
       await notaCompraService.criar({
@@ -333,8 +346,8 @@ function NovaNotaDrawer({ aberto, xmlInicial, onClose, aoSalvar }) {
         pago: form.pago,
         itens: validos.map((it) => ({
           variacaoId: it.variacaoId,
-          quantidade: parseInt(it.quantidade, 10),
-          custoUnitario: parseFloat(it.custoUnitario),
+          quantidade: numeroBR(it.quantidade),
+          custoUnitario: numeroBR(it.custoUnitario),
         })),
       });
       toast.success('Entrada registrada. Estoque e custos atualizados.');
@@ -466,7 +479,7 @@ function NovaNotaDrawer({ aberto, xmlInicial, onClose, aoSalvar }) {
               </div>
 
               {itens.map((it, i) => {
-                const sub = (parseFloat(it.quantidade) || 0) * (parseFloat(it.custoUnitario) || 0);
+                const sub = (numeroBR(it.quantidade) || 0) * (numeroBR(it.custoUnitario) || 0);
                 return (
                   <div key={i} className="grid grid-cols-12 gap-2 items-center">
                     <div className="col-span-12 md:col-span-6">

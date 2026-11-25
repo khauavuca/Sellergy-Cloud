@@ -7,8 +7,11 @@ const {
   requerModuloLiberado,
   requerPermissao,
   requerPapelPrivilegiado,
-  escopoDoUsuario,
 } = require('../middlewares/permissoes.middleware');
+const { especialistaDoEscopo, escopoAgendaWhere } = require('../agenda/escopoAgenda');
+const { lerCamposAgendamento } = require('../agenda/validacaoAgendamento');
+const { desfazerConclusao } = require('../agenda/vendaAtendimento');
+const { partesBRT, horaTexto, mesmoTelefone, avisosDoHorario } = require('../agenda/utilAgenda');
 const { lockClienteAdvisory } = require('../utils/locks');
 const { temRecurso, CAMPOS_ASSINATURA } = require('../planos/recursos');
 const { aoLiberarHorario } = require('../agenda/eventosAgenda');
@@ -17,6 +20,8 @@ const pacotes = require('../agenda/pacotes');
 const { provedorAtivo, leadPorTelefone } = require('../services/pagamentoService');
 const { cpfCnpjValido } = require('../services/pagadorCobranca');
 const { gerarComissaoAtendimento } = require('../agenda/comissoes');
+const { lerDinheiro } = require('../utils/numero');
+const { proximoNumero: proximoNumeroVenda } = require('../services/vendaService');
 
 // Mesmo limite usado no VendaController/tool — cobre colisao da unique
 // [clienteId, numero] quando 2+ vendas chegam no mesmo ms.
@@ -31,29 +36,39 @@ function tenantFiltro(req) {
   return { clienteId: req.usuario.clienteId };
 }
 
-// Escopo da AGENDA: ADMIN/CLIENT/ADMINISTRADOR veem todos os agendamentos do
-// tenant; um usuario com escopo PROPRIAS (ex.: especialista que tem login) ve
-// SO os agendamentos do especialista vinculado a ele.
-async function escopoAgendaWhere(req) {
-  const u = req.usuario;
-  if (ehAdmin(u) || u.perfil === 'CLIENT' || u.perfil === 'ADMINISTRADOR') return {};
-  const dados = await prisma.usuario.findUnique({
-    where: { id: u.id },
-    select: { permissoes: true, especialista: { select: { id: true } } },
-  });
-  const escopo = escopoDoUsuario(u, dados?.permissoes || {}, 'AGENDA');
-  if (escopo === 'TODAS') return {};
-  // PROPRIAS: filtra pelo especialista do usuario; sem especialista, nao ve nada.
-  return { especialistaId: dados?.especialista?.id || '__sem_especialista__' };
-}
-
+// Escopo da AGENDA (agenda/escopoAgenda.js): ADMIN/CLIENT/ADMINISTRADOR veem
+// todos os agendamentos do tenant; um usuario com escopo PROPRIAS (ex.:
+// especialista que tem login) ve e mexe SO nos do especialista dele. Fora do
+// escopo = 404 (nao revela que existe).
 async function agendamentoDoTenant(id, req) {
+  if (typeof id !== 'string' || !id) return null;
   const filtro = ehAdmin(req.usuario) ? { id } : { id, clienteId: req.usuario.clienteId };
   return prisma.agendamento.findFirst({
-    where: filtro,
+    where: { ...filtro, ...(await escopoAgendaWhere(req)) },
     select: { id: true, clienteId: true, data: true, status: true },
   });
 }
+
+const erroHttp = (status, erro, extra = {}) => Object.assign(new Error(erro), { status, extra });
+
+function responderErroHttp(res, e) {
+  if (!e?.status) return false;
+  res.status(e.status).json({ erro: e.message, ...(e.extra || {}) });
+  return true;
+}
+
+// Avisos (passado / fora do expediente) pedem confirmacao: a tela mostra e
+// reenvia com confirmarAvisos=true. Devolve os avisos que ainda faltam confirmar.
+async function avisosPendentes({ clienteId, especialistaId, inicio, duracao, confirmado }) {
+  if (confirmado === true) return [];
+  const [cliente, esp] = await Promise.all([
+    prisma.cliente.findUnique({ where: { id: clienteId }, select: { horarioFuncionamento: true } }),
+    especialistaId ? prisma.especialista.findFirst({ where: { id: especialistaId, clienteId }, select: { jornada: true } }) : null,
+  ]);
+  return avisosDoHorario({ inicio, duracao, jornada: esp?.jornada || null, horarioFuncionamento: cliente?.horarioFuncionamento || null });
+}
+
+const METODOS_PAGAMENTO = ['DINHEIRO', 'PIX', 'CARTAO_CREDITO', 'CARTAO_DEBITO', 'BOLETO', 'TRANSFERENCIA'];
 
 // =====================================================================
 // REGRA DE IMUTABILIDADE
@@ -145,21 +160,26 @@ function calcularAlteracoes(antes, depois, campos) {
 //
 // Retorna { erro: string, conflito: agendamento } ou null se OK.
 // Aceita `excluirId` pra edicao (nao bate contra o proprio).
-async function validarConflitosAgenda({ clienteId, dataNova, duracaoNova, telefone, excluirId = null, especialistaId = null }) {
+async function validarConflitosAgenda({ clienteId, dataNova, duracaoNova, telefone, excluirId = null, especialistaId = null, client = prisma }) {
   // Normaliza telefone — só digitos
   const telefoneNorm = (telefone || '').replace(/\D/g, '');
 
-  // Janela do dia (00:00 — 23:59:59) baseado na data do novo agendamento
-  const inicioDia = new Date(dataNova);
-  inicioDia.setHours(0, 0, 0, 0);
-  const fimDia = new Date(dataNova);
-  fimDia.setHours(23, 59, 59, 999);
+  // Dia do novo agendamento no horario de Brasilia (cliente duplicado no dia).
+  const ymd = partesBRT(dataNova).ymd;
+  const inicioDia = new Date(`${ymd}T00:00:00.000-03:00`);
+  const fimDia = new Date(`${ymd}T23:59:59.999-03:00`);
+  const fimNovo = new Date(dataNova.getTime() + (duracaoNova || 30) * 60000);
 
-  // Pega todos os agendamentos do dia, exceto CANCELED.
-  const existentes = await prisma.agendamento.findMany({
+  // Janela de busca: o dia inteiro E tudo que pode encostar no intervalo novo,
+  // inclusive o que comecou no dia anterior e atravessa a meia-noite
+  // (duracao maxima 12 h, buscamos 24 h pra tras).
+  const desde = new Date(Math.min(inicioDia.getTime(), dataNova.getTime() - 24 * 3600000));
+  const ate = new Date(Math.max(fimDia.getTime(), fimNovo.getTime()));
+
+  const existentes = await client.agendamento.findMany({
     where: {
       clienteId,
-      data: { gte: inicioDia, lte: fimDia },
+      data: { gte: desde, lte: ate },
       status: { not: 'CANCELED' },
       ...(excluirId ? { NOT: { id: excluirId } } : {}),
     },
@@ -168,8 +188,6 @@ async function validarConflitosAgenda({ clienteId, dataNova, duracaoNova, telefo
       data: true, duracao: true, servico: true, status: true, especialistaId: true,
     },
   });
-
-  const fimNovo = new Date(dataNova.getTime() + (duracaoNova || 30) * 60000);
 
   // 1. Conflito de horario — so conta quando e o MESMO recurso (mesmo
   // especialista, ou ambos sem especialista = recurso unico da loja).
@@ -180,7 +198,7 @@ async function validarConflitosAgenda({ clienteId, dataNova, duracaoNova, telefo
     const inicio = new Date(e.data);
     const fim = new Date(inicio.getTime() + (e.duracao || 30) * 60000);
     if (dataNova < fim && fimNovo > inicio) {
-      const hh = inicio.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const hh = horaTexto(inicio);
       return {
         erro: `Conflito de horário: já existe agendamento de ${e.nomeCliente || 'cliente'} às ${hh} (${e.duracao || 30}min). Escolha outro horário.`,
         conflito: e,
@@ -191,11 +209,13 @@ async function validarConflitosAgenda({ clienteId, dataNova, duracaoNova, telefo
   // 2. Cliente duplicado no dia (mesmo telefone)
   if (telefoneNorm && telefoneNorm.length >= 8) {
     const duplicado = existentes.find((e) => {
+      const d = new Date(e.data);
+      if (d < inicioDia || d > fimDia) return false;
       const tel = (e.telefoneCliente || '').replace(/\D/g, '');
-      return tel === telefoneNorm;
+      return tel === telefoneNorm || mesmoTelefone(tel, telefoneNorm);
     });
     if (duplicado) {
-      const hh = new Date(duplicado.data).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const hh = horaTexto(duplicado.data);
       return {
         erro: `Este cliente já tem agendamento neste dia às ${hh}. Edite o existente em vez de criar outro.`,
         conflito: duplicado,
@@ -320,7 +340,8 @@ roteador.get('/pre-agendamento', requerPermissao('AGENDA', 'visualizar'), async 
     const telefone = typeof req.query.telefone === 'string' ? req.query.telefone : null;
     const leadId = typeof req.query.leadId === 'string' && req.query.leadId ? req.query.leadId : null;
     const produtoId = typeof req.query.produtoId === 'string' && req.query.produtoId ? req.query.produtoId : null;
-    const preco = Number(req.query.preco) || 0;
+    const precoLido = lerDinheiro(req.query.preco ?? 0, { min: 0, max: 100000 });
+    const preco = precoLido.ok ? precoLido.valor : 0;
 
     const cliente = await prisma.cliente.findUnique({ where: { id: clienteId }, select: CAMPOS_ASSINATURA });
     const pacotesNoPlano = cliente ? temRecurso(cliente, 'pacotes') : false;
@@ -378,6 +399,16 @@ roteador.get('/', requerPermissao('AGENDA', 'visualizar'), async (req, res) => {
 
     // PREFERIDO: front manda inicio/fim em ISO ja calculados no fuso do
     // usuario. Backend so passa adiante — zero risco de TZ shift.
+    const invalida = (v) => v !== undefined && (typeof v !== 'string' || Number.isNaN(new Date(v).getTime()));
+    if (invalida(inicio) || invalida(fim) || invalida(date)) {
+      return res.status(422).json({ erro: 'Período inválido.', campos: ['inicio', 'fim'] });
+    }
+    if (month !== undefined || year !== undefined) {
+      const m = Number(month); const y = Number(year);
+      if (!Number.isInteger(m) || m < 1 || m > 12 || !Number.isInteger(y) || y < 1900 || y > 2100) {
+        return res.status(422).json({ erro: 'Mês ou ano inválido.', campos: ['month', 'year'] });
+      }
+    }
     if (inicio && fim) {
       where.data = { gte: new Date(inicio), lte: new Date(fim) };
     } else if (date) {
@@ -426,82 +457,73 @@ roteador.get('/', requerPermissao('AGENDA', 'visualizar'), async (req, res) => {
   }
 });
 
+// Criar agendamento manual. Conferencia de conflito + gravacao numa transacao
+// com trava do negocio (pg_advisory_xact_lock): dois cliques/pedidos ao mesmo
+// tempo no mesmo horario e profissional, so um grava (igual ao link publico).
 roteador.post('/', requerPermissao('AGENDA', 'criar'), async (req, res) => {
   try {
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
     let clienteId = req.usuario.clienteId;
     const {
-      leadId, nomeCliente, telefoneCliente, data, duracao,
-      servico, preco, observacoes, origem, especialistaId,
-      clienteId: bodyClienteId,
+      leadId, especialistaId, clienteId: bodyClienteId,
       // fase 2: servico do catalogo (sinal por servico), pacote e sinal
       produtoId, pacoteClienteId, cobrarSinal,
       // Asaas pede CPF/CNPJ de quem paga o sinal (quando o lead nao tem)
       cpfCnpj,
-    } = req.body;
+    } = body;
 
     // Apenas ADMIN pode criar para outro tenant.
     if (ehAdmin(req.usuario)) {
-      if (bodyClienteId) {
+      if (typeof bodyClienteId === 'string' && bodyClienteId) {
         clienteId = bodyClienteId;
-      } else if (leadId) {
-        const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+      } else if (typeof leadId === 'string' && leadId) {
+        const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { clienteId: true } });
         if (lead) clienteId = lead.clienteId;
       }
     }
+    if (!clienteId) return res.status(403).json({ erro: 'Acao nao permitida.' });
 
-    if (!clienteId) {
-      return res.status(403).json({ erro: 'Acao nao permitida.' });
+    const lido = lerCamposAgendamento(body);
+    if (lido.erro) return res.status(422).json({ erro: lido.erro, campos: lido.campos });
+    const campos = lido.data;
+
+    // Lead (opcional): do mesmo negocio. De outro negocio = 404.
+    let leadIdValidado = null;
+    if (leadId !== undefined && leadId !== null && leadId !== '') {
+      if (typeof leadId !== 'string') return res.status(422).json({ erro: 'Cliente inválida.', campos: ['leadId'] });
+      const lead = await prisma.lead.findFirst({ where: { id: leadId, clienteId }, select: { id: true } });
+      if (!lead) return res.status(404).json({ erro: 'Cliente não encontrada.', campos: ['leadId'] });
+      leadIdValidado = lead.id;
     }
 
-    // Verifica se o leadId, se fornecido, pertence ao mesmo tenant.
-    if (leadId) {
-      const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { clienteId: true } });
-      if (!lead || (lead.clienteId !== clienteId && !ehAdmin(req.usuario))) {
-        return res.status(400).json({ erro: 'Lead invalido para este tenant.' });
-      }
+    // Escopo "so os proprios": so marca na propria agenda.
+    const espEscopo = await especialistaDoEscopo(req);
+    if (espEscopo && especialistaId !== espEscopo) {
+      return res.status(403).json({ erro: 'Você só pode marcar horários na sua própria agenda.', campos: ['especialistaId'] });
     }
 
-    // Especialista (opcional): precisa ser do mesmo tenant.
+    // Especialista (opcional): do mesmo negocio.
     let especialistaIdValidado = null;
-    if (especialistaId) {
-      const esp = await prisma.especialista.findFirst({
-        where: { id: especialistaId, clienteId }, select: { id: true },
-      });
-      if (!esp) return res.status(400).json({ erro: 'Especialista invalido para este tenant.' });
+    if (especialistaId !== undefined && especialistaId !== null && especialistaId !== '') {
+      if (typeof especialistaId !== 'string') return res.status(422).json({ erro: 'Profissional inválido.', campos: ['especialistaId'] });
+      const esp = await prisma.especialista.findFirst({ where: { id: especialistaId, clienteId }, select: { id: true } });
+      if (!esp) return res.status(404).json({ erro: 'Profissional não encontrado.', campos: ['especialistaId'] });
       especialistaIdValidado = esp.id;
     }
 
-    const dataNova = new Date(data);
-    const duracaoNova = parseInt(duracao) || 30;
-
-    // Validacao: conflito de horario + cliente duplicado no dia
-    const conflito = await validarConflitosAgenda({
-      clienteId,
-      dataNova,
-      duracaoNova,
-      telefone: telefoneCliente,
-      especialistaId: especialistaIdValidado,
+    // Passado / fora do expediente: avisa e pede confirmacao.
+    const avisos = await avisosPendentes({
+      clienteId, especialistaId: especialistaIdValidado, inicio: campos.data, duracao: campos.duracao, confirmado: body.confirmarAvisos,
     });
-    if (conflito) {
-      return res.status(422).json({ erro: conflito.erro, conflito: conflito.conflito });
+    if (avisos.length) {
+      return res.status(422).json({ erro: `${avisos.join(' ')} Confirme para marcar mesmo assim.`, codigo: 'CONFIRMAR_AVISOS', avisos, campos: ['data'] });
     }
 
-    // Pacote (opcional): da cliente, ativo, do servico, com sessao livre.
-    let pacoteIdValidado = null;
-    if (pacoteClienteId) {
+    if (pacoteClienteId !== undefined && pacoteClienteId !== null && pacoteClienteId !== '') {
       if (typeof pacoteClienteId !== 'string') return res.status(422).json({ erro: 'Pacote inválido.', campos: ['pacoteClienteId'] });
       const dadosPlano = await prisma.cliente.findUnique({ where: { id: clienteId }, select: CAMPOS_ASSINATURA });
       if (!dadosPlano || !temRecurso(dadosPlano, 'pacotes')) {
         return res.status(403).json({ erro: 'Seu plano não inclui pacotes de sessões.', codigo: 'PLANO_SEM_RECURSO', recurso: 'pacotes' });
-      }
-      try {
-        const p = await pacotes.validarUsoNoAgendamento({
-          clienteId, pacoteClienteId, leadId: leadId || null, telefone: telefoneCliente, servico, dataAgendamento: dataNova,
-        });
-        pacoteIdValidado = p.id;
-      } catch (e) {
-        if (e.status) return res.status(e.status).json({ erro: e.message, campos: e.campos });
-        throw e;
       }
     }
 
@@ -511,23 +533,46 @@ roteador.post('/', requerPermissao('AGENDA', 'criar'), async (req, res) => {
       produtoIdValidado = prod?.id || null;
     }
 
-    const novoAgendamento = await prisma.agendamento.create({
-      data: {
-        clienteId,
-        leadId: leadId || null,
-        especialistaId: especialistaIdValidado,
-        nomeCliente,
-        telefoneCliente,
-        data: dataNova,
-        duracao: duracaoNova,
-        servico,
-        preco: parseFloat(preco) || 0,
-        observacoes,
-        origem: origem || 'MANUAL',
-        status: 'PENDING',
-        pacoteClienteId: pacoteIdValidado,
+    const novoAgendamento = await prisma.$transaction(async (tx) => {
+      await lockClienteAdvisory(tx, clienteId);
+      const conflito = await validarConflitosAgenda({
+        clienteId, dataNova: campos.data, duracaoNova: campos.duracao, telefone: campos.telefoneCliente,
+        especialistaId: especialistaIdValidado, client: tx,
+      });
+      if (conflito) throw erroHttp(422, conflito.erro, { conflito: conflito.conflito });
+
+      // Pacote: conferido com a trava, pra 2 pedidos nao reservarem a mesma sessao.
+      let pacoteIdValidado = null;
+      if (typeof pacoteClienteId === 'string' && pacoteClienteId) {
+        try {
+          const p = await pacotes.validarUsoNoAgendamento({
+            clienteId, pacoteClienteId, leadId: leadIdValidado, telefone: campos.telefoneCliente, servico: campos.servico, dataAgendamento: campos.data,
+          });
+          pacoteIdValidado = p.id;
+        } catch (e) {
+          if (e.status) throw erroHttp(e.status, e.message, { campos: e.campos });
+          throw e;
+        }
       }
-    });
+
+      return tx.agendamento.create({
+        data: {
+          clienteId,
+          leadId: leadIdValidado,
+          especialistaId: especialistaIdValidado,
+          nomeCliente: campos.nomeCliente,
+          telefoneCliente: campos.telefoneCliente ?? null,
+          data: campos.data,
+          duracao: campos.duracao,
+          servico: campos.servico ?? null,
+          preco: campos.preco,
+          observacoes: campos.observacoes ?? null,
+          origem: campos.origem,
+          status: 'PENDING',
+          pacoteClienteId: pacoteIdValidado,
+        },
+      });
+    }, { timeout: 15000 });
 
     // Log: criacao do agendamento (snapshot inicial nas alteracoes pra contexto)
     await logHistorico({
@@ -535,27 +580,27 @@ roteador.post('/', requerPermissao('AGENDA', 'criar'), async (req, res) => {
       acao: 'CRIADO',
       alteracoes: {
         snapshot: {
-          nomeCliente, servico, data: dataNova.toISOString(),
-          duracao: duracaoNova, preco: parseFloat(preco) || 0,
+          nomeCliente: campos.nomeCliente, servico: campos.servico ?? null, data: campos.data.toISOString(),
+          duracao: campos.duracao, preco: campos.preco,
         },
       },
       req,
-      origem: origem || 'MANUAL',
+      origem: campos.origem,
     });
 
-    if (leadId) {
+    if (leadIdValidado) {
       await prisma.historicoLead.create({
         data: {
-          leadId,
+          leadId: leadIdValidado,
           acao: 'EDITADO',
-          observacoes: `Novo agendamento criado: ${servico} em ${new Date(data).toLocaleString()}`
-        }
-      });
+          observacoes: `Novo agendamento criado: ${campos.servico || 'atendimento'} em ${campos.data.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
+        },
+      }).catch((e) => console.error('[agenda/create] historicoLead', e?.message));
     }
 
     // Sinal por Pix: so quando a equipe pediu, sem pacote e com valor.
     let sinalResultado = null;
-    if (cobrarSinal === true && !pacoteIdValidado) {
+    if (cobrarSinal === true && !novoAgendamento.pacoteClienteId) {
       sinalResultado = await sinal.cobrarSinal({
         agendamento: novoAgendamento, produtoId: produtoIdValidado,
         cpfCnpj: typeof cpfCnpj === 'string' ? cpfCnpj : null,
@@ -571,6 +616,7 @@ roteador.post('/', requerPermissao('AGENDA', 'criar'), async (req, res) => {
       sinalMotivo: sinalResultado && !sinalResultado.cobrado ? sinalResultado.motivo : null,
     });
   } catch (erro) {
+    if (responderErroHttp(res, erro)) return;
     console.error('[agenda/create]', erro);
     res.status(500).json({ erro: 'Erro ao salvar agendamento' });
   }
@@ -579,72 +625,103 @@ roteador.post('/', requerPermissao('AGENDA', 'criar'), async (req, res) => {
 roteador.put('/:id', requerPermissao('AGENDA', 'editar'), async (req, res) => {
   try {
     const { id } = req.params;
-    const dados = req.body;
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
 
     const existente = await agendamentoDoTenant(id, req);
     if (!existente) return res.status(404).json({ erro: 'Agendamento nao encontrado.' });
     if (ehImutavel(existente)) return bloqueioImutavel(res);
 
-    if (dados.data) dados.data = new Date(dados.data);
-    if (dados.preco) dados.preco = parseFloat(dados.preco);
-    if (dados.duracao) dados.duracao = parseInt(dados.duracao);
+    const lido = lerCamposAgendamento(body, { parcial: true });
+    if (lido.erro) return res.status(422).json({ erro: lido.erro, campos: lido.campos });
+    const dados = lido.data;
 
-    // Validacao de conflito so faz sentido se mudou data, duracao ou telefone.
-    // Pega o agendamento completo pra pegar os campos que nao vieram no body.
-    if (dados.data || dados.duracao || dados.telefoneCliente !== undefined) {
-      const atual = await prisma.agendamento.findUnique({
-        where: { id },
-        select: { data: true, duracao: true, telefoneCliente: true, clienteId: true, especialistaId: true },
-      });
-      const conflito = await validarConflitosAgenda({
-        clienteId: atual.clienteId,
-        dataNova: dados.data || atual.data,
-        duracaoNova: dados.duracao || atual.duracao,
-        telefone: dados.telefoneCliente !== undefined ? dados.telefoneCliente : atual.telefoneCliente,
-        excluirId: id, // nao bate contra ele mesmo
-        especialistaId: atual.especialistaId,
-      });
-      if (conflito) {
-        return res.status(422).json({ erro: conflito.erro, conflito: conflito.conflito });
-      }
+    // "Concluido" so pelo botao Concluir (que gera a venda e gasta a sessao).
+    if (dados.status === 'COMPLETED' && existente.status !== 'COMPLETED') {
+      return res.status(422).json({ erro: 'Para marcar como concluído, use o botão Concluir (ele lança a venda).', codigo: 'USE_CONCLUIR', campos: ['status'] });
     }
 
-    // Pega o estado antes pra calcular diff no log
     const antes = await prisma.agendamento.findUnique({
       where: { id },
       select: { ...SELECT_ANTES, observacoes: true },
     });
-    if (dados.status !== undefined && !['PENDING', 'CONFIRMED', 'CANCELED', 'COMPLETED'].includes(dados.status)) {
-      return res.status(400).json({ erro: 'Status invalido' });
+
+    // Trocar o profissional: do mesmo negocio; quem ve "so os proprios" nao troca.
+    if (body.especialistaId !== undefined) {
+      const alvo = body.especialistaId || null;
+      if (alvo !== (antes.especialistaId || null)) {
+        if (await especialistaDoEscopo(req)) {
+          return res.status(403).json({ erro: 'Você não pode passar o atendimento para outra profissional.', campos: ['especialistaId'] });
+        }
+        if (alvo !== null) {
+          if (typeof alvo !== 'string') return res.status(422).json({ erro: 'Profissional inválido.', campos: ['especialistaId'] });
+          const esp = await prisma.especialista.findFirst({ where: { id: alvo, clienteId: antes.clienteId }, select: { id: true } });
+          if (!esp) return res.status(404).json({ erro: 'Profissional não encontrado.', campos: ['especialistaId'] });
+        }
+        dados.especialistaId = alvo;
+      }
     }
 
-    const atualizado = await prisma.agendamento.update({
-      where: { id },
-      data: {
-        nomeCliente: dados.nomeCliente,
-        telefoneCliente: dados.telefoneCliente,
-        data: dados.data,
-        duracao: dados.duracao,
-        servico: dados.servico,
-        preco: dados.preco,
-        observacoes: dados.observacoes,
-        status: dados.status
-      }
-    });
+    // Atendimento concluido: o valor ja virou venda. Muda so depois de reabrir.
+    if (antes.status === 'COMPLETED' && (dados.status === undefined || dados.status === 'COMPLETED')
+      && dados.preco !== undefined && dados.preco !== antes.preco) {
+      return res.status(409).json({ erro: 'Atendimento já concluído: o valor virou venda. Reabra o atendimento antes de mudar o preço.', campos: ['preco'] });
+    }
 
-    // Diff entre estado antes e dados recebidos. Se nada mudou, nao loga
-    // (evita lixo no historico de salvar sem alterar).
+    const mudouHorario = dados.data && new Date(dados.data).getTime() !== new Date(antes.data).getTime();
+    if (mudouHorario || (dados.duracao && dados.duracao !== antes.duracao)) {
+      const avisos = await avisosPendentes({
+        clienteId: antes.clienteId,
+        especialistaId: dados.especialistaId !== undefined ? dados.especialistaId : antes.especialistaId,
+        inicio: dados.data || antes.data, duracao: dados.duracao || antes.duracao, confirmado: body.confirmarAvisos,
+      });
+      if (avisos.length) {
+        return res.status(422).json({ erro: `${avisos.join(' ')} Confirme para salvar mesmo assim.`, codigo: 'CONFIRMAR_AVISOS', avisos, campos: ['data'] });
+      }
+    }
+
+    const { atualizado, desfeito } = await prisma.$transaction(async (tx) => {
+      await lockClienteAdvisory(tx, antes.clienteId);
+      const atual = await tx.agendamento.findUnique({ where: { id }, select: { status: true } });
+      if (!atual) throw erroHttp(404, 'Agendamento nao encontrado.');
+      if (atual.status !== antes.status) throw erroHttp(409, 'Esse agendamento acabou de mudar. Recarregue e tente de novo.');
+
+      const precisaConferir = dados.data || dados.duracao || dados.telefoneCliente !== undefined || dados.especialistaId !== undefined;
+      const statusFinal = dados.status || antes.status;
+      if (precisaConferir && statusFinal !== 'CANCELED') {
+        const conflito = await validarConflitosAgenda({
+          clienteId: antes.clienteId,
+          dataNova: dados.data || antes.data,
+          duracaoNova: dados.duracao || antes.duracao,
+          telefone: dados.telefoneCliente !== undefined ? dados.telefoneCliente : antes.telefoneCliente,
+          excluirId: id,
+          especialistaId: dados.especialistaId !== undefined ? dados.especialistaId : antes.especialistaId,
+          client: tx,
+        });
+        if (conflito) throw erroHttp(422, conflito.erro, { conflito: conflito.conflito });
+      }
+
+      const upd = await tx.agendamento.update({ where: { id }, data: dados });
+      let desfeitoTx = null;
+      if (antes.status === 'COMPLETED' && upd.status !== 'COMPLETED') {
+        desfeitoTx = await desfazerConclusao(tx, {
+          agendamentoId: id, clienteId: antes.clienteId, usuarioId: req.usuario?.id || null,
+          motivo: upd.status === 'CANCELED' ? 'Atendimento cancelado na agenda' : 'Atendimento reaberto na agenda',
+        });
+      }
+      return { atualizado: upd, desfeito: desfeitoTx };
+    }, { timeout: 15000 });
+
+    // Diff entre estado antes e dados gravados. Se nada mudou, nao loga.
     const alteracoes = calcularAlteracoes(antes, dados, [
       'nomeCliente', 'telefoneCliente', 'data', 'duracao',
-      'servico', 'preco', 'observacoes', 'status',
+      'servico', 'preco', 'observacoes', 'status', 'especialistaId',
     ]);
     if (alteracoes) {
-      // Se a unica mudanca foi status, marcamos como STATUS_MUDADO pra UX
       const ehSoStatus = Object.keys(alteracoes).length === 1 && alteracoes.status;
       await logHistorico({
         agendamentoId: id,
         acao: ehSoStatus ? 'STATUS_MUDADO' : 'EDITADO',
-        alteracoes,
+        alteracoes: desfeito?.vendaCancelada ? { ...alteracoes, vendaCancelada: desfeito.vendaCancelada.numero } : alteracoes,
         req,
       });
     }
@@ -657,8 +734,9 @@ roteador.put('/:id', requerPermissao('AGENDA', 'editar'), async (req, res) => {
       await aoLiberarHorario(antes, { cancelado: cancelou });
     }
 
-    res.json(atualizado);
+    res.json({ ...atualizado, vendaCancelada: desfeito?.vendaCancelada || null });
   } catch (erro) {
+    if (responderErroHttp(res, erro)) return;
     console.error('[agenda/update]', erro);
     res.status(500).json({ erro: 'Erro ao atualizar agendamento' });
   }
@@ -672,31 +750,44 @@ roteador.delete('/:id', requerPermissao('AGENDA', 'excluir'), async (req, res) =
     if (!existente) return res.status(404).json({ erro: 'Agendamento nao encontrado.' });
     if (ehImutavel(existente)) return bloqueioImutavel(res);
 
-    // Snapshot completo pra preservar no log apos delete. SET NULL no FK
-    // mantem a linha do historico viva; o snapshot identifica o que foi.
-    const snapshot = await prisma.agendamento.findUnique({
-      where: { id },
-      select: {
-        nomeCliente: true, telefoneCliente: true, data: true, duracao: true,
-        servico: true, preco: true, status: true, observacoes: true,
-      },
-    });
+    // Tudo numa transacao com trava: clique duplo vira 1x 204 e o resto 404
+    // (antes dava 500). Atendimento concluido excluido cancela a venda junto.
+    const r = await prisma.$transaction(async (tx) => {
+      await lockClienteAdvisory(tx, existente.clienteId);
+      const antes = await tx.agendamento.findFirst({
+        where: { id, clienteId: existente.clienteId },
+        select: { ...SELECT_ANTES, observacoes: true },
+      });
+      if (!antes) return null;
+      // Loga ANTES do delete pra inserir com agendamentoId ainda valido;
+      // o SetNull rebaixa depois sem perder a linha.
+      await tx.historicoAgendamento.create({
+        data: {
+          agendamentoId: id, acao: 'EXCLUIDO',
+          alteracoes: { snapshot: {
+            nomeCliente: antes.nomeCliente, telefoneCliente: antes.telefoneCliente, data: antes.data.toISOString(),
+            duracao: antes.duracao, servico: antes.servico, preco: antes.preco, status: antes.status, observacoes: antes.observacoes,
+          } },
+          usuarioId: req.usuario?.id || null, usuarioNome: req.usuario?.nome || null,
+        },
+      });
+      let desfeito = null;
+      if (antes.status === 'COMPLETED') {
+        desfeito = await desfazerConclusao(tx, {
+          agendamentoId: id, clienteId: existente.clienteId, usuarioId: req.usuario?.id || null, motivo: 'Atendimento excluído na agenda',
+        });
+      }
+      const del = await tx.agendamento.deleteMany({ where: { id, clienteId: existente.clienteId } });
+      if (!del.count) return null;
+      return { antes, desfeito };
+    }, { timeout: 15000 });
+    if (!r) return res.status(404).json({ erro: 'Agendamento nao encontrado.' });
 
-    // Loga ANTES do delete pra inserir com agendamentoId ainda valido;
-    // o SetNull rebaixa depois sem perder a linha.
-    await logHistorico({
-      agendamentoId: id,
-      acao: 'EXCLUIDO',
-      alteracoes: { snapshot: { ...snapshot, data: snapshot?.data?.toISOString() } },
-      req,
-    });
-
-    const antesFase2 = await prisma.agendamento.findUnique({ where: { id }, select: SELECT_ANTES });
-    await prisma.agendamento.delete({ where: { id } });
     // Fase 2: horario futuro excluido vira vaga; concluido excluido estorna.
-    if (antesFase2 && antesFase2.status !== 'CANCELED') await aoLiberarHorario(antesFase2, { cancelado: true });
+    if (r.antes.status !== 'CANCELED') await aoLiberarHorario(r.antes, { cancelado: true });
     res.status(204).send();
   } catch (erro) {
+    if (responderErroHttp(res, erro)) return;
     console.error('[agenda/delete]', erro);
     res.status(500).json({ erro: 'Erro ao excluir agendamento' });
   }
@@ -705,7 +796,7 @@ roteador.delete('/:id', requerPermissao('AGENDA', 'excluir'), async (req, res) =
 roteador.patch('/:id/status', requerPermissao('AGENDA', 'editar'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const status = req.body?.status;
 
     const statusValidos = ['PENDING', 'CONFIRMED', 'CANCELED', 'COMPLETED'];
     if (!statusValidos.includes(status)) {
@@ -714,34 +805,52 @@ roteador.patch('/:id/status', requerPermissao('AGENDA', 'editar'), async (req, r
 
     const existente = await agendamentoDoTenant(id, req);
     if (!existente) return res.status(404).json({ erro: 'Agendamento nao encontrado.' });
+    // "Concluido" so pelo Concluir: e ele que lanca a venda e gasta a sessao.
+    if (status === 'COMPLETED' && existente.status !== 'COMPLETED') {
+      return res.status(422).json({ erro: 'Para marcar como concluído, use o botão Concluir (ele lança a venda).', codigo: 'USE_CONCLUIR' });
+    }
     // Patch de status: tambem barra se o item ja estiver imutavel. Detalhe:
     // a 1a transicao PENDING -> X em item passado e permitida (ehImutavel
     // checa o estado ATUAL antes da mudanca, e PENDING nao trava).
     if (ehImutavel(existente)) return bloqueioImutavel(res);
+    if (existente.status === status) {
+      return res.json(await prisma.agendamento.findUnique({ where: { id } }));
+    }
 
-    const antesFase2 = await prisma.agendamento.findUnique({ where: { id }, select: SELECT_ANTES });
-    const atualizado = await prisma.agendamento.update({
-      where: { id },
-      data: { status }
-    });
+    const { antesFase2, atualizado, desfeito } = await prisma.$transaction(async (tx) => {
+      await lockClienteAdvisory(tx, existente.clienteId);
+      const antesTx = await tx.agendamento.findUnique({ where: { id }, select: SELECT_ANTES });
+      // Atualizacao condicional: so muda se ainda esta no status que a tela viu.
+      const mudou = await tx.agendamento.updateMany({ where: { id, status: existente.status }, data: { status } });
+      if (!antesTx || !mudou.count) throw erroHttp(409, 'Esse agendamento acabou de mudar. Recarregue e tente de novo.');
+      let desfeitoTx = null;
+      if (existente.status === 'COMPLETED') {
+        desfeitoTx = await desfazerConclusao(tx, {
+          agendamentoId: id, clienteId: existente.clienteId, usuarioId: req.usuario?.id || null,
+          motivo: status === 'CANCELED' ? 'Atendimento cancelado na agenda' : 'Atendimento reaberto na agenda',
+        });
+      }
+      return { antesFase2: antesTx, atualizado: await tx.agendamento.findUnique({ where: { id } }), desfeito: desfeitoTx };
+    }, { timeout: 15000 });
 
-    // Fase 2: cancelou -> vaga pra fila; desfez concluido -> estorna pacote/comissao.
-    if ((status === 'CANCELED' && existente.status !== 'CANCELED') || (existente.status === 'COMPLETED' && status !== 'COMPLETED')) {
+    // Fase 2: cancelou -> vaga pra fila; desfez concluido -> sinal/encaixe.
+    if ((status === 'CANCELED' && existente.status !== 'CANCELED') || existente.status === 'COMPLETED') {
       await aoLiberarHorario(antesFase2, { cancelado: status === 'CANCELED' });
     }
 
-    // Log so se realmente mudou
-    if (existente.status !== status) {
-      await logHistorico({
-        agendamentoId: id,
-        acao: 'STATUS_MUDADO',
-        alteracoes: { status: { de: existente.status, para: status } },
-        req,
-      });
-    }
+    await logHistorico({
+      agendamentoId: id,
+      acao: 'STATUS_MUDADO',
+      alteracoes: {
+        status: { de: existente.status, para: status },
+        ...(desfeito?.vendaCancelada ? { vendaCancelada: desfeito.vendaCancelada.numero } : {}),
+      },
+      req,
+    });
 
-    res.json(atualizado);
+    res.json({ ...atualizado, vendaCancelada: desfeito?.vendaCancelada || null });
   } catch (erro) {
+    if (responderErroHttp(res, erro)) return;
     console.error('[agenda/status]', erro);
     res.status(500).json({ erro: 'Erro ao mudar status' });
   }
@@ -774,49 +883,71 @@ roteador.get('/:id/historico', requerPermissao('AGENDA', 'visualizar'), async (r
 // CONCLUIR ATENDIMENTO — marca COMPLETED e gera a venda do servico
 // =====================================================================
 // O serviço só vira receita quando acontece: ao concluir, cria a Venda
-// (valor/descricao do agendamento) + lançamento no caixa, numa transação.
-// Serviço NÃO mexe em estoque. Trava de dupla-conclusão (status + venda 1:1).
-// Caixa auto (AUTO_BOT) se não houver aberto, igual ao fluxo do bot.
-// Respeita o escopo: especialista só conclui os próprios atendimentos.
+// (valor/descricao do agendamento) + lançamento no caixa, numa transação com
+// trava do negocio. Status muda por atualizacao condicional: clique duplo dá
+// 1x 200 e o resto 409 "já concluído" (nunca 500). Serviço NÃO mexe em
+// estoque. Caixa auto (AUTO_BOT) se não houver aberto, igual ao fluxo do bot.
+// Respeita o escopo e a trava de atendimento passado (423).
 // "Não compareceu" reusa PATCH /:id/status (CANCELED) — sem venda.
 roteador.patch('/:id/concluir', requerPermissao('AGENDA', 'editar'), async (req, res) => {
   try {
     const { id } = req.params;
+    if (typeof id !== 'string' || !id) return res.status(404).json({ erro: 'Agendamento nao encontrado.' });
     const escopoW = await escopoAgendaWhere(req);
     const ag = await prisma.agendamento.findFirst({
       where: { id, ...tenantFiltro(req), ...escopoW },
       select: {
-        id: true, clienteId: true, status: true, servico: true, preco: true,
-        leadId: true, nomeCliente: true, venda: { select: { id: true } },
+        id: true, clienteId: true, status: true, servico: true, preco: true, data: true,
+        leadId: true, nomeCliente: true, venda: { select: { id: true, status: true } },
         especialistaId: true, pacoteClienteId: true, sinalValor: true, sinalStatus: true,
       },
     });
     if (!ag) return res.status(404).json({ erro: 'Agendamento nao encontrado.' });
-    if (ag.status === 'COMPLETED' || ag.venda) {
+    if (ag.status === 'COMPLETED' || (ag.venda && ag.venda.status !== 'CANCELLED')) {
       return res.status(409).json({ erro: 'Este atendimento ja foi concluido.' });
     }
     if (ag.status === 'CANCELED') {
       return res.status(422).json({ erro: 'Agendamento cancelado nao pode ser concluido.' });
     }
+    if (ehImutavel(ag)) return bloqueioImutavel(res);
 
-    const metodoPagamento = typeof req.body?.metodoPagamento === 'string' && req.body.metodoPagamento.trim()
-      ? req.body.metodoPagamento.trim() : null;
-    const precoCheio = Number.isFinite(ag.preco) ? ag.preco : 0;
+    let metodoPagamento = null;
+    if (req.body?.metodoPagamento !== undefined && req.body.metodoPagamento !== null && req.body.metodoPagamento !== '') {
+      if (!METODOS_PAGAMENTO.includes(req.body.metodoPagamento)) {
+        return res.status(422).json({ erro: 'Forma de pagamento inválida.', campos: ['metodoPagamento'] });
+      }
+      metodoPagamento = req.body.metodoPagamento;
+    }
+    const precoCheio = Number.isFinite(ag.preco) && ag.preco > 0 ? ag.preco : 0;
     // Sinal pago por Pix ja entrou no financeiro: no balcao so cobra o resto.
-    const valorSemPacote = sinal.valorAposSinal({ preco: precoCheio, sinalValor: ag.sinalValor, sinalStatus: ag.sinalStatus });
+    const valorSemPacote = Math.max(0, sinal.valorAposSinal({ preco: precoCheio, sinalValor: ag.sinalValor, sinalStatus: ag.sinalStatus }));
     const descricaoBase = ag.servico ? `Atendimento: ${ag.servico}` : `Atendimento de ${ag.nomeCliente}`;
 
     let resultado;
     let tentativa = 0;
     while (true) {
       try {
-        const ultima = await prisma.venda.findFirst({
-          where: { clienteId: ag.clienteId }, orderBy: { numero: 'desc' }, select: { numero: true },
-        });
-        const proximoNumero = (ultima?.numero || 0) + 1;
-
         resultado = await prisma.$transaction(async (tx) => {
           await lockClienteAdvisory(tx, ag.clienteId);
+
+          const atual = await tx.agendamento.findUnique({
+            where: { id: ag.id }, select: { status: true, venda: { select: { id: true, status: true } } },
+          });
+          if (!atual) throw erroHttp(404, 'Agendamento nao encontrado.');
+          if (atual.status === 'COMPLETED' || (atual.venda && atual.venda.status !== 'CANCELLED')) {
+            throw erroHttp(409, 'Este atendimento ja foi concluido.');
+          }
+          if (atual.status === 'CANCELED') throw erroHttp(422, 'Agendamento cancelado nao pode ser concluido.');
+          const marcado = await tx.agendamento.updateMany({ where: { id: ag.id, status: atual.status }, data: { status: 'COMPLETED' } });
+          if (!marcado.count) throw erroHttp(409, 'Este atendimento ja foi concluido.');
+          // Venda antiga (ja cancelada quando o atendimento foi reaberto) solta
+          // o vinculo 1:1 pra nova venda nascer.
+          if (atual.venda) await tx.venda.update({ where: { id: atual.venda.id }, data: { agendamentoId: null } });
+
+          // Mesma trava do numero de venda que o vendaService usa: Concluir e
+          // venda do caixa em paralelo nunca pegam o mesmo numero.
+          await lockClienteAdvisory(tx, `venda-numero:${ag.clienteId}`);
+          const numeroVenda = await proximoNumeroVenda(tx, ag.clienteId);
 
           const { sessao } = await obterOuAbrirSessaoCaixa(tx, ag.clienteId, {
             motivo: 'Aberto automaticamente ao concluir um atendimento sem caixa aberto.',
@@ -840,7 +971,7 @@ roteador.patch('/:id/concluir', requerPermissao('AGENDA', 'editar'), async (req,
 
           const venda = await tx.venda.create({
             data: {
-              clienteId: ag.clienteId, numero: proximoNumero, leadId: ag.leadId || null,
+              clienteId: ag.clienteId, numero: numeroVenda, leadId: ag.leadId || null,
               sessaoCaixaId: sessao.id, valor, metodoPagamento, descricao,
               status: 'COMPLETED', agendamentoId: ag.id,
             },
@@ -851,19 +982,18 @@ roteador.patch('/:id/concluir', requerPermissao('AGENDA', 'editar'), async (req,
               data: {
                 clienteId: ag.clienteId, leadId: ag.leadId || null, vendaId: venda.id,
                 sessaoCaixaId: sessao.id, descricao: `Receita Venda #${venda.numero}: ${descricao}`,
-                valor, tipo: 'RECEITA', status: 'PAGO',
+                valor, tipo: 'RECEITA', status: 'PAGO', metodoPagamento,
                 dataVencimento: new Date(), dataPagamento: new Date(),
               },
             });
           }
 
-          const agAtualizado = await tx.agendamento.update({
-            where: { id: ag.id }, data: { status: 'COMPLETED' },
-          });
+          const agAtualizado = await tx.agendamento.findUnique({ where: { id: ag.id } });
           return { venda, agendamento: agAtualizado, uso, comissao };
-        });
+        }, { timeout: 15000 });
         break;
       } catch (err) {
+        // Numero de venda repetido (venda feita por outra tela no mesmo ms): tenta de novo.
         if (err?.code === 'P2002' && tentativa < MAX_RETRIES_NUMERO) { tentativa += 1; continue; }
         throw err;
       }
@@ -887,9 +1017,13 @@ roteador.patch('/:id/concluir', requerPermissao('AGENDA', 'editar'), async (req,
       comissao: resultado.comissao ? { valor: resultado.comissao.valor } : null,
     });
   } catch (erro) {
+    if (responderErroHttp(res, erro)) return;
+    if (erro?.code === 'P2002') return res.status(409).json({ erro: 'Este atendimento ja foi concluido.' });
     console.error('[agenda/concluir]', erro);
     res.status(500).json({ erro: 'Erro ao concluir o atendimento.' });
   }
 });
 
 module.exports = roteador;
+// Exposto pra teste (regra pura de conflito usa o banco; aqui so o helper).
+module.exports._internos = { validarConflitosAgenda };

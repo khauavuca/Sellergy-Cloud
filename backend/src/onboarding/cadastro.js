@@ -17,6 +17,8 @@ const { VERSAO_TERMOS, aceitouTermos } = require('../legal/versao');
 const { modulosLiberadosPorSegmento } = require('../utils/modulosSegmento');
 const { DIAS_DE_TRIAL } = require('../planos/catalogo');
 const { DIA_MS } = require('../assinatura/situacao');
+const { criarPadroesDoNegocio } = require('./padroes');
+const { SLUGS_RESERVADOS } = require('../seguranca/validarConta');
 
 const SEGMENTOS_VALIDOS = ['SERVICO', 'PRODUTO', 'HIBRIDO'];
 const SENHA_MINIMA = 8;
@@ -36,7 +38,9 @@ function slugBase(texto) {
 
 /** Gera um slug livre: tenta o nome puro e, se ocupado, nome + sufixo curto. */
 async function gerarSlugUnico(nome, client = prisma) {
-  const base = slugBase(nome);
+  let base = slugBase(nome);
+  // Endereco reservado (admin, api, app...) ou curto demais ganha complemento.
+  if (SLUGS_RESERVADOS.has(base) || base.length < 3) base = `${base}-negocio`;
   const candidatos = [base, ...Array.from({ length: 5 }, () => `${base}-${crypto.randomBytes(2).toString('hex')}`)];
   for (const slug of candidatos) {
     const ocupado = await client.cliente.findUnique({ where: { slugPublico: slug }, select: { id: true } });
@@ -120,6 +124,9 @@ async function criarContaComTeste(dados, agora = new Date()) {
         versaoTermos: VERSAO_TERMOS,
       },
     });
+    // Primeiro uso: categorias, etapas do funil e (servico) a dona como
+    // profissional ja prontos (src/onboarding/padroes.js).
+    await criarPadroesDoNegocio(tx, { clienteId: cliente.id, segmento: dados.segmento, usuario });
     return { cliente, usuario };
   });
 }

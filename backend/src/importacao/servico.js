@@ -6,6 +6,7 @@
 
 const crypto = require('crypto');
 const prisma = require('../prisma');
+const { tentarTravarNegocio } = require('../utils/travaNegocio');
 const {
   validarLinhas, juntarCamposVazios, chaveNome, finalTelefone, dddDe, normalizarTelefone,
 } = require('./normalizar');
@@ -285,7 +286,21 @@ async function gravarLoteProdutos(tx, clienteId, tipo, lote, categoriaDe, especi
  * 200 (cada lote numa transacao) e registra a Importacao com os ids criados.
  * Se um lote falhar, o que ja entrou fica registrado (da pra desfazer).
  */
-async function importar({ clienteId, usuarioId, tipo, arquivoNome, linhas }) {
+async function importar(args) {
+  // Uma importacao por negocio de cada vez. A trava fica presa numa transacao
+  // aberta durante toda a gravacao (os lotes usam outras conexoes); a segunda
+  // planilha enviada ao mesmo tempo recebe 409 em vez de duplicar tudo. Como a
+  // analise roda depois da trava, um reenvio da mesma planilha encontra os
+  // clientes ja gravados e so junta.
+  return prisma.$transaction(async (trava) => {
+    if (!(await tentarTravarNegocio(trava, 'importacao', args.clienteId))) {
+      throw Object.assign(new Error('Já tem uma importação em andamento neste negócio. Espere ela terminar e confira a lista antes de enviar de novo.'), { status: 409, codigo: 'IMPORTACAO_EM_ANDAMENTO' });
+    }
+    return importarSemTrava(args);
+  }, { timeout: 15 * 60 * 1000, maxWait: 10000 });
+}
+
+async function importarSemTrava({ clienteId, usuarioId, tipo, arquivoNome, linhas }) {
   const analise = await analisar({ clienteId, tipo, linhas });
   consolidarDuplicadas(analise.linhas);
   const gravar = analise.linhas.filter((r) => r.status === 'NOVO' || r.status === 'JUNTAR');
@@ -407,20 +422,30 @@ async function desfazer({ clienteId, importacaoId }) {
   if (imp.status === 'DESFEITA') throw Object.assign(new Error('Esta importação já foi desfeita.'), { status: 409 });
   const ids = Array.isArray(imp.idsCriados) ? imp.idsCriados.filter((x) => typeof x === 'string') : [];
 
-  const apagaveis = imp.tipo === 'CLIENTES' ? await leadsApagaveis(clienteId, ids) : await produtosApagaveis(clienteId, ids);
-  const apagar = new Set(apagaveis);
-  const mantidos = ids.filter((id) => !apagar.has(id));
+  return prisma.$transaction(async (tx) => {
+    // Marca DESFEITA primeiro, com o status esperado no where: o segundo
+    // "desfazer" ao mesmo tempo espera a linha, ve count 0 e recebe 409 — nada
+    // e apagado nem contado duas vezes.
+    const marcado = await tx.importacao.updateMany({
+      where: { id: imp.id, clienteId, status: { not: 'DESFEITA' } },
+      data: { status: 'DESFEITA' },
+    });
+    if (marcado.count !== 1) throw Object.assign(new Error('Esta importação já foi desfeita.'), { status: 409 });
 
-  await prisma.$transaction(async (tx) => {
+    const apagaveis = imp.tipo === 'CLIENTES' ? await leadsApagaveis(clienteId, ids) : await produtosApagaveis(clienteId, ids);
+    const apagar = new Set(apagaveis);
+    const mantidos = ids.filter((id) => !apagar.has(id));
+    let apagados = 0;
     for (let i = 0; i < apagaveis.length; i += 500) {
       const parte = apagaveis.slice(i, i + 500);
-      if (imp.tipo === 'CLIENTES') await tx.lead.deleteMany({ where: { id: { in: parte }, clienteId } });
-      else await tx.produto.deleteMany({ where: { id: { in: parte }, clienteId } });
+      const r = imp.tipo === 'CLIENTES'
+        ? await tx.lead.deleteMany({ where: { id: { in: parte }, clienteId } })
+        : await tx.produto.deleteMany({ where: { id: { in: parte }, clienteId } });
+      apagados += r.count;
     }
-    await tx.importacao.update({ where: { id: imp.id }, data: { status: 'DESFEITA', idsCriados: mantidos } });
-  }, { timeout: 60000 });
-
-  return { apagados: apagaveis.length, mantidos: mantidos.length };
+    await tx.importacao.update({ where: { id: imp.id }, data: { idsCriados: mantidos } });
+    return { apagados, mantidos: mantidos.length };
+  }, { timeout: 60000, maxWait: 15000 });
 }
 
 module.exports = { analisar, paraResposta, importar, desfazer, resumoImportacao, TAMANHO_LOTE };

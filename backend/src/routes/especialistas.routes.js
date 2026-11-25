@@ -8,6 +8,7 @@
 
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const prisma = require('../prisma');
 const middlewareAutenticacao = require('../middlewares/auth.middleware');
 const {
@@ -17,6 +18,10 @@ const {
   requerPapelPrivilegiado,
 } = require('../middlewares/permissoes.middleware');
 const { garantirDentroDoLimite } = require('../planos/recursos');
+const { lockClienteAdvisory } = require('../utils/locks');
+const { validarJornada } = require('../agenda/utilAgenda');
+
+const NOME_MAX = 120;
 
 // Erro de limite do plano vira 403 com o codigo pro front oferecer upgrade.
 function respostaLimite(res, erro) {
@@ -25,9 +30,23 @@ function respostaLimite(res, erro) {
   return true;
 }
 
-// Senha inicial do login do especialista — fixa e simples; deveTrocarSenha
-// forca a troca no primeiro acesso.
-const SENHA_PADRAO = '123456';
+// Senha inicial do login do especialista: ALEATORIA (nada de "123456" fixo),
+// mostrada uma unica vez pro dono na resposta; deveTrocarSenha forca a troca
+// no primeiro acesso. 12 caracteres sem letras/numeros que confundem (0/O, 1/l).
+const ALFABETO_SENHA = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+function gerarSenhaInicial(tamanho = 12) {
+  const bytes = crypto.randomBytes(tamanho);
+  let s = '';
+  for (let i = 0; i < tamanho; i++) s += ALFABETO_SENHA[bytes[i] % ALFABETO_SENHA.length];
+  return s;
+}
+
+function lerNome(nome) {
+  if (typeof nome !== 'string' || !nome.trim()) return { erro: 'Informe o nome.' };
+  const t = nome.trim();
+  if (t.length > NOME_MAX) return { erro: `O nome pode ter no máximo ${NOME_MAX} caracteres.` };
+  return { valor: t };
+}
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -52,6 +71,7 @@ async function validarServicos(clienteId, servicosIds) {
 // vinculado a outro especialista. Retorna { erro } ou { usuarioId }.
 async function validarUsuarioVinculo({ usuarioId, clienteId, especialistaIdAtual = null }) {
   if (!usuarioId) return { usuarioId: null };
+  if (typeof usuarioId !== 'string') return { erro: 'Usuario invalido.' };
   const u = await prisma.usuario.findFirst({
     where: { id: usuarioId, clienteId },
     select: { id: true, especialista: { select: { id: true } } },
@@ -101,7 +121,18 @@ roteador.get('/', requerPermissao('AGENDA', 'visualizar'), async (req, res) => {
       },
       orderBy: { nome: 'asc' },
     });
-    res.json(especialistas.map(saida));
+    const privilegiado = ehAdmin(req.usuario) || req.usuario.perfil === 'CLIENT' || req.usuario.perfil === 'ADMINISTRADOR';
+    if (privilegiado) return res.json(especialistas.map(saida));
+    // Equipe sem papel de gestao: so o basico das colegas (nome, ativo, servicos);
+    // o proprio cadastro vem completo.
+    res.json(especialistas.map((e) => {
+      const s = saida(e);
+      if (e.usuarioId === req.usuario.id) return s;
+      return {
+        id: s.id, clienteId: s.clienteId, nome: s.nome, ativo: s.ativo, jornada: s.jornada, servicosIds: s.servicosIds,
+        usuarioId: s.usuarioId, usuario: e.usuario ? { id: e.usuario.id, nome: e.usuario.nome } : null,
+      };
+    }));
   } catch (erro) {
     console.error('[especialistas/list]', erro);
     res.status(500).json({ erro: 'Erro ao listar especialistas.' });
@@ -113,23 +144,18 @@ roteador.post('/', requerPapelPrivilegiado, async (req, res) => {
     const clienteId = ehAdmin(req.usuario) ? req.body?.clienteId : req.usuario.clienteId;
     if (!clienteId) return res.status(400).json({ erro: 'clienteId obrigatorio.' });
 
-    const { nome, ativo, usuarioId, jornada, servicosIds, acesso } = req.body || {};
-    if (typeof nome !== 'string' || !nome.trim()) {
-      return res.status(400).json({ erro: 'nome obrigatorio.' });
-    }
+    const { ativo, usuarioId, jornada, servicosIds, acesso } = req.body || {};
+    const nomeLido = lerNome(req.body?.nome);
+    if (nomeLido.erro) return res.status(422).json({ erro: nomeLido.erro, campos: ['nome'] });
+    const nome = nomeLido.valor;
+    if (ativo !== undefined && typeof ativo !== 'boolean') return res.status(422).json({ erro: 'Valor inválido.', campos: ['ativo'] });
+    const jornadaLida = validarJornada(jornada);
+    if (!jornadaLida.ok) return res.status(422).json({ erro: jornadaLida.erro, campos: ['jornada'] });
 
     const regra = lerRegraComissao(req.body || {});
     if (regra.erro) return res.status(422).json({ erro: regra.erro, campos: regra.campos });
 
     const servicosValidos = await validarServicos(clienteId, servicosIds);
-
-    // Limite de profissionais ativos do plano (so conta quem nasce ativo).
-    if (ativo !== false) {
-      await garantirDentroDoLimite({
-        clienteId, limite: 'profissionais',
-        usoAtual: await prisma.especialista.count({ where: { clienteId, ativo: true } }),
-      });
-    }
 
     // Validacoes de leitura ANTES da transacao.
     // (1) Criar login novo (acesso) OU (2) linkar usuario existente.
@@ -147,10 +173,22 @@ roteador.post('/', requerPapelPrivilegiado, async (req, res) => {
       if (vincExistente.erro) return res.status(400).json({ erro: vincExistente.erro });
     }
 
+    // Senha gerada fora da transacao (bcrypt e lento; nao segura a trava).
+    const senhaInicial = emailNovo ? gerarSenhaInicial() : null;
+    const senhaHasheada = senhaInicial ? await bcrypt.hash(senhaInicial, 12) : null;
+
     const especialista = await prisma.$transaction(async (tx) => {
+      // Limite de profissionais ativos do plano, contado DENTRO da trava do
+      // negocio: pedidos ao mesmo tempo nao passam do limite.
+      await lockClienteAdvisory(tx, clienteId);
+      if (ativo !== false) {
+        await garantirDentroDoLimite({
+          clienteId, limite: 'profissionais',
+          usoAtual: await tx.especialista.count({ where: { clienteId, ativo: true } }),
+        });
+      }
       let usuarioIdFinal = vincExistente ? vincExistente.usuarioId : null;
       if (emailNovo) {
-        const senhaHasheada = await bcrypt.hash(SENHA_PADRAO, 12);
         // AGENDA sempre garantida no escopo proprio. O dono libera outros
         // modulos depois, na tela de Equipe.
         const novoUsuario = await tx.usuario.create({
@@ -175,14 +213,15 @@ roteador.post('/', requerPapelPrivilegiado, async (req, res) => {
           nome: nome.trim(),
           ativo: ativo === false ? false : true,
           usuarioId: usuarioIdFinal,
-          jornada: jornada && typeof jornada === 'object' ? jornada : null,
+          jornada: jornadaLida.valor,
           ...regra.data,
           servicos: { create: servicosValidos.map((produtoId) => ({ produtoId })) },
         },
         include: { servicos: { select: { produtoId: true } } },
       });
-    });
-    res.status(201).json(saida(especialista));
+    }, { timeout: 15000 });
+    // A senha inicial so aparece aqui, uma vez, pro dono repassar.
+    res.status(201).json({ ...saida(especialista), ...(senhaInicial ? { senhaInicial, deveTrocarSenha: true } : {}) });
   } catch (erro) {
     if (respostaLimite(res, erro)) return;
     console.error('[especialistas/create]', erro);
@@ -202,21 +241,19 @@ roteador.put('/:id', requerPapelPrivilegiado, async (req, res) => {
     const { nome, ativo, usuarioId, jornada, servicosIds } = req.body || {};
     const data = {};
     if (nome !== undefined) {
-      if (typeof nome !== 'string' || !nome.trim()) return res.status(400).json({ erro: 'nome invalido.' });
-      data.nome = nome.trim();
+      const lido = lerNome(nome);
+      if (lido.erro) return res.status(422).json({ erro: lido.erro, campos: ['nome'] });
+      data.nome = lido.valor;
     }
-    if (ativo !== undefined) data.ativo = ativo === true;
-    // Reativar conta no limite do plano (senao reativar burlaria o limite).
-    if (data.ativo === true) {
-      const atual = await prisma.especialista.findUnique({ where: { id: existente.id }, select: { ativo: true } });
-      if (!atual?.ativo) {
-        await garantirDentroDoLimite({
-          clienteId: existente.clienteId, limite: 'profissionais',
-          usoAtual: await prisma.especialista.count({ where: { clienteId: existente.clienteId, ativo: true } }),
-        });
-      }
+    if (ativo !== undefined) {
+      if (typeof ativo !== 'boolean') return res.status(422).json({ erro: 'Valor inválido.', campos: ['ativo'] });
+      data.ativo = ativo;
     }
-    if (jornada !== undefined) data.jornada = jornada && typeof jornada === 'object' ? jornada : null;
+    if (jornada !== undefined) {
+      const j = validarJornada(jornada);
+      if (!j.ok) return res.status(422).json({ erro: j.erro, campos: ['jornada'] });
+      data.jornada = j.valor;
+    }
     const regra = lerRegraComissao(req.body || {});
     if (regra.erro) return res.status(422).json({ erro: regra.erro, campos: regra.campos });
     Object.assign(data, regra.data);
@@ -241,11 +278,25 @@ roteador.put('/:id', requerPapelPrivilegiado, async (req, res) => {
       ]);
     }
 
-    const atualizado = await prisma.especialista.update({
-      where: { id: existente.id },
-      data,
-      include: { servicos: { select: { produtoId: true } } },
-    });
+    const atualizado = await prisma.$transaction(async (tx) => {
+      // Reativar conta no limite do plano (senao reativar burlaria o limite);
+      // contado dentro da trava do negocio.
+      await lockClienteAdvisory(tx, existente.clienteId);
+      if (data.ativo === true) {
+        const atual = await tx.especialista.findUnique({ where: { id: existente.id }, select: { ativo: true } });
+        if (!atual?.ativo) {
+          await garantirDentroDoLimite({
+            clienteId: existente.clienteId, limite: 'profissionais',
+            usoAtual: await tx.especialista.count({ where: { clienteId: existente.clienteId, ativo: true } }),
+          });
+        }
+      }
+      return tx.especialista.update({
+        where: { id: existente.id },
+        data,
+        include: { servicos: { select: { produtoId: true } } },
+      });
+    }, { timeout: 15000 });
     res.json(saida(atualizado));
   } catch (erro) {
     if (respostaLimite(res, erro)) return;
@@ -261,8 +312,20 @@ roteador.delete('/:id', requerPapelPrivilegiado, async (req, res) => {
       select: { id: true },
     });
     if (!existente) return res.status(404).json({ erro: 'Especialista nao encontrado.' });
+    // Horarios futuros ficariam "sem profissional" (FK SetNull) e passariam a
+    // disputar a agenda da loja: avisa e so exclui com ?confirmar=1.
+    const futuros = await prisma.agendamento.count({
+      where: { especialistaId: existente.id, data: { gte: new Date() }, status: { in: ['PENDING', 'CONFIRMED'] } },
+    });
+    if (futuros > 0 && req.query.confirmar !== '1') {
+      return res.status(409).json({
+        erro: `Essa profissional tem ${futuros} horário(s) marcado(s). Passe esses horários para outra pessoa ou desative o cadastro em vez de excluir.`,
+        codigo: 'CONFIRMAR_EXCLUSAO', agendamentosFuturos: futuros,
+      });
+    }
     // Agendamentos do especialista sobrevivem (FK SetNull); vinculos M:N caem (Cascade).
-    await prisma.especialista.delete({ where: { id: existente.id } });
+    const r = await prisma.especialista.deleteMany({ where: { id: existente.id } });
+    if (!r.count) return res.status(404).json({ erro: 'Especialista nao encontrado.' });
     res.json({ ok: true });
   } catch (erro) {
     console.error('[especialistas/delete]', erro);

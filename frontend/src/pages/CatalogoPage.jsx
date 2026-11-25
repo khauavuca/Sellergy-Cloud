@@ -13,6 +13,9 @@ import FormServico, { ModalServico } from '../components/catalogo/FormServico';
 import { VISIBILIDADES } from '../components/catalogo/constantes';
 import { ModalCategoriaServico, ModalVariacao } from '../components/catalogo/ModaisCatalogo';
 import PainelPacotes from '../components/catalogo/PainelPacotes';
+import { useAuthStore } from '../store/auth.store';
+
+const msgErro = (e, padrao) => e?.response?.data?.erro || e?.response?.data?.error || padrao;
 
 const fmtBRL = (v) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 // Catalogo cadastra so servicos. Constante TIPOS removida — filtro de tipo
@@ -56,6 +59,7 @@ function BadgeLink({ visibilidade }) {
 
 export default function CatalogoPage() {
   const toast = useToast();
+  const usuario = useAuthStore((s) => s.user);
   const [produtos, setProdutos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [especialistas, setEspecialistas] = useState([]);
@@ -139,8 +143,26 @@ export default function CatalogoPage() {
       setModalCatServico(false);
       carregarCategorias();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao criar categoria');
+      toast.error(msgErro(e, 'Erro ao criar categoria'));
     }
+  };
+
+  // Atalho de primeiro uso dentro do formulario do servico: cria a categoria
+  // (mesmo endpoint de "Categoria de serviço") e ja devolve pra selecionar.
+  // Erro sobe pro formulario, que mostra no campo.
+  const criarCategoriaRapida = async (nome) => {
+    const r = await api.post('/financeiro/categorias', { nome, tipo: 'RECEITA', uso: 'SERVICO' });
+    await carregarCategorias();
+    toast.success('Categoria criada');
+    return r.data;
+  };
+
+  // "Eu mesmo atendo": cadastra o dono como profissional (ligado ao login dele).
+  const euMesmoAtendo = async () => {
+    const r = await api.post('/especialistas', { nome: usuario?.nome || 'Eu', usuarioId: usuario?.id });
+    setEspecialistas((lista) => [...lista, r.data]);
+    toast.success('Pronto: você aparece como profissional na agenda.');
+    return r.data;
   };
 
   const filtrados = useMemo(() => {
@@ -185,41 +207,43 @@ export default function CatalogoPage() {
     }
   };
 
+  // Erro sobe pro formulario, que mostra no proprio campo.
   const handleSalvar = async (dados) => {
-    try {
-      let produtoId = dados.id;
-      if (dados.id) {
-        await api.put(`/catalogo/${dados.id}`, dados);
-      } else {
-        const r = await api.post('/catalogo', dados);
-        produtoId = r.data?.id;
-      }
-      // Sinal por servico (fase 2): salvo a parte, na rota da agenda.
-      if (produtoId && dados.sinalAlterado) {
-        try {
-          await api.put(`/agenda/servicos/${produtoId}/sinal`, { sinalPercentual: dados.sinalPercentual === '' ? null : Number(dados.sinalPercentual) });
-        } catch (e) {
-          toast.error(e.response?.data?.erro || 'Serviço salvo, mas o sinal não foi salvo.');
-        }
-      }
-      toast.success(dados.id ? 'Serviço atualizado' : 'Serviço criado');
-      setModalProduto({ open: false, data: null });
-      if (produtoId) { setSelId(produtoId); setSalvoId(produtoId); }
-      carregar();
-    } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao salvar');
+    let produtoId = dados.id;
+    if (dados.id) {
+      await api.put(`/catalogo/${dados.id}`, dados);
+    } else {
+      const r = await api.post('/catalogo', dados);
+      produtoId = r.data?.id;
     }
+    // Sinal por servico (fase 2): salvo a parte, na rota da agenda.
+    if (produtoId && dados.sinalAlterado) {
+      try {
+        await api.put(`/agenda/servicos/${produtoId}/sinal`, { sinalPercentual: dados.sinalPercentual === '' ? null : Number(dados.sinalPercentual) });
+      } catch (e) {
+        toast.error(e.response?.data?.erro || 'Serviço salvo, mas o sinal não foi salvo.');
+      }
+    }
+    toast.success(dados.id ? 'Serviço atualizado' : 'Serviço criado');
+    setModalProduto({ open: false, data: null });
+    if (produtoId) { setSelId(produtoId); setSalvoId(produtoId); }
+    carregar();
   };
 
-  const handleExcluir = async (p) => {
-    if (!confirm(`Excluir serviço "${p.nome}"?`)) return;
+  const handleExcluir = async (p, confirmado = false) => {
+    if (!confirmado && !confirm(`Excluir serviço "${p.nome}"?`)) return;
     try {
-      await api.delete(`/catalogo/${p.id}`);
+      await api.delete(`/catalogo/${p.id}`, { params: confirmado ? { confirmar: 1 } : undefined });
       toast.success('Serviço excluído');
       if (selId === p.id) setSelId(null);
       carregar();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Não foi possível excluir');
+      // Servico com horario marcado ou fila: o servidor avisa e pede confirmacao.
+      if (!confirmado && e.response?.data?.codigo === 'CONFIRMAR_EXCLUSAO') {
+        if (confirm(msgErro(e, 'Este serviço está em uso. Excluir mesmo assim?'))) handleExcluir(p, true);
+        return;
+      }
+      toast.error(msgErro(e, 'Não foi possível excluir'));
     }
   };
 
@@ -234,8 +258,8 @@ export default function CatalogoPage() {
       }
       setModalVariacao({ open: false, data: null, produtoId: null });
       carregar();
-    } catch {
-      toast.error('Erro ao salvar variação');
+    } catch (e) {
+      toast.error(msgErro(e, 'Erro ao salvar variação'));
     }
   };
 
@@ -246,7 +270,7 @@ export default function CatalogoPage() {
       toast.success('Variação excluída');
       carregar();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao excluir');
+      toast.error(msgErro(e, 'Erro ao excluir'));
     }
   };
 
@@ -268,6 +292,8 @@ export default function CatalogoPage() {
           categorias={categorias}
           especialistas={especialistas}
           onSalvar={handleSalvar}
+          onCriarCategoria={criarCategoriaRapida}
+          onEuAtendo={euMesmoAtendo}
           onExcluir={() => handleExcluir(selecionado)}
           onAlterou={() => { if (salvoId) setSalvoId(null); }}
         />
@@ -465,6 +491,8 @@ export default function CatalogoPage() {
         categorias={categorias}
         especialistas={especialistas}
         onSalvar={handleSalvar}
+        onCriarCategoria={criarCategoriaRapida}
+        onEuAtendo={euMesmoAtendo}
       />
 
       <ModalCategoriaServico

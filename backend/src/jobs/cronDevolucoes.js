@@ -67,6 +67,8 @@ async function processarTenant(tenant, { obterCanal = canalWhatsappDoTenant } = 
     where: {
       clienteId: tenant.id,
       devolvidoEm: null,
+      // Devolucao encerrada pelo cancelamento da venda nao gera lembrete.
+      canceladaEm: null,
       lembreteEnviadoEm: null,
       dataDevolucao: { lte: limite },
     },

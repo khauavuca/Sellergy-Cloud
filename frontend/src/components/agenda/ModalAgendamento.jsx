@@ -68,7 +68,10 @@ function Bloco({ icone: Icone, titulo, acoes, children }) {
 function ModalAgendamentoConteudo({ isOpen, onClose, ag, inicial, variacoes = [], especialistas = [], onSalvar }) {
   // Agenda é orientada ao SERVIÇO: escolhe pela busca e tudo (valor, duração,
   // especialista) vem do cadastro do serviço. Sem campos livres.
-  const [form, setForm] = useState(() => formInicialAgendamento(ag, inicial));
+  const [form, setFormBruto] = useState(() => formInicialAgendamento(ag, inicial));
+  // Erros na propria tela (antes era alert() do navegador).
+  const [erros, setErros] = useState({});
+  const setForm = (v) => { setFormBruto(v); setErros((e) => (Object.keys(e).length ? {} : e)); };
 
   // Só serviços entram na agenda (produtos são vendidos, não agendados).
   const servicosVariacoes = useMemo(
@@ -169,14 +172,11 @@ function ModalAgendamentoConteudo({ isOpen, onClose, ag, inicial, variacoes = []
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!form.servico) {
-      alert('Escolha um serviço.');
-      return;
-    }
-    if (!form.especialistaId) {
-      alert('Escolha o especialista que vai atender.');
-      return;
-    }
+    const novos = {};
+    if (!String(form.nomeCliente || '').trim()) novos.nomeCliente = 'Informe o nome do cliente.';
+    if (!form.servico) novos.servico = servicosVariacoes.length === 0 ? 'Cadastre um serviço antes de marcar.' : 'Escolha um serviço.';
+    if (!form.especialistaId) novos.especialistaId = 'Escolha quem vai atender.';
+    if (Object.keys(novos).length) { setErros(novos); return; }
     if (pedeCpfSinal) {
       const erroDoc = erroCpfCnpj(cpfSinal, true);
       setErroCpfSinal(erroDoc);
@@ -187,7 +187,7 @@ function ModalAgendamentoConteudo({ isOpen, onClose, ag, inicial, variacoes = []
       ...form,
       data: dataCompleta.toISOString(),
       duracao: parseInt(form.duracao) || 30,
-      preco: parseFloat(form.preco) || 0,
+      preco: form.preco === '' || form.preco == null ? 0 : form.preco, // servidor entende "10,50"
       especialistaId: form.especialistaId || null,
       ...(ag ? {} : {
         produtoId: produtoIdSel || null,
@@ -215,6 +215,8 @@ function ModalAgendamentoConteudo({ isOpen, onClose, ag, inicial, variacoes = []
                   label="Nome do cliente"
                   value={form.nomeCliente}
                   onChange={(e) => setForm({ ...form, nomeCliente: e.target.value })}
+                  maxLength={120}
+                  error={erros.nomeCliente}
                   required
                 />
                 <Input
@@ -254,6 +256,12 @@ function ModalAgendamentoConteudo({ isOpen, onClose, ag, inicial, variacoes = []
                 placeholder={servicosVariacoes.length === 0 ? 'Nenhum serviço cadastrado' : 'Selecione um serviço'}
                 clearable
               />
+              {servicosVariacoes.length === 0 && (
+                <p className="m-0 text-[13px] text-[var(--text-secondary)]">
+                  Ainda não tem serviço cadastrado. <Link to="/app/catalogo" className="font-semibold underline text-[var(--primary)]">Cadastrar serviço agora</Link>
+                </p>
+              )}
+              {erros.servico && <p className="m-0 text-xs font-medium text-[var(--danger)]" role="alert">{erros.servico}</p>}
               {form.servico && !form.variacaoId && (
                 <p className="m-0 text-[13px] text-[var(--text-secondary)]">Serviço atual: <strong className="text-[var(--text-main)]">{form.servico}</strong></p>
               )}
@@ -286,6 +294,7 @@ function ModalAgendamentoConteudo({ isOpen, onClose, ag, inicial, variacoes = []
                     })}
                   </div>
                 )}
+                {erros.especialistaId && <p className="m-0 mt-1.5 text-xs font-medium text-[var(--danger)]" role="alert">{erros.especialistaId}</p>}
               </div>
             </Bloco>
 
@@ -419,9 +428,14 @@ function ModalAgendamentoConteudo({ isOpen, onClose, ag, inicial, variacoes = []
                 value={form.status}
                 onChange={(e) => setForm({ ...form, status: e.target.value })}
                 placeholder=""
-                options={Object.entries(STATUS_LABELS).map(([k, v]) => ({ value: k, label: v.label }))}
+                // "Concluído" so pelo botao Concluir (lanca a venda). Aqui so
+                // aparece quando o atendimento ja esta concluido.
+                options={Object.entries(STATUS_LABELS)
+                  .filter(([k]) => k !== 'COMPLETED' || ag?.status === 'COMPLETED')
+                  .map(([k, v]) => ({ value: k, label: v.label }))}
+                hint={ag?.status === 'COMPLETED' ? 'Mudar o status de um atendimento concluído cancela a venda dele.' : 'Para concluir e lançar a venda, use o botão Concluir.'}
               />
-              <Textarea label="Observação para a profissional" value={form.observacoes} onChange={(e) => setForm({ ...form, observacoes: e.target.value })} rows={2} />
+              <Textarea label="Observação para a profissional" value={form.observacoes} onChange={(e) => setForm({ ...form, observacoes: e.target.value })} maxLength={2000} rows={2} />
             </section>
           </aside>
         </div>

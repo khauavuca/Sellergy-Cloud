@@ -18,6 +18,7 @@
 
 const express = require('express');
 const prisma = require('../prisma');
+const { paraNumero, lerDinheiro } = require('../utils/numero');
 const middlewareAutenticacao = require('../middlewares/auth.middleware');
 const {
   requerTenant, requerModuloLiberado, requerPermissao, requerPapelPrivilegiado,
@@ -120,7 +121,7 @@ roteador.get('/loja', requerPermissao('VENDAS', 'visualizar'), async (req, res) 
 
 function lerValor(v, campo, campos) {
   if (v === null || v === undefined || v === '') return null;
-  const n = Number(v);
+  const n = paraNumero(v); // "10,50" -> 10.5 (nunca corta a virgula)
   if (!Number.isFinite(n) || n < 0 || n > 100000) { campos.push(campo); return null; }
   return Math.round(n * 100) / 100;
 }
@@ -233,13 +234,19 @@ roteador.post('/', requerPermissao('VENDAS', 'criar'), async (req, res) => {
     if (!pagamento?.ativo) {
       return res.status(409).json({ erro: 'Conecte uma forma de receber (Conta de recebimento ou Pagamentos) antes de vender pelo WhatsApp.', codigo: 'PAGAMENTO_NAO_CONFIGURADO' });
     }
+    let freteManual = null;
+    if (b.frete !== undefined && b.frete !== null && b.frete !== '') {
+      const f = lerDinheiro(b.frete, { min: 0, max: 100000 });
+      if (!f.ok) return res.status(422).json({ erro: `Frete inválido: ${f.erro}`, campos: ['frete'] });
+      freteManual = f.valor;
+    }
     const pedido = await criarPedido({
       clienteId,
       origem: 'WHATSAPP',
       entrada: { itens: b.itens, entrega: b.entrega, endereco: b.endereco, nome, telefone, cpf, observacao: b.observacao },
       config: config || {},
       exigeCpf: pagamento.provedor === 'ASAAS',
-      freteManual: b.frete === undefined || b.frete === null || b.frete === '' ? null : Number(b.frete),
+      freteManual,
     });
     try {
       const r = await aceitarECobrar(pedido, { metodo: b.metodo === 'LINK' ? 'LINK' : 'PIX' });

@@ -9,6 +9,9 @@
  *   VENDEDOR       -> colaborador do tenant com permissoes customizadas.
  *
  * O middlewareAutenticacao deve ser aplicado ANTES destes (req.usuario populado).
+ * Ele confere o usuario no BANCO a cada pedido (seguranca/sessaoUsuario.js):
+ * req.usuario.perfil/clienteId sao os atuais, nao os do login — quem e
+ * rebaixado ou excluido perde o acesso na hora.
  */
 
 const prisma = require('../prisma');
@@ -148,10 +151,12 @@ function requerPermissao(modulo, acao) {
       if (req.usuario?.perfil === 'ADMINISTRADOR') return next();
 
       // VENDEDOR (e qualquer outro perfil de tenant): verifica permissoes JSON.
-      const usuario = await prisma.usuario.findUnique({
-        where: { id: req.usuario.id },
-        select: { permissoes: true }
-      });
+      // O auth.middleware ja carregou o usuario do banco (cache de 30 s, limpo
+      // quando a dona muda as permissoes): usa ele; senao consulta.
+      const usuario = req.usuarioAtual && req.usuarioAtual.id === req.usuario.id
+        ? req.usuarioAtual
+        : await prisma.usuario.findUnique({ where: { id: req.usuario.id }, select: { permissoes: true } });
+      if (!usuario) return res.status(401).json({ erro: 'Sessão inválida. Entre de novo.' });
 
       const permissoes = usuario?.permissoes || {};
       const permissoesModulo = permissoes[modulo] || {};

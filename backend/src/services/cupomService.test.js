@@ -73,3 +73,19 @@ test('valorTotal invalido (zero ou negativo) e rejeitado', () => {
   assert.strictEqual(validarCupom({ cupom: CUPOM_PERCENTUAL, valorTotal: 0 }).valido, false);
   assert.strictEqual(validarCupom({ cupom: CUPOM_PERCENTUAL, valorTotal: -10 }).valido, false);
 });
+
+test('registrarUsoCupom so incrementa com uso disponivel, ativo e no prazo (UPDATE condicional)', async () => {
+  const { registrarUsoCupom } = require('./cupomService');
+  let recebido;
+  const tx = { cupom: { updateMany: async (args) => { recebido = args; return { count: 0 }; } } };
+  const agora = new Date('2026-06-01');
+  assert.strictEqual(await registrarUsoCupom(tx, 'k1', agora), false);
+  assert.strictEqual(recebido.where.id, 'k1');
+  assert.strictEqual(recebido.where.ativo, true);
+  assert.deepStrictEqual(recebido.data, { usosAtuais: { increment: 1 } });
+  const json = JSON.stringify(recebido.where.AND);
+  assert.match(json, /usoMaximo/);
+  assert.match(json, /validoAte/);
+  tx.cupom.updateMany = async () => ({ count: 1 });
+  assert.strictEqual(await registrarUsoCupom(tx, 'k1', agora), true);
+});

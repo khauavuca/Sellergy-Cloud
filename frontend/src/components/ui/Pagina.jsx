@@ -30,7 +30,8 @@ export function Pagina({ children, className }) {
 export function FaixaNumeros({ children, min = 180, className }) {
   return (
     <div
-      className={clsx('grid gap-3', className)}
+      // No celular vira uma fileira que rola pro lado (nao empurra a lista pra baixo).
+      className={clsx('grid gap-3 max-sm:flex max-sm:overflow-x-auto max-sm:snap-x max-sm:-mx-4 max-sm:px-4 max-sm:pb-1', className)}
       // No celular cabem 2 por linha (45%); no computador, pelo menos `min`px cada.
       style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(${min}px, 45%), 1fr))` }}
     >
@@ -71,7 +72,7 @@ export function Numero({
       type={onClick ? 'button' : undefined}
       onClick={onClick}
       className={clsx(
-        'text-left rounded-[10px] border px-4 py-3.5 min-w-0',
+        'text-left rounded-[10px] border px-4 py-3.5 min-w-0 max-sm:min-w-[150px] max-sm:flex-shrink-0 max-sm:snap-start',
         destaque
           ? 'bg-[var(--sb-bg)] border-[var(--sb-bg)]'
           : 'bg-[var(--bg-card)] border-[var(--border-main)]',

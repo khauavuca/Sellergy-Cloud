@@ -141,9 +141,14 @@ export default function RelatoriosPage() {
   const [customInicio, setCustomInicio] = useState('');
   const [customFim, setCustomFim] = useState('');
 
+  // Periodo personalizado invertido (inicio depois do fim): avisa e usa as
+  // datas na ordem certa, em vez de mandar um periodo impossivel.
+  const periodoInvertido = preset === 'custom' && !!customInicio && !!customFim && customInicio > customFim;
   const intervalo = useMemo(
-    () => calcularIntervalo(preset, customInicio, customFim),
-    [preset, customInicio, customFim]
+    () => (periodoInvertido
+      ? calcularIntervalo(preset, customFim, customInicio)
+      : calcularIntervalo(preset, customInicio, customFim)),
+    [preset, customInicio, customFim, periodoInvertido]
   );
 
   const Componente = config.Componente;
@@ -198,6 +203,11 @@ export default function RelatoriosPage() {
           )}
           <span>{config.descricao}</span>
         </div>
+        {periodoInvertido && (
+          <p role="alert" className="m-0 px-1 pt-1.5 text-xs font-medium text-[var(--warning-text)]">
+            A data inicial era depois da final — mostrando de {intervalo.inicio.toLocaleDateString('pt-BR')} até {intervalo.fim.toLocaleDateString('pt-BR')}.
+          </p>
+        )}
       </div>
 
       <Componente intervalo={intervalo} />
