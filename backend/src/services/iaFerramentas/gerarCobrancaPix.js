@@ -5,6 +5,7 @@
 // (itensPendentes); quando o Pix for confirmado, cobrancaPagamento.js cria a
 // Venda de verdade (baixa de estoque + lancamento) — ver aplicarEfeitoConfirmacao.
 
+const porTelefone = require('../../clientesFinais/porTelefone');
 const prisma = require('../../prisma');
 const { resolverPrecoVenda } = require('../../produto');
 const { criarCobranca, leadPorTelefone } = require('../pagamentoService');
@@ -95,7 +96,10 @@ async function executar({ itens, cpf_cnpj: cpfCnpj }, { clienteId, telefoneClien
   try {
     // Asaas pede CPF/CNPJ de quem paga: usa o do lead (achado pelo telefone da
     // conversa) ou o que o cliente informou; sem nenhum, devolve precisaCpf.
-    const lead = telefoneCliente ? await leadPorTelefone(clienteId, telefoneCliente) : null;
+    // Cliente da conversa (acha ou cria pela regra unica): a cobranca fica ligada a ele.
+    const lead = telefoneCliente
+      ? (await porTelefone.acharOuCriarLead({ clienteId, telefone: telefoneCliente, origem: 'WHATSAPP' }).catch(() => ({ lead: null }))).lead || await leadPorTelefone(clienteId, telefoneCliente)
+      : null;
     const cobranca = await criarCobranca({
       clienteId,
       leadId: lead?.id || null,

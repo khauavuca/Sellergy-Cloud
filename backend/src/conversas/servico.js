@@ -9,6 +9,7 @@
 // Tudo aqui e "best-effort" pra quem chama do atendimento: gravar a conversa
 // nunca pode derrubar a resposta do bot (use registrarSeguro).
 
+const porTelefone = require('../clientesFinais/porTelefone');
 const prisma = require('../prisma');
 const r = require('./regras');
 
@@ -88,17 +89,27 @@ const CAMPOS_MENSAGEM = {
   erro: true, autorNome: true, criadoEm: true,
 };
 
-async function obterOuCriarConversa({ clienteId, chave, telefone, nomeContato, botId, canal }) {
+// Cadastro do contato: mensagem que CHEGA ja cria o cliente (regra unica em
+// clientesFinais/porTelefone.js); mensagem que sai so liga se ja existir.
+async function leadDoContato({ clienteId, chave, nomeContato, criarLead }) {
+  if (criarLead) {
+    const { lead } = await porTelefone.acharOuCriarLead({ clienteId, telefone: chave, nome: nomeContato, origem: 'WHATSAPP' });
+    return lead?.id || null;
+  }
+  return (await porTelefone.acharLeadPorTelefone(clienteId, chave))?.id || null;
+}
+
+async function obterOuCriarConversa({ clienteId, chave, telefone, nomeContato, botId, canal, criarLead = false }) {
   const where = { clienteId_telefone: { clienteId, telefone: chave } };
   const existente = await prisma.conversa.findUnique({ where });
   if (existente) {
     if (!existente.leadId) {
-      const leadId = await acharLeadPorTelefone(clienteId, chave, telefone).catch(() => null);
+      const leadId = await leadDoContato({ clienteId, chave, nomeContato, criarLead }).catch((e) => { console.error('[conversas] cadastro do contato', e?.message); return null; });
       if (leadId) return prisma.conversa.update({ where: { id: existente.id }, data: { leadId } });
     }
     return existente;
   }
-  const leadId = await acharLeadPorTelefone(clienteId, chave, telefone).catch(() => null);
+  const leadId = await leadDoContato({ clienteId, chave, nomeContato, criarLead }).catch((e) => { console.error('[conversas] cadastro do contato', e?.message); return null; });
   try {
     return await prisma.conversa.create({
       data: {
@@ -134,6 +145,7 @@ async function registrarMensagem(p) {
   const agora = new Date();
   const conversa = await obterOuCriarConversa({
     clienteId: p.clienteId, chave, telefone: p.telefone, nomeContato: p.nomeContato, botId: p.botId, canal: p.canal,
+    criarLead: entrada && p.origem === 'CONTATO',
   });
 
   const dados = {

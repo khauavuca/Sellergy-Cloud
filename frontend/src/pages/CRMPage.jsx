@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import VinculosCliente from '../components/crm/VinculosCliente';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus, Edit2, Trash2, Mail, ArrowRight, ArrowLeft,
@@ -1254,6 +1255,9 @@ function FichaLead({ lead, stages, etapa, situacao, agora, carregando, onEditar,
           <div className="text-[15px] font-bold text-[var(--text-main)] tabular-nums">{diasNoFunil == null ? '—' : `${diasNoFunil} ${diasNoFunil === 1 ? 'dia' : 'dias'}`}</div>
         </div>
       </div>
+
+      {/* Tudo deste cliente: WhatsApp, horarios, vendas, pedidos, pacotes, cobrancas */}
+      <VinculosCliente lead={lead} />
 
       {/* Dados */}
       <div>

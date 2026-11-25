@@ -159,6 +159,38 @@ function textoDaMensagem(msg) {
     || '';
 }
 
+// Telefone de quem mandou a mensagem. O WhatsApp passou a enderecar muitos
+// contatos por LID ("123...@lid", um codigo interno) em vez do numero
+// ("5562...@s.whatsapp.net"). O Baileys 7 manda o numero real em
+// key.remoteJidAlt (ou senderPn/participantAlt); se nao vier, pergunta ao
+// mapa LID -> numero da sessao. Grupo, status e canal ficam fora (1:1).
+function digitosDoJid(jid) {
+  const j = String(jid || '');
+  return j.endsWith('@s.whatsapp.net') ? j.split('@')[0].split(':')[0] : null;
+}
+
+/** Versao sem rede (so o que vem na propria mensagem). PURA. */
+function telefoneDaMensagem(key = {}) {
+  const jid = String(key.remoteJid || '');
+  if (jid.endsWith('@s.whatsapp.net')) return digitosDoJid(jid);
+  if (jid.endsWith('@lid')) return digitosDoJid(key.remoteJidAlt) || digitosDoJid(key.senderPn) || digitosDoJid(key.participantAlt) || digitosDoJid(key.participantPn);
+  return null;
+}
+
+/** Igual a de cima, mas consulta o mapa LID -> numero da sessao se faltar. */
+async function resolverTelefone(sock, key = {}) {
+  const direto = telefoneDaMensagem(key);
+  if (direto) return direto;
+  const jid = String(key.remoteJid || '');
+  if (!jid.endsWith('@lid')) return null;
+  try {
+    const pn = await sock?.signalRepository?.lidMapping?.getPNForLID(jid);
+    return digitosDoJid(pn);
+  } catch {
+    return null;
+  }
+}
+
 async function registrarOptOut(clienteId, telefone) {
   await prisma.optOutWhatsapp.upsert({
     where: { clienteId_telefone: { clienteId, telefone } },
@@ -168,6 +200,12 @@ async function registrarOptOut(clienteId, telefone) {
 }
 
 async function tratarMensagemRecebida(botInicial, upsert) {
+  // Diagnostico enxuto (sem conteudo): ajuda a ver se o WhatsApp esta entregando.
+  for (const m of upsert.messages || []) {
+    const jid = String(m.key?.remoteJid || '');
+    const tipoJid = jid.endsWith('@lid') ? 'lid' : jid.endsWith('@s.whatsapp.net') ? 'pn' : jid.split('@')[1] || '?';
+    console.log(`[baileys] chegou (bot ${botInicial.id}) tipo=${upsert.type} jid=${tipoJid} deMim=${Boolean(m.key?.fromMe)} conteudo=${m.message ? Object.keys(m.message)[0] : (m.messageStubType ? 'stub' : 'vazio')}`);
+  }
   if (upsert.type !== 'notify') return;
   const sock = obterSocket(botInicial.id);
   if (!sock) return;
@@ -182,9 +220,11 @@ async function tratarMensagemRecebida(botInicial, upsert) {
   for (const msg of upsert.messages || []) {
     if (msg.key?.fromMe) continue;
     const remoteJid = msg.key?.remoteJid || '';
-    if (!remoteJid.endsWith('@s.whatsapp.net')) continue; // grupo, status, canal: fora do modelo 1:1
-
-    const de = remoteJid.split('@')[0];
+    const de = await resolverTelefone(sock, msg.key);
+    if (!de) {
+      if (remoteJid.endsWith('@lid')) console.warn(`[baileys] contato LID sem numero conhecido (bot ${bot.id}): ignorada`);
+      continue; // grupo, status, canal: fora do modelo 1:1
+    }
     const texto = textoDaMensagem(msg);
     if (!texto) continue;
 
@@ -414,4 +454,5 @@ async function limparEnquetesAntigas() {
   return r.count;
 }
 
-module.exports = { iniciarPareamento, desconectar, reconectarBotsPareados, obterSocket, registrarEnquete, limparEnquetesAntigas, textoDaMensagem, qrAbandonado };
+module.exports = {
+  telefoneDaMensagem, resolverTelefone, iniciarPareamento, desconectar, reconectarBotsPareados, obterSocket, registrarEnquete, limparEnquetesAntigas, textoDaMensagem, qrAbandonado };

@@ -84,9 +84,9 @@ export default function FichaCliente({ conversa, ficha, respostasDoBotHoje, modu
               </div>
             )}
             <div className="p-4 grid grid-cols-2 gap-2">
-              {agenda && <LinkBotao to="/app/agenda" primario className="col-span-2">Agendar</LinkBotao>}
+              {agenda && <LinkBotao to={`/app/agenda?${new URLSearchParams({ novo: '1', leadId: ficha.id, nome: ficha.nome || '', telefone: ficha.telefone || '' })}`} primario className="col-span-2">Agendar</LinkBotao>}
               <LinkBotao to={`/app/crm?lead=${ficha.id}`} className={clsx(!vendas && 'col-span-2')}>Ver ficha</LinkBotao>
-              {vendas && <LinkBotao to="/app/vendas">Nova venda</LinkBotao>}
+              {vendas && <LinkBotao to={`/app/vendas?leadId=${ficha.id}`}>Nova venda</LinkBotao>}
             </div>
           </>
         ) : (

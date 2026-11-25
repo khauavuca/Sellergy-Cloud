@@ -1,3 +1,4 @@
+const porTelefone = require('../clientesFinais/porTelefone');
 const prisma = require('../prisma');
 const { helpers: caixaHelpers } = require('./CaixaController');
 const { criarVenda, ErroVenda, centavos } = require('../services/vendaService');
@@ -338,12 +339,19 @@ class VendaController {
             campos: [campoClienteFinal],
           });
         }
-        let lead = await prisma.lead.findFirst({ where: { clienteId, cpf } });
-        if (!lead) lead = await prisma.lead.findFirst({ where: { clienteId, telefone } });
-        if (!lead) {
-          lead = await prisma.lead.create({ data: { clienteId, nome, telefone, cpf, origem: 'VENDA', valor: 0 } });
-        }
+        let lead = cpf ? await prisma.lead.findFirst({ where: { clienteId, cpf } }) : null;
+        if (!lead) ({ lead } = await porTelefone.acharOuCriarLead({ clienteId, telefone, nome, cpf, origem: 'VENDA' }));
+        if (!lead) lead = await prisma.lead.create({ data: { clienteId, nome, telefone, cpf, origem: 'VENDA', valor: 0 } });
         leadIdEfetivo = lead.id;
+      }
+
+      // Venda comum com o telefone do cliente informado: liga ao cadastro dele
+      // (ou cria) pela regra unica, pra aparecer na ficha e na conversa.
+      if (!leadIdEfetivo && clienteFinal?.telefone) {
+        const { lead } = await porTelefone.acharOuCriarLead({
+          clienteId, telefone: clienteFinal.telefone, nome: clienteFinal.nome, cpf: clienteFinal.cpf, origem: 'VENDA',
+        }).catch(() => ({ lead: null }));
+        if (lead) leadIdEfetivo = lead.id;
       }
 
       const valorTotalCalculado = centavos(itensValidados.reduce((acc, i) => acc + i.subtotal, 0));

@@ -1251,6 +1251,7 @@ model Cobranca {
   clienteId          String
   origem             OrigemCobranca
   refId              String? // id da Venda/Agendamento de origem (solto — varia por origem)
+  leadId             String? // cliente final (cadastro em Clientes), quando conhecido
   valor              Float
   metodo             MetodoCobranca
   status             StatusCobranca    @default(PENDENTE)
@@ -1274,6 +1275,7 @@ model Cobranca {
   @@unique([provedor, provedorCobrancaId])
   @@index([clienteId, status])
   @@index([clienteId, origem, refId])
+  @@index([clienteId, leadId])
   @@map("cobrancas")
 }
 

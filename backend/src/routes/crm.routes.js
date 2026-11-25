@@ -396,6 +396,34 @@ roteador.get('/leads/:id', requerPermissao('CRM', 'visualizar'), async (req, res
   }
 });
 
+// Tudo que esta ligado a este cliente: conversa do WhatsApp, horarios,
+// vendas, pedidos, pacotes e cobrancas. A ficha mostra num lugar so.
+roteador.get('/leads/:id/vinculos', requerPermissao('CRM', 'visualizar'), async (req, res) => {
+  try {
+    const lead = await leadDoTenant(req, req.params.id, { select: { id: true, clienteId: true } });
+    if (!lead) return res.status(404).json({ error: 'Lead nao encontrado' });
+    const base = { clienteId: lead.clienteId, leadId: lead.id };
+    const agora = new Date();
+    const [conversa, proximos, passados, vendas, pedidos, pacotes, cobrancas, totalVendas] = await Promise.all([
+      prisma.conversa.findFirst({ where: base, select: { id: true, canal: true, naoLidas: true, ultimaMensagemEm: true, ultimaMensagemTexto: true, ultimaMensagemOrigem: true } }),
+      prisma.agendamento.findMany({ where: { ...base, data: { gte: agora } }, orderBy: { data: 'asc' }, take: 5, select: { id: true, data: true, servico: true, status: true, preco: true } }),
+      prisma.agendamento.findMany({ where: { ...base, data: { lt: agora } }, orderBy: { data: 'desc' }, take: 5, select: { id: true, data: true, servico: true, status: true, preco: true } }),
+      prisma.venda.findMany({ where: base, orderBy: { data: 'desc' }, take: 5, select: { id: true, numero: true, valor: true, status: true, data: true } }),
+      prisma.pedido.findMany({ where: base, orderBy: { criadoEm: 'desc' }, take: 5, select: { id: true, numero: true, total: true, status: true, criadoEm: true } }),
+      prisma.pacoteCliente.findMany({ where: base, orderBy: { criadoEm: 'desc' }, take: 5, select: { id: true, sessoesTotal: true, sessoesUsadas: true, status: true, validoAte: true, modeloId: true } }),
+      prisma.cobranca.findMany({ where: base, orderBy: { criadoEm: 'desc' }, take: 5, select: { id: true, valor: true, status: true, metodo: true, origem: true, criadoEm: true } }),
+      prisma.venda.aggregate({ where: { ...base, status: 'COMPLETED' }, _sum: { valor: true }, _count: { _all: true } }),
+    ]);
+    res.json({
+      conversa, proximos, passados, vendas, pedidos, pacotes, cobrancas,
+      totalGasto: totalVendas._sum.valor || 0, qtdVendas: totalVendas._count._all,
+    });
+  } catch (error) {
+    console.error('[crm/leads-vinculos]', error);
+    res.status(500).json({ error: 'Erro ao buscar o histórico do cliente' });
+  }
+});
+
 roteador.post('/leads', requerPermissao('CRM', 'criar'), async (req, res) => {
   try {
     const corpo = req.body || {};

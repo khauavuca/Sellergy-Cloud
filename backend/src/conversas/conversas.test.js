@@ -36,6 +36,8 @@ prisma.mensagemConversa.create = async ({ data }) => {
 };
 prisma.$transaction = async (ops) => Promise.all(ops);
 prisma.lead.findMany = async () => [{ id: 'lead-1', telefone: '(11) 98888-7777' }];
+// Cadastro automatico do contato (clientesFinais/porTelefone): completar nome do lead achado.
+prisma.lead.update = async ({ where, data }) => ({ id: where.id, telefone: '(11) 98888-7777', ...data });
 prisma.agendamento.findMany = async () => [];
 
 const servico = require('./servico');

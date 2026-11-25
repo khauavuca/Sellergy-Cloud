@@ -110,7 +110,7 @@ async function criarCobranca({ clienteId, origem = 'AVULSA', refId = null, valor
 
   const cobranca = await prisma.cobranca.create({
     data: {
-      clienteId, origem, refId, valor, metodo, status: 'PENDENTE', provedor: config.provedor,
+      clienteId, origem, refId, leadId: lead?.id || null, valor, metodo, status: 'PENDENTE', provedor: config.provedor,
       vencimento: vencimento ? new Date(vencimento) : null,
       itensPendentes: itensPendentes || undefined,
     },

@@ -35,7 +35,9 @@ function formInicialAgendamento(ag, inicial) {
   }
   const base = inicial?.data ? new Date(inicial.data) : new Date();
   return {
-    nomeCliente: '', telefoneCliente: '',
+    // Vindo da conversa do WhatsApp (ou da ficha): ja chega com o cliente.
+    nomeCliente: inicial?.nomeCliente || '', telefoneCliente: inicial?.telefoneCliente || '',
+    ...(inicial?.leadId ? { leadId: inicial.leadId } : {}),
     data: dataLocalISO(base),
     hora: inicial?.data ? `${pad(base.getHours())}:${pad(base.getMinutes())}` : '09:00',
     duracao: 30, variacaoId: '', servico: '', preco: 0, especialistaId: inicial?.especialistaId || '',

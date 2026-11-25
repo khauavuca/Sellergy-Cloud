@@ -1,3 +1,4 @@
+const porTelefone = require('../clientesFinais/porTelefone');
 const express = require('express');
 const { obterOuAbrirSessaoCaixa } = require('../services/caixaAutomatico');
 const prisma = require('../prisma');
@@ -494,6 +495,14 @@ roteador.post('/', requerPermissao('AGENDA', 'criar'), async (req, res) => {
       const lead = await prisma.lead.findFirst({ where: { id: leadId, clienteId }, select: { id: true } });
       if (!lead) return res.status(404).json({ erro: 'Cliente não encontrada.', campos: ['leadId'] });
       leadIdValidado = lead.id;
+    }
+    // Sem cliente escolhido mas com telefone: liga ao cadastro desse telefone
+    // (ou cria), pela regra unica. Assim o horario aparece na ficha do cliente
+    // e na conversa do WhatsApp dele.
+    if (!leadIdValidado && campos.telefoneCliente) {
+      const { lead } = await porTelefone.acharOuCriarLead({ clienteId, telefone: campos.telefoneCliente, nome: campos.nomeCliente, origem: 'AGENDA' })
+        .catch((e) => { console.error('[agenda] cadastro pelo telefone', e?.message); return { lead: null }; });
+      if (lead) leadIdValidado = lead.id;
     }
 
     // Escopo "so os proprios": so marca na propria agenda.

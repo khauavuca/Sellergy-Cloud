@@ -17,6 +17,7 @@
 // simultaneos nunca pegam o mesmo numero.
 // =====================================================================
 
+const porTelefone = require('../clientesFinais/porTelefone');
 const crypto = require('crypto');
 const prisma = require('../prisma');
 const { lockClienteAdvisory } = require('../utils/locks');
@@ -67,8 +68,11 @@ async function carregarVariacoes(client, clienteId, ids) {
   return new Map(lista.map((v) => [v.id, v]));
 }
 
-/** Lead pelo telefone (8 ultimos digitos) ou cria. Guarda o CPF se veio. */
+/** Lead pelo telefone (regra unica, numero completo) ou cria. Guarda o CPF se veio. */
 async function leadDoContato(tx, clienteId, { nome, telefone, cpf }, origem) {
+  const { lead: achado } = await porTelefone.acharOuCriarLead({ clienteId, telefone, nome, cpf, origem }, tx);
+  if (achado) return achado.id;
+  // Telefone sem DDD: nao da pra comparar com seguranca, segue o jeito antigo.
   const candidatos = await tx.lead.findMany({
     where: { clienteId, telefone: { contains: telefone.slice(-8) } },
     select: { id: true, telefone: true, cpf: true },

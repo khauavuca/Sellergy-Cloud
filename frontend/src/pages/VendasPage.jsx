@@ -4,7 +4,7 @@ import {
   MoreVertical, UserPlus, ExternalLink, ChevronLeft, ChevronRight, X, MessageCircle,
   QrCode, Banknote, CreditCard, Receipt, ArrowLeftRight,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 import vendaService from '../services/vendaService';
 import {
@@ -121,7 +121,10 @@ export default function VendasPage() {
   const [profissionais, setProfissionais] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState('');
-  const [modal, setModal] = useState({ open: false });
+  const [modal, setModal] = useState(() => {
+    const leadId = new URLSearchParams(window.location.search).get('leadId');
+    return leadId ? { open: true, leadId } : { open: false };
+  });
   const [drawer, setDrawer] = useState({ open: false, venda: null });
   // Modal de cancelamento — motivo obrigatorio (backend exige >= 5 chars).
   const [modalCancelar, setModalCancelar] = useState({ open: false, venda: null });
@@ -388,6 +391,15 @@ export default function VendasPage() {
   });
 
   const abrirNovaVenda = () => setModal({ open: true });
+  // ?leadId= (botao "Nova venda" da conversa do WhatsApp): a venda ja abre
+  // com o cliente escolhido (estado inicial do modal); aqui so limpa a URL.
+  const [paramsUrl, setParamsUrl] = useSearchParams();
+  useEffect(() => {
+    if (!paramsUrl.get('leadId')) return;
+    const limpo = new URLSearchParams(paramsUrl);
+    limpo.delete('leadId');
+    setParamsUrl(limpo, { replace: true });
+  }, [paramsUrl, setParamsUrl]);
   useAcaoTopo(<Button size="sm" icon={Plus} onClick={abrirNovaVenda}>Registrar venda</Button>, []);
 
   const lateral = (
@@ -727,6 +739,7 @@ export default function VendasPage() {
         leads={leads}
         categorias={categorias}
         profissionais={profissionais}
+        leadInicial={modal.leadId || ''}
         onSalvar={handleRegistrar}
       />
 
@@ -780,12 +793,12 @@ function precoEfetivoVariacao(v) {
   return v.preco || 0;
 }
 
-function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, profissionais = [], onSalvar }) {
+function ModalVenda({ isOpen, onClose, variacoes, leads, categorias, profissionais = [], leadInicial = '', onSalvar }) {
   const navigate = useNavigate();
   // Trava o botao enquanto a venda e gravada (clique duplo nao vende 2 vezes).
   const [salvando, setSalvando] = useState(false);
   const [form, setForm] = useState({
-    metodoPagamento: 'PIX', observacoes: '', leadId: '', cupomCodigo: '', especialistaId: '',
+    metodoPagamento: 'PIX', observacoes: '', leadId: leadInicial || '', cupomCodigo: '', especialistaId: '',
     // 'parcelas' e metadata: anota na descricao mas nao gera lancamentos
     // separados. Operadora do cartao paga o lojista o valor cheio.
     parcelas: 1,

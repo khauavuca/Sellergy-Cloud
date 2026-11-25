@@ -106,4 +106,5 @@ module.exports = {
   SLUG_REABERTO,
   fecharLeadAutomatico,
   reabrirLeadSeFechado,
+  garantirEtapa,
 };

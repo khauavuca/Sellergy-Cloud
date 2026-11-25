@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Plus, ChevronLeft, ChevronRight, Users, Link2, CalendarCheck } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 import {
   Button, Select, Badge, useToast, ColunasPagina, Painel, LinhaInfo,
@@ -32,7 +32,11 @@ export default function AgendaPage() {
   const [dataAtual, setDataAtual] = useState(new Date());
   const [variacoes, setVariacoes] = useState([]);
   const [especialistas, setEspecialistas] = useState([]);
-  const [modal, setModal] = useState({ open: false, data: null, inicial: null });
+  const [modal, setModal] = useState(() => {
+    const q = new URLSearchParams(window.location.search);
+    if (q.get('novo') !== '1') return { open: false, data: null, inicial: null };
+    return { open: true, data: null, inicial: { leadId: q.get('leadId') || undefined, nomeCliente: q.get('nome') || '', telefoneCliente: q.get('telefone') || '' } };
+  });
   const [selId, setSelId] = useState(null);
   const [filtroEspecialista, setFiltroEspecialista] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('');
@@ -101,6 +105,15 @@ export default function AgendaPage() {
   const selecionado = selId ? agendamentos.find((a) => a.id === selId) || null : null;
 
   const abrirNovo = (inicial = null) => setModal({ open: true, data: null, inicial });
+  // ?novo=1&leadId=&nome=&telefone= (botao "Agendar" da conversa do WhatsApp
+  // e da ficha): o modal ja abre com o cliente (estado inicial); aqui so limpa a URL.
+  const [params, setParams] = useSearchParams();
+  useEffect(() => {
+    if (params.get('novo') !== '1') return;
+    const limpo = new URLSearchParams(params);
+    ['novo', 'leadId', 'nome', 'telefone'].forEach((k) => limpo.delete(k));
+    setParams(limpo, { replace: true });
+  }, [params, setParams]);
   const fecharModal = () => setModal({ open: false, data: null, inicial: null });
   useAcaoTopo(<Button size="sm" icon={Plus} onClick={() => abrirNovo()}>Novo agendamento</Button>, []);
 
