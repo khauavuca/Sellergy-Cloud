@@ -7,6 +7,32 @@ const { criarProvedorWhatsapp } = require('../adapters/whatsapp');
 const { carregarCredencialDecifrada } = require('../credenciais');
 const { obterSocket } = require('./baileys/gerenciadorConexao');
 const { telefoneParaWhatsapp } = require('./whatsappDoTenant');
+const { camposUsados, textoQrCode, componentesMeta } = require('./campanhaTexto');
+
+/**
+ * Dados do cliente pros campos entre colchetes ([nome], [ultimo servico],
+ * [profissional], [cupom], [link de agendamento]). So busca o que o texto
+ * usa; tudo filtrado pelo clienteId da campanha.
+ */
+async function dadosDoCliente(campanha, lead, usados) {
+  const dados = { nome: String(lead.nome || '').trim().split(/\s+/)[0] || '' };
+  if (usados.has('cupom')) dados.cupom = campanha.cupom?.codigo || '';
+  if (usados.has('link') || campanha.botao === 'MARCAR_HORARIO') {
+    const cliente = await prisma.cliente.findUnique({ where: { id: campanha.clienteId }, select: { slugPublico: true } });
+    const base = (process.env.APP_URL_PUBLICA || '').replace(/\/$/, '');
+    dados.link = cliente?.slugPublico && base ? `${base}/agendar/${cliente.slugPublico}` : '';
+  }
+  if (usados.has('ultimoServico') || usados.has('profissional')) {
+    const ultimo = await prisma.agendamento.findFirst({
+      where: { clienteId: campanha.clienteId, leadId: lead.id, status: 'COMPLETED' },
+      orderBy: { data: 'desc' },
+      select: { servico: true, especialista: { select: { nome: true } } },
+    });
+    dados.ultimoServico = ultimo?.servico || '';
+    dados.profissional = String(ultimo?.especialista?.nome || '').trim().split(/\s+/)[0] || '';
+  }
+  return dados;
+}
 
 // Marca 1 envio como falho + soma no contador da campanha.
 async function marcarFalha(envio, motivo) {
@@ -38,7 +64,7 @@ async function processarEnvioCampanha(campanhaEnvioId) {
   const envio = await prisma.campanhaEnvio.findUnique({
     where: { id: campanhaEnvioId },
     include: {
-      campanha: { select: { id: true, clienteId: true, nomeTemplate: true, mensagem: true } },
+      campanha: { select: { id: true, clienteId: true, nomeTemplate: true, mensagem: true, botao: true, cupom: { select: { codigo: true } } } },
       lead: { select: { id: true, nome: true, telefone: true } },
     },
   });
@@ -76,8 +102,8 @@ async function processarEnvioCampanha(campanhaEnvioId) {
     const socket = obterSocket(bot.id);
     if (!socket) throw new Error('WhatsApp Web nao esta conectado no momento.'); // retry do BullMQ
     const adapter = criarProvedorWhatsapp('BAILEYS', { modo: 'live', socket });
-    const primeiroNome = String(envio.lead.nome || '').trim().split(/\s+/)[0] || '';
-    const texto = String(envio.campanha.mensagem || '').replace(/\[nome\]|\{\{\s*nome\s*\}\}/gi, primeiroNome);
+    const dados = await dadosDoCliente(envio.campanha, envio.lead, camposUsados(envio.campanha.mensagem));
+    const texto = textoQrCode(envio.campanha.mensagem, dados, envio.campanha.botao);
     resultado = await adapter.enviarTexto({ para, texto, tipo: 'campanha' });
   } else {
     if (!envio.campanha.nomeTemplate) return marcarFalha(envio, 'Campanha sem template aprovado configurado.');
@@ -91,7 +117,11 @@ async function processarEnvioCampanha(campanhaEnvioId) {
     const adapter = criarProvedorWhatsapp('META_CLOUD', {
       credencial: { dados: { accessToken: token } }, identificadorCanal: bot.identificadorCanal, modo: 'live',
     });
-    resultado = await adapter.enviarTemplate({ para, nomeTemplate: envio.campanha.nomeTemplate, idioma: 'pt_BR' });
+    const usados = camposUsados(envio.campanha.mensagem);
+    const componentes = usados.size
+      ? componentesMeta(envio.campanha.mensagem, await dadosDoCliente(envio.campanha, envio.lead, usados))
+      : undefined;
+    resultado = await adapter.enviarTemplate({ para, nomeTemplate: envio.campanha.nomeTemplate, idioma: 'pt_BR', componentes });
   }
 
   if (!resultado.ok) {

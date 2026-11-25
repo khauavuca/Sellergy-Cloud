@@ -7,6 +7,8 @@ const crypto = require('crypto');
 const path = require('path');
 const express = require('express');
 const prisma = require('../prisma');
+// Caixa de entrada fora deste teste (sem gravar no banco de dev).
+Object.assign(require('../conversas/servico'), { registrarSeguro: async () => null, pausaDoContato: async () => false });
 
 // ---- stubs de modulo (antes de carregar as rotas) ----
 function stubModulo(relativo, exportsFalsos) {

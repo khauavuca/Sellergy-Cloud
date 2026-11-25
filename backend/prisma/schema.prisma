@@ -20,6 +20,9 @@ model Usuario {
   perfil             Perfil                   @default(ADMIN)
   permissoes         Json?                    @default("{}")
   deveTrocarSenha    Boolean                  @default(false)
+  // Versao da sessao: vai no token (sv). Trocar senha/papel soma 1 e derruba
+  // as sessoes antigas (src/seguranca/sessaoUsuario.js).
+  versaoSessao       Int                      @default(0)
   foto               String? // URL ou data-URL base64 da foto pessoal
   // Login em 2 fatores (TOTP, app autenticador). Segredo cifrado com o cofre
   // (salt proprio). Obrigatorio pro ADMIN quando ADMIN_2FA_OBRIGATORIO=true.
@@ -751,6 +754,10 @@ model Devolucao {
   // cancelamento de venda).
   devolvidoEm       DateTime?
   lembreteEnviadoEm DateTime?
+  // Preenchido quando a venda e cancelada com o item ainda fora: a devolucao
+  // sai da lista "pendente" e nao pode mais ser concluida (o cancelamento ja
+  // devolveu o estoque). Ver VendaController.cancelarVenda.
+  canceladaEm       DateTime?
   criadoEm          DateTime  @default(now())
   atualizadoEm      DateTime  @updatedAt
 
@@ -816,6 +823,17 @@ model Campanha {
   // em massa (bloqueio da propria Meta fora da janela de 24h).
   nomeTemplate String?
   cupomId      String?        @unique
+  // Objetivo escolhido na tela ('voltar' | 'aniversario' | 'novidade' |
+  // 'horario-vazio') — so registro.
+  objetivo     String?
+  // Filtro opcional: so quem gastou mais que isso na ultima venda concluida.
+  gastoMinimo  Float?
+  // Botao da mensagem: 'MARCAR_HORARIO' | 'FALAR'. No QR Code vira o link no
+  // fim do texto; no oficial o botao vem do modelo aprovado na Meta.
+  botao        String?
+  // Envio agendado: o cron (jobs/cronCampanhasAgendadas.js) dispara quando
+  // chega a hora. Continua RASCUNHO ate la.
+  agendadoPara DateTime?
   status       StatusCampanha @default(RASCUNHO)
   totalAlvo    Int            @default(0)
   totalEnviado Int            @default(0)
@@ -829,6 +847,7 @@ model Campanha {
   cupom   Cupom?          @relation(fields: [cupomId], references: [id])
   envios  CampanhaEnvio[]
 
+  @@index([status, agendadoPara])
   @@map("campanhas")
 }
 
@@ -961,6 +980,9 @@ model LancamentoFinanceiro {
   // Quando o pagamento veio de uma Conta a Pagar cadastrada (rastreamento
   // de pagamento recorrente). Nullable porque despesas avulsas nao tem.
   contaPagarId       String?
+  // Chave de repeticao (Idempotency-Key) do POST de criacao: clique duplo
+  // com a mesma chave devolve o lancamento ja criado em vez de duplicar.
+  chaveRepeticao     String?
   criadoEm           DateTime         @default(now())
   atualizadoEm       DateTime         @updatedAt
 
@@ -972,6 +994,7 @@ model LancamentoFinanceiro {
   contaPagar ContaPagar?           @relation(fields: [contaPagarId], references: [id], onDelete: SetNull)
   historico  HistoricoLancamento[]
 
+  @@unique([clienteId, chaveRepeticao])
   @@index([sessaoCaixaId])
   @@index([contaPagarId])
   @@map("lancamentos_financeiros")
@@ -2144,4 +2167,63 @@ model ConfigPlataforma {
   atualizadoEm DateTime @updatedAt
 
   @@map("config_plataforma")
+}
+
+// ---------- Caixa de entrada do WhatsApp (tela /app/whatsapp) ----------
+// Uma conversa por contato (telefone) dentro do negocio. Guarda tudo o que
+// entra e sai pelo numero conectado (oficial ou QR Code): cliente, bot,
+// lembrete, campanha e equipe. Ver src/conversas/.
+// O model antigo `Mensagem` (preso a lead) nao e usado: a conversa existe
+// antes de virar lead e nem todo contato vira lead.
+model Conversa {
+  id                  String    @id @default(uuid())
+  clienteId           String
+  // Telefone so com digitos e DDI, com o 9 do celular brasileiro (chave unica).
+  telefone            String
+  // Como o numero chegou do WhatsApp (pode vir sem o 9): e pra onde a resposta vai.
+  telefoneEnvio       String
+  nomeContato         String?
+  leadId              String?   // lead do CRM com o mesmo telefone (quando existe)
+  botId               String?   // bot (numero) que recebeu/enviou por ultimo
+  canal               String?   // META_CLOUD | BAILEYS
+  ultimaMensagemEm    DateTime  @default(now())
+  ultimaMensagemTexto String?
+  ultimaMensagemOrigem String?  // CONTATO | BOT | EQUIPE | LEMBRETE | CAMPANHA | SISTEMA
+  ultimaEntradaEm     DateTime? // ultima mensagem do cliente (janela de 24 h da Meta)
+  naoLidas            Int       @default(0)
+  // Bot calado nesta conversa: a equipe assumiu. botPausadoAte null com
+  // botPausado = ate alguem devolver ao bot.
+  botPausado          Boolean   @default(false)
+  botPausadoAte       DateTime?
+  criadoEm            DateTime  @default(now())
+  atualizadoEm        DateTime  @updatedAt
+
+  mensagens MensagemConversa[]
+
+  @@unique([clienteId, telefone])
+  @@index([clienteId, ultimaMensagemEm])
+  @@index([leadId])
+  @@map("conversas")
+}
+
+model MensagemConversa {
+  id             String   @id @default(uuid())
+  conversaId     String
+  clienteId      String
+  direcao        String   // ENTRADA | SAIDA
+  origem         String   // CONTATO | BOT | EQUIPE | LEMBRETE | CAMPANHA | SISTEMA
+  texto          String
+  // RECEBIDA (entrada) | SIMULADA (trava de envio desligada) | PENDENTE | ENVIADA | FALHOU
+  status         String   @default("RECEBIDA")
+  erro           String?
+  idExterno      String?  // id da mensagem no WhatsApp (quando o provedor devolve)
+  autorUsuarioId String?
+  autorNome      String?
+  criadoEm       DateTime @default(now())
+
+  conversa Conversa @relation(fields: [conversaId], references: [id], onDelete: Cascade)
+
+  @@index([conversaId, criadoEm])
+  @@index([clienteId, criadoEm])
+  @@map("mensagens_conversa")
 }

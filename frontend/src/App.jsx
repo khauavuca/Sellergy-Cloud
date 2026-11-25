@@ -44,7 +44,9 @@ const AdminPermissoesClientePage = lazy(() => import('./pages/AdminPermissoesCli
 const RelatoriosPage = lazy(() => import('./pages/RelatoriosPage'));
 const RelatorioMensalDetalhePage = lazy(() => import('./pages/RelatorioMensalDetalhePage'));
 const CampanhasPage = lazy(() => import('./pages/CampanhasPage'));
+const NovaCampanhaPage = lazy(() => import('./pages/NovaCampanhaPage'));
 const BotsClientePage = lazy(() => import('./pages/BotsClientePage'));
+const WhatsAppPage = lazy(() => import('./pages/WhatsAppPage'));
 const AdminAssinaturasPage = lazy(() => import('./pages/AdminAssinaturasPage'));
 const TermosPage = lazy(() => import('./pages/TermosPage'));
 const PrivacidadePage = lazy(() => import('./pages/PrivacidadePage'));
@@ -261,7 +263,9 @@ export default function App() {
             <Route path="/app/relatorios/mensais/:periodo" element={<RelatorioMensalDetalhePage />} />
             <Route path="/app/relatorios/:aba" element={<RelatoriosPage />} />
             <Route path="/app/bots" element={<BotsClientePage />} />
+            <Route path="/app/whatsapp" element={<WhatsAppPage />} />
             <Route path="/app/campanhas" element={<CampanhasPage />} />
+            <Route path="/app/campanhas/nova" element={<NovaCampanhaPage />} />
             <Route path="/app/pagamentos" element={<PagamentosPage />} />
             <Route path="/app/fiscal" element={<FiscalPage />} />
             <Route path="/app/usuarios" element={<CrmUsersPage />} />

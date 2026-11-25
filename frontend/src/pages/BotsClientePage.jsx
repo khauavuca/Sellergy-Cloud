@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
+import { Link } from 'react-router-dom';
 import {
-  Bot as BotIcon, Plus, WifiOff, ShieldAlert, QrCode, Link2,
+  Bot as BotIcon, Plus, WifiOff, ShieldAlert, QrCode, ArrowLeft, Repeat, MessageCircle, Settings2,
 } from 'lucide-react';
 import {
-  Button, Badge, EmptyState, useToast, Pagina, ColunasPagina, Painel,
+  Button, Badge, EmptyState, useToast, Pagina, Painel,
 } from '../components/ui';
-import Modal from '../components/Modal';
 import CartaoConexao from '../components/bots/CartaoConexao';
 import PassoAPassoOficial from '../components/bots/PassoAPassoOficial';
 import PainelBotAtendimento from '../components/bots/PainelBotAtendimento';
@@ -36,15 +36,16 @@ const STATUS_BAILEYS_VARIANT = {
 const TOM_POR_VARIANT = { neutral: 'neutro', warning: 'alerta', success: 'sucesso', danger: 'perigo' };
 const ID_PASSO_OFICIAL = 'passo-oficial';
 
-// Tela do tenant pro bot WhatsApp: quando o bot NAO tem IA (padrao pos-pivo),
-// o conteudo principal e o menu de FAQ. Quando o administrador libera o
-// atendimento com IA pro bot (em admin/bots), esta tela troca o FAQ pelo
-// prompt/ações da IA — as duas coisas nao coexistem em runtime (ver
-// webhooksWhatsapp.routes.js: com iaAtiva, o FAQ nem e consultado). Layout:
-// dois cartoes comparando a conexao oficial e a por QR Code, o passo a passo
-// do oficial (campos tecnicos: phoneNumberId, credencial, verify token,
-// callback URL) e, na coluna da direita, o bot de atendimento. O QR Code do
-// WhatsApp Web abre num modal (com socket so enquanto ele esta aberto).
+// Tela do tenant pro bot WhatsApp, em 3 momentos:
+//   1. Escolher o modo: dois cartoes (oficial Meta x numero por QR Code).
+//      Nada de configuracao aparece antes da escolha.
+//   2. Conectar: so o processo do modo escolhido (QR Code na tela, ou o
+//      passo a passo da Meta com os campos tecnicos).
+//   3. Conectado: cartao com o status do numero e "Trocar de modo"; abaixo,
+//      o atendimento do bot (ligar/desligar, IA ou menu de perguntas,
+//      consumo), igual nos dois modos.
+// IA e menu de perguntas nao coexistem em runtime (ver
+// webhooksWhatsapp.routes.js: com iaAtiva, o FAQ nem e consultado).
 const TIPO_CRED_WHATSAPP = 'WHATSAPP_CLOUD_TOKEN';
 
 const TAM_MAX_PROMPT_IA = 4000;
@@ -95,7 +96,13 @@ export default function BotsClientePage() {
   const [faqs, setFaqs] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [salvandoCanal, setSalvandoCanal] = useState(false);
-  const [qrAberto, setQrAberto] = useState(false);
+  // Modo escolhido enquanto nao conectou: 'OFICIAL' | 'QR' | 'ESCOLHER'
+  // (pediu pra ver a escolha de novo). null = retoma o que estava em andamento.
+  const [modoEscolhido, setModoEscolhido] = useState(null);
+  // Conectado e querendo trocar de modo.
+  const [trocandoModo, setTrocandoModo] = useState(false);
+  // Conectado no oficial: abre os dados tecnicos (passo a passo) sob demanda.
+  const [verDadosOficial, setVerDadosOficial] = useState(false);
   const [conexao, setConexao] = useState({ credencialCanalId: '', identificadorCanal: '', verifyTokenCanal: '' });
   const [conectandoBaileys, setConectandoBaileys] = useState(false);
   const [desconectandoBaileys, setDesconectandoBaileys] = useState(false);
@@ -146,11 +153,12 @@ export default function BotsClientePage() {
     carregar();
   }, []);
 
-  // Socket.io so enquanto o modal do QR Code esta aberto — o QR/status do
-  // pareamento Baileys chega em tempo real pela sala do proprio bot (ver
-  // backend/src/index.js: relay Redis -> socket.io -> sala bot:<id>).
+  // Socket.io enquanto o modo QR Code esta em jogo (escolhido ou em uso) — o
+  // QR/status do pareamento Baileys chega em tempo real pela sala do proprio
+  // bot (ver backend/src/index.js: relay Redis -> socket.io -> sala bot:<id>).
+  const acompanharQr = !!bot?.id && (modoEscolhido === 'QR' || bot?.provedorCanal === 'BAILEYS');
   useEffect(() => {
-    if (!qrAberto || !bot?.id) return;
+    if (!acompanharQr) return;
 
     const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:3333', {
       withCredentials: true,
@@ -167,13 +175,15 @@ export default function BotsClientePage() {
     api.get(`/bots/${bot.id}/canal/baileys/status`).then((r) => setStatusBaileys(r.data)).catch(() => {});
 
     return () => socket.disconnect();
-  }, [qrAberto, bot?.id]);
+  }, [acompanharQr, bot?.id]);
 
   const conectarBaileys = async () => {
     if (!bot) return;
     setConectandoBaileys(true);
     try {
       await api.post(`/bots/${bot.id}/canal/baileys/conectar`);
+      // O backend ja trocou o provedor do bot pra BAILEYS.
+      setBot((b) => ({ ...b, provedorCanal: 'BAILEYS' }));
       toast.success('Pareamento iniciado — aguarde o QR Code aparecer.');
     } catch (e) {
       toast.error(e.response?.data?.erro || 'Falha ao iniciar a conexão.');
@@ -182,13 +192,14 @@ export default function BotsClientePage() {
     }
   };
 
-  const desconectarBaileys = async () => {
-    if (!bot || !window.confirm('Desconectar o WhatsApp Web? Vai precisar escanear o QR de novo pra reconectar.')) return;
+  const desconectarBaileys = async ({ semPerguntar = false } = {}) => {
+    if (!bot) return;
+    if (!semPerguntar && !window.confirm('Desconectar o WhatsApp Web? Vai precisar escanear o QR de novo pra reconectar.')) return;
     setDesconectandoBaileys(true);
     try {
       await api.post(`/bots/${bot.id}/canal/baileys/desconectar`);
-      toast.success('Desconectado.');
-      // Fora do modal nao ha socket: rele o status pra atualizar o cartao.
+      if (!semPerguntar) toast.success('Desconectado.');
+      // Rele o status pra atualizar o cartao (o socket tambem avisa).
       api.get(`/bots/${bot.id}/canal/baileys/status`).then((r) => setStatusBaileys(r.data)).catch(() => {});
     } catch (e) {
       toast.error(e.response?.data?.erro || 'Falha ao desconectar.');
@@ -212,10 +223,6 @@ export default function BotsClientePage() {
   // mensagens). Ver backend/src/routes/webhooksWhatsapp.routes.js.
   const urlWebhook = `${urlPublica()}/webhooks/whatsapp`;
 
-  const irParaPassoOficial = () => {
-    document.getElementById(ID_PASSO_OFICIAL)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-
   const copiar = (texto, label) => {
     navigator.clipboard?.writeText(texto).then(
       () => toast.success(`${label} copiado.`),
@@ -237,6 +244,11 @@ export default function BotsClientePage() {
     if (!bot) return;
     setSalvandoCanal(true);
     try {
+      // Trocando do QR Code pro oficial: solta o WhatsApp Web antes, pra o
+      // bot nao ficar com dois numeros respondendo.
+      if (bot.provedorCanal === 'BAILEYS' && statusBaileys.statusConexaoBaileys === 'CONECTADO') {
+        await desconectarBaileys({ semPerguntar: true });
+      }
       const r = await api.patch(`/bots/${bot.id}/canal`, {
         canal: 'WHATSAPP',
         provedorCanal: 'META_CLOUD',
@@ -340,14 +352,36 @@ export default function BotsClientePage() {
     }
   };
 
-  // Botao principal no topo (Topbar): sem bot, cria; com bot, leva ao passo a
-  // passo da conexao oficial (a recomendada).
-  useAcaoTopo(
-    bot
-      ? <Button size="sm" icon={Link2} onClick={irParaPassoOficial}>Conectar número</Button>
-      : (carregando ? null : <Button size="sm" icon={Plus} onClick={criarBot}>Criar bot</Button>),
-    [bot?.id, carregando],
+  // Topo: sem bot, cria; conectado, atalho pras conversas.
+  const conectadoTopo = !!bot && (
+    ((bot.provedorCanal || 'META_CLOUD') === 'META_CLOUD' && !!bot.identificadorCanal && !!bot.credencialCanalId && !!bot.verifyTokenCanal)
+    || (bot.provedorCanal === 'BAILEYS' && statusBaileys.statusConexaoBaileys === 'CONECTADO')
   );
+  useAcaoTopo(
+    !bot
+      ? (carregando ? null : <Button size="sm" icon={Plus} onClick={criarBot}>Criar bot</Button>)
+      : conectadoTopo
+        ? (
+          <Link
+            to="/app/whatsapp"
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-semibold bg-[var(--primary)] text-white hover:opacity-90"
+          >
+            <MessageCircle size={15} aria-hidden="true" /> Ver conversas
+          </Link>
+        )
+        : null,
+    [bot?.id, carregando, conectadoTopo],
+  );
+
+  // QR Code lido durante uma troca de modo: termina a troca sozinho.
+  useEffect(() => {
+    if (modoEscolhido === 'QR' && statusBaileys.statusConexaoBaileys === 'CONECTADO') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reage ao status do socket
+      setModoEscolhido(null);
+      setTrocandoModo(false);
+      toast.success('WhatsApp conectado.');
+    }
+  }, [modoEscolhido, statusBaileys.statusConexaoBaileys]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (carregando) {
     return <div className="text-sm text-[var(--text-muted)] py-10 text-center">Carregando...</div>;
@@ -360,7 +394,7 @@ export default function BotsClientePage() {
           <EmptyState
             icon={BotIcon}
             title="Nenhum bot ainda"
-            description="Crie o bot do seu WhatsApp para começar a configurar a conexão e o atendimento."
+            description="Crie o bot do seu WhatsApp para escolher como conectar o número e configurar o atendimento."
             action={<Button variant="primary" icon={Plus} onClick={criarBot}>Criar bot</Button>}
           />
         </Painel>
@@ -375,94 +409,224 @@ export default function BotsClientePage() {
   const oficialConfigurado = ehOficial && !!bot.identificadorCanal && !!bot.credencialCanalId && !!bot.verifyTokenCanal;
   const stBaileys = statusBaileys.statusConexaoBaileys;
   const baileysConectado = !ehOficial && stBaileys === 'CONECTADO';
+  const conectado = oficialConfigurado || baileysConectado;
+  const modoAtual = oficialConfigurado ? 'OFICIAL' : baileysConectado ? 'QR' : null;
 
-  let situacaoQr = { texto: 'Não está em uso', tom: 'neutro', detalhe: 'o bot usa a API oficial' };
-  if (!baileysLiberado) {
-    situacaoQr = { texto: 'Não liberado', tom: 'neutro', detalhe: 'fale com o administrador para liberar' };
-  } else if (!ehOficial) {
-    situacaoQr = {
-      texto: STATUS_BAILEYS_LABEL[stBaileys] || 'Desconectado',
-      tom: TOM_POR_VARIANT[STATUS_BAILEYS_VARIANT[stBaileys]] || 'neutro',
-      detalhe: statusBaileys.baileysNumeroConectado ? `+${statusBaileys.baileysNumeroConectado}` : undefined,
-    };
+  // Sem escolha explicita, retoma o que ja estava em andamento: QR pedido
+  // (provedor BAILEYS) ou oficial comecado (algum campo tecnico salvo).
+  const modoEmAndamento = !ehOficial
+    ? 'QR'
+    : (bot.identificadorCanal || bot.credencialCanalId || bot.verifyTokenCanal) ? 'OFICIAL' : null;
+  const modoConectando = conectado
+    ? (trocandoModo ? modoEscolhido : null)
+    : (modoEscolhido || modoEmAndamento);
+
+  const escolher = (modo) => {
+    setModoEscolhido(modo);
+    setTrocandoModo(conectado);
+  };
+  const voltarEscolha = () => {
+    // Volta pra escolha de modo; o que ja foi salvo continua salvo.
+    setModoEscolhido(conectado ? null : 'ESCOLHER');
+    setTrocandoModo(conectado);
+  };
+  const cancelarTroca = () => {
+    setTrocandoModo(false);
+    setModoEscolhido(null);
+  };
+
+  const cartaoOficial = (acoes) => (
+    <CartaoConexao
+      id="conexao-oficial"
+      titulo="WhatsApp oficial (Meta)"
+      etiqueta={<Badge variant="success" size="sm">Recomendado</Badge>}
+      itens={[
+        { texto: 'Conexão aprovada pela Meta, sem risco de bloqueio do número', tipo: 'ok' },
+        { texto: 'Campanhas e avisos com modelos de mensagem aprovados', tipo: 'ok' },
+        { texto: 'Funciona com o celular desligado', tipo: 'ok' },
+      ]}
+      rodape="Cobrado por mensagem pela Meta. Precisa do Gerenciador de Negócios da Meta."
+      acoes={acoes}
+    />
+  );
+  const cartaoQr = (acoes) => (
+    <CartaoConexao
+      id="conexao-qr"
+      titulo="Número do negócio por QR Code"
+      etiqueta={<Badge variant="neutral" size="sm">Não oficial</Badge>}
+      itens={[
+        { texto: 'Conecta em 1 minuto, igual WhatsApp Web', tipo: 'ok' },
+        { texto: 'Clientes falam com o número que já conhecem', tipo: 'ok' },
+        { texto: 'Não passa pela Meta: use com moderação', tipo: 'aviso' },
+        { texto: 'Risco real de banimento do número em disparo de mensagens em massa', tipo: 'nao' },
+      ]}
+      rodape={baileysLiberado || modoAtual === 'QR' ? undefined : 'Este modo precisa ser liberado pelo administrador do Sellergy.'}
+      acoes={acoes}
+    />
+  );
+
+  // ---------- Passo 1: escolher o modo ----------
+  const mostrarEscolha = (!conectado && (!modoConectando || modoConectando === 'ESCOLHER'))
+    || (conectado && trocandoModo && !modoEscolhido);
+  if (mostrarEscolha) {
+    return (
+      <Pagina>
+        <Painel
+          titulo={conectado ? 'Trocar o modo de conexão' : 'Passo 1 de 2 · Como quer conectar o WhatsApp?'}
+          subtitulo={conectado
+            ? `Hoje o bot usa ${modoAtual === 'OFICIAL' ? 'o WhatsApp oficial' : 'o número por QR Code'}. Ele continua funcionando até você concluir a troca.`
+            : 'Escolha um modo. Depois aparece só o passo a passo dele.'}
+          acoes={conectado ? <Button variant="secondary" size="sm" icon={ArrowLeft} onClick={cancelarTroca}>Cancelar</Button> : null}
+        >
+          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(300px, 100%), 1fr))' }}>
+            {cartaoOficial(
+              modoAtual === 'OFICIAL'
+                ? <Badge variant="success" size="sm">Em uso</Badge>
+                : <Button variant="primary" size="sm" onClick={() => escolher('OFICIAL')}>Usar o oficial</Button>,
+            )}
+            {cartaoQr(
+              modoAtual === 'QR'
+                ? <Badge variant="success" size="sm">Em uso</Badge>
+                : (
+                  <Button variant="secondary" size="sm" icon={QrCode} onClick={() => escolher('QR')} disabled={!baileysLiberado}>
+                    Usar QR Code
+                  </Button>
+                ),
+            )}
+          </div>
+        </Painel>
+      </Pagina>
+    );
   }
 
-  return (
-    <Pagina>
-      <ColunasPagina
-        lateral={(
-          <PainelBotAtendimento
-            bot={bot}
-            online={online}
-            alternarStatus={alternarStatus}
-            iaForm={iaForm}
-            setIaForm={setIaForm}
-            alternarAcaoBot={alternarAcaoBot}
-            acoesDisponiveis={ACOES_BOT_DISPONIVEIS}
-            tamMaxPrompt={TAM_MAX_PROMPT_IA}
-            salvarIA={salvarIA}
-            salvandoIA={salvandoIA}
-            consumoIA={consumoIA}
-            faqs={faqs}
-            tempoRelativo={tempoRelativo}
-          />
-        )}
-      >
-        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
-          <CartaoConexao
-            id="conexao-oficial"
-            titulo="WhatsApp oficial (Meta)"
-            destaque={ehOficial}
-            etiqueta={<Badge variant="success" size="sm">Recomendado</Badge>}
-            situacao={!ehOficial ? 'Não está em uso' : oficialConfigurado ? 'Configurado' : 'Falta configurar'}
-            tomSituacao={!ehOficial ? 'neutro' : oficialConfigurado ? 'sucesso' : 'alerta'}
-            detalheSituacao={!ehOficial
-              ? 'o bot usa o número por QR Code'
-              : bot.identificadorCanal ? `Phone Number ID ${bot.identificadorCanal}` : 'siga o passo a passo abaixo'}
-            itens={[
-              { texto: 'Conexão aprovada pela Meta, sem risco de bloqueio do número', tipo: 'ok' },
-              { texto: 'Campanhas e avisos com modelos de mensagem aprovados', tipo: 'ok' },
-              { texto: 'Funciona com o celular desligado', tipo: 'ok' },
-            ]}
-            rodape="Cobrado por mensagem pela Meta. Precisa do Gerenciador de Negócios da Meta."
-            acoes={(
-              <Button variant="secondary" size="sm" onClick={irParaPassoOficial}>
-                {oficialConfigurado ? 'Dados técnicos' : 'Configurar'}
-              </Button>
-            )}
-          />
-
-          <CartaoConexao
-            id="conexao-qr"
-            titulo="Número do negócio por QR Code"
-            destaque={!ehOficial}
-            etiqueta={<Badge variant="neutral" size="sm">Não oficial</Badge>}
-            situacao={situacaoQr.texto}
-            tomSituacao={situacaoQr.tom}
-            detalheSituacao={situacaoQr.detalhe}
-            itens={[
-              { texto: 'Conecta em 1 minuto, igual WhatsApp Web', tipo: 'ok' },
-              { texto: 'Clientes falam com o número que já conhecem', tipo: 'ok' },
-              { texto: 'Não passa pela Meta: use com moderação', tipo: 'aviso' },
-              { texto: 'Risco real de banimento do número em disparo de mensagens em massa', tipo: 'nao' },
-            ]}
-            acoes={baileysLiberado ? (
-              baileysConectado ? (
-                <>
-                  <Button variant="secondary" size="sm" icon={QrCode} onClick={() => setQrAberto(true)}>Ver conexão</Button>
-                  <Button variant="danger-soft" size="sm" icon={WifiOff} onClick={desconectarBaileys} loading={desconectandoBaileys}>
-                    Desconectar
-                  </Button>
-                </>
-              ) : (
-                <Button variant="secondary" size="sm" icon={QrCode} onClick={() => setQrAberto(true)}>
-                  {!ehOficial && statusBaileys.qrCodeAtual ? 'Ver QR de novo' : 'Conectar por QR Code'}
-                </Button>
-              )
-            ) : null}
-          />
+  // ---------- Passo 2: conectar o modo escolhido ----------
+  if (modoConectando === 'OFICIAL' || modoConectando === 'QR') {
+    const ehQr = modoConectando === 'QR';
+    return (
+      <Pagina>
+        <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-[var(--border-main)] bg-[var(--bg-card)] px-4 py-3">
+          <Button variant="secondary" size="sm" icon={ArrowLeft} onClick={voltarEscolha}>Trocar modo</Button>
+          <div className="min-w-0 flex-1">
+            <div className="text-xs text-[var(--text-muted)]">{conectado ? 'Trocando o modo' : 'Passo 2 de 2'}</div>
+            <div className="text-sm font-bold text-[var(--text-main)]">
+              {ehQr ? 'Conectar o número por QR Code' : 'Conectar o WhatsApp oficial (Meta)'}
+            </div>
+          </div>
+          {conectado && (
+            <span className="text-xs text-[var(--text-muted)]">
+              O {modoAtual === 'OFICIAL' ? 'oficial' : 'QR Code'} continua respondendo até a troca terminar.
+            </span>
+          )}
         </div>
 
+        {ehQr ? (
+          <Painel titulo="Número do negócio por QR Code" subtitulo="Conecte o WhatsApp do celular ao bot, como no WhatsApp Web.">
+            <div className="flex flex-col gap-4 max-w-[560px]">
+              <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-[var(--warning-soft)]">
+                <ShieldAlert size={16} className="text-[var(--warning)] flex-shrink-0 mt-0.5" aria-hidden="true" />
+                <p className="m-0 text-xs text-[var(--warning-text)] leading-relaxed">
+                  Conexão não oficial: não passa pela Meta e tem risco real de banimento do número, principalmente em disparo de mensagens em massa. Use com moderação.
+                </p>
+              </div>
+
+              {!ehOficial && stBaileys && (
+                <div>
+                  <Badge variant={STATUS_BAILEYS_VARIANT[stBaileys] || 'neutral'} size="sm">
+                    {STATUS_BAILEYS_LABEL[stBaileys] || stBaileys}
+                    {statusBaileys.baileysNumeroConectado ? ` · +${statusBaileys.baileysNumeroConectado}` : ''}
+                  </Badge>
+                </div>
+              )}
+
+              {!ehOficial && statusBaileys.qrCodeAtual && stBaileys !== 'CONECTADO' ? (
+                <div className="flex flex-col items-center gap-2 py-2">
+                  <img src={statusBaileys.qrCodeAtual} alt="QR Code do WhatsApp Web" className="w-56 h-56 border border-[var(--border-main)] rounded-lg bg-white" />
+                  <p className="m-0 text-xs text-[var(--text-muted)] text-center">
+                    No celular: WhatsApp → Aparelhos conectados → Conectar um aparelho → aponte para o QR.
+                  </p>
+                </div>
+              ) : (
+                <ol className="m-0 pl-5 text-[13px] text-[var(--text-secondary)] flex flex-col gap-1.5">
+                  <li>Clique em “Gerar QR Code”.</li>
+                  <li>No celular, abra o WhatsApp → Aparelhos conectados → Conectar um aparelho.</li>
+                  <li>Aponte a câmera para o QR que aparece aqui. Pronto.</li>
+                </ol>
+              )}
+
+              {!(stBaileys === 'CONECTADO' && !ehOficial) && (
+                <div>
+                  <Button variant="primary" icon={QrCode} onClick={conectarBaileys} loading={conectandoBaileys}>
+                    {!ehOficial && statusBaileys.qrCodeAtual ? 'Gerar outro QR Code' : 'Gerar QR Code'}
+                  </Button>
+                </div>
+              )}
+              {conectado && modoAtual === 'OFICIAL' && (
+                <p className="m-0 text-xs text-[var(--text-muted)]">
+                  Ao gerar o QR Code, o bot deixa de usar o número oficial e passa a responder por este número.
+                </p>
+              )}
+            </div>
+          </Painel>
+        ) : (
+          <PassoAPassoOficial
+            key={bot.id}
+            id={ID_PASSO_OFICIAL}
+            bot={bot}
+            conexao={conexao}
+            setConexao={setConexao}
+            credsWhatsapp={credsWhatsapp}
+            urlWebhook={urlWebhook}
+            copiar={copiar}
+            gerarVerifyToken={gerarVerifyToken}
+            salvarCanal={async () => { await salvarCanal(); setTrocandoModo(false); setModoEscolhido(null); }}
+            salvandoCanal={salvandoCanal}
+          />
+        )}
+      </Pagina>
+    );
+  }
+
+  // ---------- Conectado: status do número + atendimento do bot ----------
+  const numeroQr = statusBaileys.baileysNumeroConectado ? `+${statusBaileys.baileysNumeroConectado}` : 'número conectado';
+  return (
+    <Pagina>
+      <Painel
+        titulo={modoAtual === 'OFICIAL' ? 'WhatsApp oficial (Meta)' : 'Número do negócio por QR Code'}
+        acoes={(
+          <>
+            <Badge variant="success" size="sm">Conectado</Badge>
+            <Button variant="secondary" size="sm" icon={Repeat} onClick={() => { setTrocandoModo(true); setModoEscolhido(null); }}>
+              Trocar de modo
+            </Button>
+          </>
+        )}
+      >
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+          <div className="flex items-center gap-2 text-[13px] text-[var(--text-main)] min-w-0 flex-1">
+            <span className="w-2 h-2 rounded-full bg-[var(--success)] flex-shrink-0" aria-hidden="true" />
+            <strong>Conectado</strong>
+            <span className="text-xs text-[var(--text-muted)] [overflow-wrap:anywhere]">
+              · {modoAtual === 'OFICIAL' ? `Phone Number ID ${bot.identificadorCanal}` : numeroQr}
+            </span>
+          </div>
+          {modoAtual === 'OFICIAL' ? (
+            <Button variant="secondary" size="sm" icon={Settings2} onClick={() => setVerDadosOficial((v) => !v)}>
+              {verDadosOficial ? 'Esconder dados técnicos' : 'Dados técnicos'}
+            </Button>
+          ) : (
+            <Button variant="danger-soft" size="sm" icon={WifiOff} onClick={() => desconectarBaileys()} loading={desconectandoBaileys}>
+              Desconectar
+            </Button>
+          )}
+        </div>
+        {modoAtual === 'QR' && (
+          <p className="m-0 mt-3 text-xs text-[var(--text-muted)]">
+            Modo não oficial: evite disparos em massa para não arriscar o número.
+          </p>
+        )}
+      </Painel>
+
+      {modoAtual === 'OFICIAL' && verDadosOficial && (
         <PassoAPassoOficial
           key={bot.id}
           id={ID_PASSO_OFICIAL}
@@ -476,7 +640,25 @@ export default function BotsClientePage() {
           salvarCanal={salvarCanal}
           salvandoCanal={salvandoCanal}
         />
+      )}
 
+      {/* Atendimento do bot: vem logo abaixo da conexão (no celular, antes do menu de perguntas). */}
+      <div className={bot.iaAtiva ? 'flex flex-col gap-4' : 'grid gap-4 items-start lg:grid-cols-[minmax(320px,380px)_minmax(0,1fr)]'}>
+        <PainelBotAtendimento
+          bot={bot}
+          online={online}
+          alternarStatus={alternarStatus}
+          iaForm={iaForm}
+          setIaForm={setIaForm}
+          alternarAcaoBot={alternarAcaoBot}
+          acoesDisponiveis={ACOES_BOT_DISPONIVEIS}
+          tamMaxPrompt={TAM_MAX_PROMPT_IA}
+          salvarIA={salvarIA}
+          salvandoIA={salvandoIA}
+          consumoIA={consumoIA}
+          faqs={faqs}
+          tempoRelativo={tempoRelativo}
+        />
         {!bot.iaAtiva && (
           <PainelPerguntasBot
             faqs={faqs}
@@ -490,46 +672,7 @@ export default function BotsClientePage() {
             excluirFaq={excluirFaq}
           />
         )}
-      </ColunasPagina>
-
-      <Modal
-        isOpen={qrAberto}
-        onClose={() => setQrAberto(false)}
-        title="Número do negócio por QR Code"
-        description="Conecte o WhatsApp do seu celular ao bot, como no WhatsApp Web."
-        size="md"
-      >
-        <div className="space-y-4">
-          <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-[var(--warning-soft)] border border-[var(--warning-soft)]">
-            <ShieldAlert size={16} className="text-[var(--warning)] flex-shrink-0 mt-0.5" aria-hidden="true" />
-            <p className="text-xs text-[var(--warning-text)] leading-relaxed">
-              Conexão não oficial (WhatsApp Web via QR Code) — não passa pela Meta, sem aprovação, mas com risco real de banimento do número, principalmente em disparo de mensagens em massa. Use com moderação.
-            </p>
-          </div>
-
-          {stBaileys && (
-            <Badge variant={STATUS_BAILEYS_VARIANT[stBaileys] || 'neutral'} size="sm">
-              {STATUS_BAILEYS_LABEL[stBaileys] || stBaileys}
-              {statusBaileys.baileysNumeroConectado ? ` — +${statusBaileys.baileysNumeroConectado}` : ''}
-            </Badge>
-          )}
-
-          {stBaileys === 'CONECTADO' ? (
-            <Button variant="danger-soft" icon={WifiOff} onClick={desconectarBaileys} loading={desconectandoBaileys}>
-              Desconectar
-            </Button>
-          ) : statusBaileys.qrCodeAtual ? (
-            <div className="flex flex-col items-center gap-2 py-2">
-              <img src={statusBaileys.qrCodeAtual} alt="QR Code do WhatsApp Web" className="w-56 h-56 border border-[var(--border-main)] rounded-lg" />
-              <p className="text-xs text-[var(--text-muted)]">Abra o WhatsApp no celular → Aparelhos conectados → Conectar um aparelho.</p>
-            </div>
-          ) : (
-            <Button variant="primary" icon={QrCode} onClick={conectarBaileys} loading={conectandoBaileys}>
-              Conectar via QR Code
-            </Button>
-          )}
-        </div>
-      </Modal>
+      </div>
     </Pagina>
   );
 }

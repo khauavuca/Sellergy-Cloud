@@ -3,6 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const prisma = require('../prisma');
+// Caixa de entrada fora deste teste (sem gravar no banco de dev).
+Object.assign(require('../conversas/servico'), { registrarSeguro: async () => null, pausaDoContato: async () => false });
 const { processarLembretes, decidirAposFalha, MAX_TENTATIVAS } = require('./lembretes');
 
 const agora = new Date('2026-11-24T12:00:00Z');

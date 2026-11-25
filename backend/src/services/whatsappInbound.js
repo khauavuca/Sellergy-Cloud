@@ -24,6 +24,9 @@ const { tratarRespostaWhatsapp } = require('../agenda/respostaLembrete');
 const { montarRespostaBot } = require('./iaRouter');
 const { reabrirLeadSeFechado } = require('./etapaLeadAuto');
 const { permitirRespostaBot } = require('./limiteContato');
+// Caixa de entrada do WhatsApp (tela /app/whatsapp): grava o que entra e sai.
+const conversas = require('../conversas/servico');
+const { pausaAtiva, statusDoEnvio } = require('../conversas/regras');
 
 // Campos do Bot que o atendimento precisa — o MESMO select nos dois canais
 // (webhook da Meta e Baileys). Faltar `acoesPermitidas` deixava as
@@ -74,20 +77,35 @@ function botPodeResponder(bot) {
  *      desligado: o lembrete e do sistema, nao do bot;
  *   2. bot desligado -> nao responde (so reabre o lead);
  *   3. IA ou menu (iaRouter decide, com as travas de custo);
+ *   2b. equipe assumiu a conversa (bot pausado na tela WhatsApp) -> nao responde;
  *   4. resposta sem IA tem limite por contato (anti-loop com outro robo).
+ * Tudo que entra e sai fica gravado na conversa (conversas/servico.js).
  * @param {{
  *   bot: Object, texto: string, de: string, faqs: Array,
  *   canalContexto: Object, adapter: import('../adapters/whatsapp').ProvedorWhatsApp,
  * }} p
  * @returns {Promise<{texto?:string, origem?:string}|null>} resposta montada (pra log/depuracao de quem chama)
  */
-async function processarMensagemRecebida({ bot, texto, de, faqs, canalContexto, adapter, payload = null }) {
+async function processarMensagemRecebida({ bot, texto, de, faqs, canalContexto, adapter, payload = null, nomeContato = null }) {
+  const base = { clienteId: bot.clienteId, telefone: de, botId: bot.id, canal: bot.provedorCanal };
+  const registro = await conversas.registrarSeguro({ ...base, texto, direcao: 'ENTRADA', origem: 'CONTATO', nomeContato });
+
+  // Envia pelo adapter e guarda o que saiu (com o status do envio).
+  const responder = async (textoResposta, origem = 'BOT') => {
+    const envio = await adapter.enviarTexto({ para: de, texto: textoResposta });
+    await conversas.registrarSeguro({
+      ...base, texto: textoResposta, direcao: 'SAIDA', origem,
+      status: statusDoEnvio(envio), erro: envio?.ok ? null : envio?.erro, idExterno: envio?.idMensagem,
+    });
+    return envio;
+  };
+
   // Resposta a lembrete de agendamento ("1"/"2" ou botao do template) tem
   // prioridade sobre o bot: confirma/remarca e responde, sem cair no FAQ/IA.
   try {
     const lembrete = await tratarRespostaWhatsapp({ clienteId: bot.clienteId, de, texto, payload });
     if (lembrete.tratado) {
-      if (adapter && lembrete.resposta) await adapter.enviarTexto({ para: de, texto: lembrete.resposta });
+      if (adapter && lembrete.resposta) await responder(lembrete.resposta);
       return { texto: lembrete.resposta, origem: 'LEMBRETE' };
     }
   } catch (e) {
@@ -102,6 +120,12 @@ async function processarMensagemRecebida({ bot, texto, de, faqs, canalContexto, 
 
   if (!botPodeResponder(bot)) return null;
 
+  // Equipe assumiu a conversa: o bot fica quieto ate a pausa acabar.
+  const pausado = registro?.conversa
+    ? pausaAtiva(registro.conversa)
+    : await conversas.pausaDoContato(bot.clienteId, de).catch(() => false);
+  if (pausado) return { texto: null, origem: 'PAUSADO' };
+
   const resposta = await montarRespostaBot({ bot, texto, faqs, de, canalContexto });
 
   // Limite por contato pras respostas SEM IA (a IA ja passou pelo limite
@@ -111,7 +135,7 @@ async function processarMensagemRecebida({ bot, texto, de, faqs, canalContexto, 
   }
 
   if (resposta?.texto && adapter) {
-    await adapter.enviarTexto({ para: de, texto: resposta.texto });
+    await responder(resposta.texto);
   }
 
   return resposta;

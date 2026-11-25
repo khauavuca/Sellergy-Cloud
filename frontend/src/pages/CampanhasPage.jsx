@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
 import {
   Repeat, RefreshCw, MessageCircle, Info, Plus, Send, Megaphone, Copy, AlertTriangle,
@@ -11,11 +12,10 @@ import {
 import { useAcaoTopo } from '../hooks/useAcaoTopo';
 import { usePermissao } from '../hooks/usePermissao';
 import { useAuthStore } from '../store/auth.store';
-import NovaCampanhaModal from '../components/campanhas/NovaCampanhaModal';
 import PreviaCelular from '../components/campanhas/PreviaCelular';
 import {
   fmtBRL, fmtData, fmtNum, STATUS_CAMPANHA_VARIANT, STATUS_CAMPANHA_LABEL, FORM_CAMPANHA_VAZIO,
-  JANELAS, SEGMENTOS, textoCupom, urlSegmento, contarResposta,
+  JANELAS, SEGMENTOS, textoCupom, urlSegmento, contarResposta, statusVisivel, montarPrevia,
 } from '../components/campanhas/constantes';
 
 const soDigitos = (t) => String(t || '').replace(/\D/g, '');
@@ -26,6 +26,7 @@ const fmtDataHora = (d) => (d
 const FILTROS_STATUS = [
   { valor: 'todas', rotulo: 'Todas' },
   { valor: 'RASCUNHO', rotulo: 'Rascunhos' },
+  { valor: 'AGENDADA', rotulo: 'Agendadas' },
   { valor: 'ENVIANDO', rotulo: 'Enviando' },
   { valor: 'CONCLUIDA', rotulo: 'Concluídas' },
   { valor: 'ERRO', rotulo: 'Com erro' },
@@ -33,6 +34,9 @@ const FILTROS_STATUS = [
 
 const th = 'text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap';
 const td = 'px-4 py-2.5 border-b border-[var(--border-subtle)]';
+
+// "Segmentos prontos" mostra só os que têm lista (aniversariantes é só da campanha).
+const SEGMENTOS_LISTA = SEGMENTOS.filter((s) => !s.soCampanha);
 
 const textoSegmento = (seg, dias) => {
   const info = SEGMENTOS.find((s) => s.valor === seg);
@@ -42,6 +46,8 @@ const textoSegmento = (seg, dias) => {
 
 export default function CampanhasPage() {
   const toast = useToast();
+  const navigate = useNavigate();
+  const location = useLocation();
   const podeCriar = usePermissao('CRM', 'criar');
   const podeDisparar = usePermissao('CRM', 'editar');
   const remetente = useAuthStore((s) => s.user?.branding?.nome) || 'Sua loja';
@@ -56,11 +62,8 @@ export default function CampanhasPage() {
   const [campanhas, setCampanhas] = useState([]);
   const [carregandoCampanhas, setCarregandoCampanhas] = useState(true);
   const [filtroStatus, setFiltroStatus] = useState('todas');
-  const [selId, setSelId] = useState(null);
-  const [modalAberto, setModalAberto] = useState(false);
-  const [salvandoCampanha, setSalvandoCampanha] = useState(false);
+  const [selId, setSelId] = useState(() => location.state?.selId || null);
   const [disparandoId, setDisparandoId] = useState(null);
-  const [form, setForm] = useState(FORM_CAMPANHA_VAZIO);
 
   const carregar = async (seg, d) => {
     setCarregando(true);
@@ -109,28 +112,31 @@ export default function CampanhasPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const abrirNovaCampanha = () => {
-    setForm(FORM_CAMPANHA_VAZIO);
-    setModalAberto(true);
-  };
+  const abrirNovaCampanha = () => navigate('/app/campanhas/nova');
 
-  // Abre o modal já preenchido com os dados de uma campanha existente.
+  // Abre a tela de nova campanha já preenchida com os dados de uma existente.
   // O código do cupom fica em branco: cada cupom precisa de um código novo.
   const duplicarCampanha = (c) => {
     const diasOk = JANELAS.some((j) => j.value === String(c.diasRecompra));
-    setForm({
-      ...FORM_CAMPANHA_VAZIO,
-      nome: `${c.nome} (cópia)`,
-      segmento: c.segmento,
-      dias: diasOk ? String(c.diasRecompra) : '30',
-      mensagem: c.mensagem || '',
-      nomeTemplate: c.nomeTemplate || '',
-      incluirCupom: !!c.cupom,
-      cupomTipo: c.cupom?.tipo || 'PERCENTUAL',
-      cupomValor: c.cupom ? String(c.cupom.valor) : '',
-      cupomUsoMaximo: c.cupom?.usoMaximo ? String(c.cupom.usoMaximo) : '',
+    navigate('/app/campanhas/nova', {
+      state: {
+        form: {
+          ...FORM_CAMPANHA_VAZIO,
+          objetivo: c.objetivo || '',
+          nome: `${c.nome} (cópia)`,
+          segmento: c.segmento,
+          dias: diasOk ? String(c.diasRecompra) : '30',
+          gastoMinimo: c.gastoMinimo ? String(c.gastoMinimo).replace('.', ',') : '',
+          mensagem: c.mensagem || '',
+          nomeTemplate: c.nomeTemplate || '',
+          botao: c.botao || FORM_CAMPANHA_VAZIO.botao,
+          incluirCupom: !!c.cupom,
+          cupomTipo: c.cupom?.tipo || 'PERCENTUAL',
+          cupomValor: c.cupom ? String(c.cupom.valor).replace('.', ',') : '',
+          cupomUsoMaximo: c.cupom?.usoMaximo ? String(c.cupom.usoMaximo) : '',
+        },
+      },
     });
-    setModalAberto(true);
   };
 
   useAcaoTopo(
@@ -138,47 +144,21 @@ export default function CampanhasPage() {
     [podeCriar]
   );
 
-  const criarCampanha = async () => {
-    if (!form.nome.trim()) return toast.error('Informe o nome da campanha.');
-    if (!form.mensagem.trim()) return toast.error('Informe a mensagem da campanha.');
-    if (form.incluirCupom && (!form.cupomCodigo.trim() || !form.cupomValor)) {
-      return toast.error('Preencha o código e o valor do cupom, ou desligue o cupom.');
-    }
-
-    setSalvandoCampanha(true);
+  const cancelarAgendamento = async (campanha) => {
+    setDisparandoId(campanha.id);
     try {
-      const payload = {
-        nome: form.nome.trim(),
-        segmento: form.segmento,
-        diasRecompra: form.segmento === 'recompra' ? parseInt(form.dias, 10) : undefined,
-        mensagem: form.mensagem.trim(),
-        nomeTemplate: form.nomeTemplate.trim() || undefined,
-        cupom: form.incluirCupom ? {
-          codigo: form.cupomCodigo.trim(),
-          tipo: form.cupomTipo,
-          valor: parseFloat(form.cupomValor),
-          validoAte: form.cupomValidoAte || undefined,
-          usoMaximo: form.cupomUsoMaximo ? parseInt(form.cupomUsoMaximo, 10) : undefined,
-        } : undefined,
-      };
-      const r = await api.post('/campanhas', payload);
-      toast.success('Campanha criada como rascunho.');
-      setModalAberto(false);
-      if (r.data?.id) setSelId(r.data.id);
-      setFiltroStatus('todas');
+      await api.delete(`/campanhas/${campanha.id}/agendamento`);
+      toast.success('Agendamento cancelado. A campanha voltou a ser rascunho.');
       carregarCampanhas();
     } catch (e) {
-      toast.error(e.response?.data?.erro || 'Erro ao criar campanha.');
+      toast.error(e.response?.data?.erro || 'Erro ao cancelar o agendamento.');
     } finally {
-      setSalvandoCampanha(false);
+      setDisparandoId(null);
     }
   };
 
   const dispararCampanha = async (campanha) => {
-    if (!campanha.nomeTemplate) {
-      toast.error('Configure o nome do template aprovado na Meta antes de disparar (edite a campanha).');
-      return;
-    }
+    // Modelo da Meta: o backend confere (no WhatsApp Web não precisa).
     if (!window.confirm(`Disparar "${campanha.nome}" pra ${campanha.totalAlvo} lead(s) agora? Essa ação não pode ser desfeita.`)) return;
     setDisparandoId(campanha.id);
     try {
@@ -266,15 +246,15 @@ export default function CampanhasPage() {
 
   const contagemStatus = useMemo(() => {
     const c = { todas: campanhas.length };
-    campanhas.forEach((x) => { c[x.status] = (c[x.status] || 0) + 1; });
+    campanhas.forEach((x) => { const st = statusVisivel(x); c[st] = (c[st] || 0) + 1; });
     return c;
   }, [campanhas]);
 
   const abas = FILTROS_STATUS
-    .filter((f) => f.valor === 'todas' || f.valor !== 'ERRO' || contagemStatus.ERRO)
+    .filter((f) => f.valor === 'todas' || !['ERRO', 'AGENDADA'].includes(f.valor) || contagemStatus[f.valor])
     .map((f) => ({ ...f, qtd: contagemStatus[f.valor] || 0 }));
 
-  const campanhasFiltradas = filtroStatus === 'todas' ? campanhas : campanhas.filter((c) => c.status === filtroStatus);
+  const campanhasFiltradas = filtroStatus === 'todas' ? campanhas : campanhas.filter((c) => statusVisivel(c) === filtroStatus);
   const sel = campanhas.find((c) => c.id === selId) || campanhasFiltradas[0] || campanhas[0] || null;
 
   const segAtual = SEGMENTOS.find((s) => s.valor === segmento);
@@ -297,8 +277,8 @@ export default function CampanhasPage() {
       <Painel
         titulo={sel ? `Prévia · ${sel.nome}` : 'Prévia'}
         acoes={sel && (
-          <Badge variant={STATUS_CAMPANHA_VARIANT[sel.status] || 'neutral'} size="sm">
-            {STATUS_CAMPANHA_LABEL[sel.status] || sel.status}
+          <Badge variant={STATUS_CAMPANHA_VARIANT[statusVisivel(sel)] || 'neutral'} size="sm">
+            {STATUS_CAMPANHA_LABEL[statusVisivel(sel)] || sel.status}
           </Badge>
         )}
         semPadding
@@ -307,7 +287,7 @@ export default function CampanhasPage() {
         {sel ? (
           <>
             <div className="border-b border-[var(--border-subtle)]">
-              <PreviaCelular texto={sel.mensagem} remetente={remetente} />
+              <PreviaCelular texto={montarPrevia(sel.mensagem, { cupom: sel.cupom?.codigo })} remetente={remetente} />
             </div>
             <LinhaInfo rotulo="Público" valor={textoSegmento(sel.segmento, sel.diasRecompra)} />
             <LinhaInfo rotulo="Modelo na Meta">
@@ -324,6 +304,15 @@ export default function CampanhasPage() {
             )}
             {sel.cupom?.validoAte && <LinhaInfo rotulo="Cupom válido até" valor={fmtData(sel.cupom.validoAte)} />}
             <LinhaInfo rotulo="Criada em" valor={fmtData(sel.criadoEm)} />
+            {sel.status === 'RASCUNHO' && sel.agendadoPara && (
+              <LinhaInfo rotulo="Envio agendado" valor={fmtDataHora(sel.agendadoPara)}>
+                {podeDisparar && (
+                  <Button variant="ghost" size="sm" onClick={() => cancelarAgendamento(sel)} loading={disparandoId === sel.id}>
+                    Cancelar agendamento
+                  </Button>
+                )}
+              </LinhaInfo>
+            )}
             <LinhaInfo
               rotulo={sel.status === 'RASCUNHO' ? 'Leads no alvo (na criação)' : 'Enviadas'}
               valor={sel.status === 'RASCUNHO' ? fmtNum(sel.totalAlvo) : `${fmtNum(sel.totalEnviado)} de ${fmtNum(sel.totalAlvo)}`}
@@ -457,7 +446,9 @@ export default function CampanhasPage() {
                     const ativa = sel?.id === c.id;
                     const envio = c.status === 'ENVIANDO'
                       ? `Enviando · ${fmtNum(c.totalEnviado)}/${fmtNum(c.totalAlvo)}`
-                      : fmtDataHora(c.enviadoEm);
+                      : c.status === 'RASCUNHO' && c.agendadoPara
+                        ? `Agendada · ${fmtDataHora(c.agendadoPara)}`
+                        : fmtDataHora(c.enviadoEm);
                     const rascunho = c.status === 'RASCUNHO';
                     return (
                       <tr
@@ -487,8 +478,8 @@ export default function CampanhasPage() {
                         </td>
                         <td className={clsx(td, 'text-right tabular-nums')}>{c.cupom ? fmtNum(c.cupom.usosAtuais || 0) : '—'}</td>
                         <td className={td}>
-                          <Badge variant={STATUS_CAMPANHA_VARIANT[c.status] || 'neutral'} size="sm">
-                            {STATUS_CAMPANHA_LABEL[c.status] || c.status}
+                          <Badge variant={STATUS_CAMPANHA_VARIANT[statusVisivel(c)] || 'neutral'} size="sm">
+                            {STATUS_CAMPANHA_LABEL[statusVisivel(c)] || c.status}
                           </Badge>
                         </td>
                         <td className={clsx(td, 'text-right whitespace-nowrap')}>{botaoDisparar(c)}</td>
@@ -508,7 +499,7 @@ export default function CampanhasPage() {
           semPadding
         >
           <div className="grid border-b border-[var(--border-subtle)]" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
-            {SEGMENTOS.map((s) => {
+            {SEGMENTOS_LISTA.map((s) => {
               const ativo = segmento === s.valor;
               return (
                 <button
@@ -616,17 +607,6 @@ export default function CampanhasPage() {
         </Painel>
       </ColunasPagina>
 
-      {modalAberto && (
-        <NovaCampanhaModal
-          form={form}
-          setForm={setForm}
-          onCriar={criarCampanha}
-          onFechar={() => setModalAberto(false)}
-          salvando={salvandoCampanha}
-          remetente={remetente}
-          toast={toast}
-        />
-      )}
     </Pagina>
   );
 }

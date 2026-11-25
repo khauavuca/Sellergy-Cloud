@@ -194,12 +194,14 @@ export default function PassoAPassoOficial({
           Voltar
         </Button>
         <span className="flex-1" />
+        {feitos[4] && (
         <Link
           to="/app/campanhas"
           className="h-9 px-3 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-card)] text-[13px] font-semibold text-[var(--text-main)] inline-flex items-center gap-1.5 hover:bg-[var(--bg-subtle)]"
         >
           <Megaphone size={14} aria-hidden="true" /> Criar campanha
         </Link>
+        )}
         <Button variant={passo === 4 ? 'primary' : 'secondary'} size="sm" onClick={salvarCanal} loading={salvandoCanal}>
           Salvar conexão
         </Button>

@@ -38,6 +38,8 @@ const { criarAuthState, limparAuthState } = require('./authStateStore');
 const { processarMensagemRecebida, CAMPOS_BOT_ATENDIMENTO } = require('../whatsappInbound');
 const { criarProvedorWhatsapp } = require('../../adapters/whatsapp');
 const envioHumano = require('./envioHumano');
+const conversas = require('../../conversas/servico');
+const { statusDoEnvio } = require('../../conversas/regras');
 
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'warn' });
 
@@ -189,7 +191,12 @@ async function tratarMensagemRecebida(botInicial, upsert) {
     if (envioHumano.ehPedidoDeSaida(texto)) {
       await registrarOptOut(bot.clienteId, de).catch((e) => console.error('[baileys/optout]', e?.message));
       await sock.readMessages([msg.key]).catch(() => {});
-      await adapter.enviarTexto({ para: de, texto: 'Pronto, você não vai mais receber nossas mensagens automáticas. Se precisar de algo, é só escrever aqui.' });
+      const textoSaida = 'Pronto, você não vai mais receber nossas mensagens automáticas. Se precisar de algo, é só escrever aqui.';
+      const envio = await adapter.enviarTexto({ para: de, texto: textoSaida });
+      // Caixa de entrada: o pedido e a resposta ficam na conversa.
+      const base = { clienteId: bot.clienteId, telefone: de, botId: bot.id, canal: 'BAILEYS' };
+      await conversas.registrarSeguro({ ...base, texto, direcao: 'ENTRADA', origem: 'CONTATO', nomeContato: msg.pushName || null });
+      await conversas.registrarSeguro({ ...base, texto: textoSaida, direcao: 'SAIDA', origem: 'BOT', status: statusDoEnvio(envio), erro: envio?.ok ? null : envio?.erro });
       continue;
     }
 
@@ -198,7 +205,7 @@ async function tratarMensagemRecebida(botInicial, upsert) {
     }
     await sock.readMessages([msg.key]).catch(() => {});
     await processarMensagemRecebida({
-      bot, texto, de, faqs, adapter,
+      bot, texto, de, faqs, adapter, nomeContato: msg.pushName || null,
       canalContexto: { phoneNumberId: null, token: null, telefoneCliente: de },
     }).catch((e) => console.error(`[baileys/mensagem] falha ao processar (bot ${bot.id}):`, e?.message));
   }

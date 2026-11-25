@@ -198,14 +198,24 @@ async function enviarLembrete(ag, chave, cfg) {
       profissional: ag.especialista?.nome || null,
     };
 
+    // Caixa de entrada (tela /app/whatsapp): o lembrete aparece na conversa do contato.
+    const gravar = (texto, r) => require('../conversas/servico').registrarSeguro({
+      clienteId: ag.clienteId, telefone: para, texto, direcao: 'SAIDA', origem: 'LEMBRETE',
+      botId: canal.botId, canal: canal.provedor, status: require('../conversas/regras').statusDoEnvio(r),
+      erro: r?.ok ? null : r?.erro, idExterno: r?.idMensagem,
+    });
+
     if (canal.provedor === 'META_CLOUD') {
       const r = await canal.adapter.enviarTemplate({ para, nomeTemplate: cfg.nomeTemplate, idioma: cfg.idioma, componentes: componentesTemplate({ ...base, token }) });
+      await gravar(`Lembrete de horário (modelo "${cfg.nomeTemplate}")`, r);
       return r?.ok ? { ok: true, canal: canal.provedor } : { ok: false, erro: r?.erro || 'Falha no envio.', codigo: codigoDaFalha(r) };
     }
 
     // Canal QR Code: texto + enquete Confirmar/Remarcar (um toque pra
     // responder). "1"/"2" e o link continuam valendo pra quem nao ve enquete.
-    const r = await canal.adapter.enviarTexto({ para, tipo: 'lembrete', texto: montarTextoLembrete({ ...base, link: urlConfirmacao(token) }) });
+    const textoLembrete = montarTextoLembrete({ ...base, link: urlConfirmacao(token) });
+    const r = await canal.adapter.enviarTexto({ para, tipo: 'lembrete', texto: textoLembrete });
+    await gravar(textoLembrete, r);
     if (!r?.ok) return { ok: false, erro: r?.erro || 'Falha no envio.', codigo: codigoDaFalha(r) };
     if (typeof canal.adapter.enviarEnquete === 'function') {
       const e = await canal.adapter.enviarEnquete({ para, pergunta: 'Você confirma o horário?', opcoes: ['Confirmar', 'Remarcar'] });

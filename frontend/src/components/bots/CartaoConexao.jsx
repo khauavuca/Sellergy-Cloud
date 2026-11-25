@@ -33,11 +33,13 @@ export default function CartaoConexao({
         {etiqueta}
       </div>
       <div className="px-4 py-3.5 flex flex-col gap-3 flex-1">
-        <div className="flex flex-wrap items-center gap-2 text-[13px] text-[var(--text-main)]">
-          <span className={clsx('w-2 h-2 rounded-full flex-shrink-0', COR_PONTO[tomSituacao] || COR_PONTO.neutro)} aria-hidden="true" />
-          <strong>{situacao}</strong>
-          {detalheSituacao && <span className="text-xs text-[var(--text-muted)] [overflow-wrap:anywhere]">· {detalheSituacao}</span>}
-        </div>
+        {situacao && (
+          <div className="flex flex-wrap items-center gap-2 text-[13px] text-[var(--text-main)]">
+            <span className={clsx('w-2 h-2 rounded-full flex-shrink-0', COR_PONTO[tomSituacao] || COR_PONTO.neutro)} aria-hidden="true" />
+            <strong>{situacao}</strong>
+            {detalheSituacao && <span className="text-xs text-[var(--text-muted)] [overflow-wrap:anywhere]">· {detalheSituacao}</span>}
+          </div>
+        )}
         <ul className="m-0 p-0 list-none flex flex-col gap-2 text-[13px] text-[var(--text-secondary)]">
           {itens.map((item) => {
             const { Icone, cor } = ICONE_ITEM[item.tipo] || ICONE_ITEM.ok;

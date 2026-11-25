@@ -72,10 +72,12 @@ const opcoesCors = {
 };
 
 const app = express();
-// Atras de proxy/tunel (ngrok, nginx, load balancer): confia no
-// primeiro hop pra que req.ip e X-Forwarded-For funcionem corretamente.
-// Necessario pro express-rate-limit nao reclamar e identificar o cliente real.
-app.set('trust proxy', 1);
+// A API so recebe trafego pelo tunel do Cloudflare (cloudflared no host ou na
+// rede do Docker) e pela propria maquina. Confia no X-Forwarded-For SO quando o
+// salto vem de loopback/rede interna: antes ('trust proxy' 1) qualquer um que
+// mandasse um X-Forwarded-For falso zerava o limite de tentativas de login.
+// O IP real do visitante pelo tunel e lido em seguranca/ipCliente.js.
+app.set('trust proxy', 'loopback, linklocal, uniquelocal');
 const servidor = http.createServer(app);
 const io = new Server(servidor, {
   cors: opcoesCors,
@@ -209,6 +211,8 @@ app.use('/convites', require('./routes/convites.routes'));
 app.use('/hoje', require('./routes/hoje.routes'));
 app.use('/suporte', require('./routes/suporte.routes'));
 app.use('/comunicados', require('./routes/comunicados.routes'));
+// Caixa de entrada do WhatsApp (tela /app/whatsapp).
+app.use('/conversas', require('./routes/conversas.routes'));
 app.use('/admin/suporte', require('./routes/adminSuporte.routes'));
 app.use('/admin/saude', require('./routes/adminSaude.routes'));
 app.use('/admin/comunicados', require('./routes/adminComunicados.routes'));
@@ -280,6 +284,10 @@ io.on('connection', (socket) => {
   });
 })();
 
+// Tempo real da caixa de entrada do WhatsApp: sala conversas:<clienteId>
+// (join validado no banco) + relay Redis dos eventos da API e do worker.
+require('./conversas/tempoReal').ligarTempoReal(io);
+
 // Rota que nao existe: JSON curto (sem a pagina padrao do Express).
 app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada' }));
 
@@ -336,6 +344,13 @@ servidor.listen(PORTA, async () => {
     iniciarCronDevolucoes();
   } catch (e) {
     console.error('[boot] Falha ao inicializar cron de devoluções:', e?.message);
+  }
+
+  // Campanhas agendadas: confere a cada minuto e dispara as que venceram.
+  try {
+    require('./jobs/cronCampanhasAgendadas').iniciar();
+  } catch (e) {
+    console.error('[boot] Falha ao inicializar campanhas agendadas:', e?.message);
   }
 
   // Suporte: apaga a conversa dos chamados resolvidos ha mais de 7 dias

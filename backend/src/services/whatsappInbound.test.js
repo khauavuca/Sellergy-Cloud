@@ -6,6 +6,10 @@ const { processarMensagemRecebida, botPodeResponder, CAMPOS_BOT_ATENDIMENTO } = 
 // Sem lembrete pendente e sem lead: o que sobra e a decisao do bot.
 prisma.agendamento.findMany = async () => [];
 prisma.lead.findMany = async () => [];
+// Caixa de entrada fora deste teste (tem o proprio: conversas/conversas.test.js).
+const conversas = require('../conversas/servico');
+conversas.registrarSeguro = async () => null;
+conversas.pausaDoContato = async () => false;
 
 function adapterFalso() {
   const enviados = [];

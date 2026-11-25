@@ -26,6 +26,8 @@ const { conferirWebhookMeta } = require('../services/assinaturaWebhookMeta');
 const { ehPedidoDeSaida } = require('../services/baileys/envioHumano');
 const { carregarCredencialDecifrada } = require('../credenciais');
 const { criarProvedorWhatsapp } = require('../adapters/whatsapp');
+const conversas = require('../conversas/servico');
+const { statusDoEnvio } = require('../conversas/regras');
 
 const roteador = express.Router();
 
@@ -107,13 +109,20 @@ roteador.post('/whatsapp', async (req, res) => {
           modo: 'live',
         });
 
+        // Nome do perfil do WhatsApp de quem escreveu (vai pra caixa de entrada).
+        const nomes = new Map((value.contacts || []).map((c) => [c.wa_id, c.profile?.name || null]));
+
         for (const msg of mensagens) {
           const de = msg.from;
+          const nomeContato = nomes.get(de) || null;
           const texto = msg.text?.body || msg.button?.text || msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || '';
 
           if (ehPedidoDeSaida(texto)) {
             await registrarOptOut(bot.clienteId, de).catch((e) => console.error('[webhook/whatsapp optout]', e?.message));
-            await adapter.enviarTexto({ para: de, texto: TEXTO_OPT_OUT }).catch(() => {});
+            const envio = await adapter.enviarTexto({ para: de, texto: TEXTO_OPT_OUT }).catch(() => null);
+            const base = { clienteId: bot.clienteId, telefone: de, botId: bot.id, canal: 'META_CLOUD' };
+            await conversas.registrarSeguro({ ...base, texto, direcao: 'ENTRADA', origem: 'CONTATO', nomeContato });
+            await conversas.registrarSeguro({ ...base, texto: TEXTO_OPT_OUT, direcao: 'SAIDA', origem: 'BOT', status: statusDoEnvio(envio), erro: envio?.ok ? null : envio?.erro });
             continue;
           }
 
@@ -122,7 +131,7 @@ roteador.post('/whatsapp', async (req, res) => {
           // Botao de resposta rapida (template de lembrete) chega com payload.
           const payload = msg.button?.payload || msg.interactive?.button_reply?.id || null;
           await processarMensagemRecebida({
-            bot, texto, de, faqs, adapter, payload,
+            bot, texto, de, faqs, adapter, payload, nomeContato,
             canalContexto: { phoneNumberId, token, telefoneCliente: de },
           });
           // TODO(seam): resposta.encaminhar -> notificar a equipe (fila/atendimento).

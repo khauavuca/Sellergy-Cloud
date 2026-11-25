@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingBag, Kanban, Calendar, Package, Box,
@@ -16,6 +16,7 @@ import { useAuthStore } from '../store/auth.store';
 import { AcaoTopoContext } from '../hooks/useAcaoTopo';
 import { useUiStore } from '../store/ui.store';
 import { moduloLiberado } from '../constants/permissoes';
+import api from '../services/api';
 
 // Mapeamento dos itens da sidebar para os modulos do tenant.
 // Itens cujo modulo nao foi liberado pelo admin sao escondidos.
@@ -82,6 +83,8 @@ const NAV_GESTAO = [
 ];
 
 const NAV_AUTOMACAO = [
+  // So aparece com numero conectado (oficial configurado ou QR Code CONECTADO).
+  { to: '/app/whatsapp', label: 'WhatsApp', icon: MessageCircle, modulo: 'CRM', precisaWhatsapp: true },
   { to: '/app/bots', label: 'Bots', icon: Bot, modulo: 'BOTS' },
   { to: '/app/campanhas', label: 'Campanhas', icon: Send, modulo: 'CRM' },
 ];
@@ -130,7 +133,9 @@ const TITULOS = {
   '/app/relatorios/estoque': { titulo: 'Relatório · Estoque & CMV', breadcrumb: 'Relatórios · Gestão' },
   '/app/relatorios/bots': { titulo: 'Relatório · Bots / IA', breadcrumb: 'Relatórios · Gestão' },
   '/app/bots': { titulo: 'Bots', breadcrumb: 'Automação' },
+  '/app/whatsapp': { titulo: 'WhatsApp', breadcrumb: 'Automação' },
   '/app/campanhas': { titulo: 'Campanhas', breadcrumb: 'Automação' },
+  '/app/campanhas/nova': { titulo: 'Nova campanha', breadcrumb: 'Automação · Campanhas' },
   '/app/usuarios': { titulo: 'Equipe', breadcrumb: 'Conta' },
   '/app/configuracoes': { titulo: 'Configurações', breadcrumb: 'Conta' },
   '/app/plano': { titulo: 'Meu plano', breadcrumb: 'Conta' },
@@ -154,6 +159,14 @@ export default function ClientLayout() {
   const user = useAuthStore((s) => s.user);
   const modulosLiberados = user?.modulosLiberados;
   const perfil = user?.perfil;
+  const crmLiberado = moduloLiberado(modulosLiberados || {}, 'CRM');
+
+  // WhatsApp conectado + nao lidas (item "WhatsApp" do menu). Rele ao navegar.
+  const [whatsapp, setWhatsapp] = useState(null);
+  useEffect(() => {
+    if (!crmLiberado || perfil === 'ADMIN') return;
+    api.get('/conversas/canal').then((r) => setWhatsapp(r.data)).catch(() => setWhatsapp(null));
+  }, [crmLiberado, perfil, location.pathname]);
 
   // Filtra os itens conforme os modulos liberados pelo admin para este tenant.
   const sections = useMemo(() => {
@@ -161,14 +174,17 @@ export default function ClientLayout() {
     const filtra = (arr) => arr.filter((item) => !item.modulo || moduloLiberado(liberados, item.modulo));
     const operacao = filtra(NAV_OPERACAO);
     const gestao = filtra(NAV_GESTAO);
-    const automacao = NAV_AUTOMACAO.filter((item) => moduloLiberado(liberados, item.modulo));
+    const automacao = NAV_AUTOMACAO
+      .filter((item) => moduloLiberado(liberados, item.modulo))
+      .filter((item) => !item.precisaWhatsapp || whatsapp?.conectado)
+      .map((item) => (item.precisaWhatsapp ? { ...item, badge: whatsapp?.naoLidas || 0 } : item));
 
     const result = [];
     if (operacao.length) result.push({ titulo: 'Operação', items: operacao });
     if (gestao.length) result.push({ titulo: 'Gestão', items: gestao });
     if (automacao.length) result.push({ titulo: 'Automação', items: automacao });
     return result;
-  }, [modulosLiberados]);
+  }, [modulosLiberados, whatsapp]);
 
   // Tudo que a busca do topo encontra: itens do menu, sub-itens e atalhos da conta.
   const atalhos = useMemo(() => {
@@ -217,7 +233,7 @@ export default function ClientLayout() {
           actions={acaoTopo}
           ajuda={linkAjuda(location.pathname)}
         />
-        <main className="flex-1 min-w-0 px-4 sm:px-6 py-5">
+        <main className="flex-1 min-w-0 px-4 sm:px-6 pt-5 pb-24">
           {/* Full-width: o conteudo ocupa toda a largura disponivel. Paginas
               com formulario (Configuracoes, PerfilPage, CrmUsersPage) tem
               max-w proprio e continuam centradas — listas/tabelas/dashboards
