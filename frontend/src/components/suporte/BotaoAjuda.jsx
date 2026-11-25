@@ -484,7 +484,7 @@ export default function BotaoAjuda() {
     <>
       {painelAberto && (
         <section role="dialog" aria-label="Suporte Sellergy"
-          className="fixed z-40 inset-0 sm:inset-auto sm:left-4 sm:bottom-[68px] sm:w-[340px] sm:h-[min(520px,calc(100vh-96px))] flex flex-col overflow-hidden bg-[var(--bg-card)] sm:rounded-2xl shadow-[0_18px_44px_rgba(10,20,15,0.28),0_2px_6px_rgba(10,20,15,0.12)] border border-[var(--border-main)] text-[13px]">
+          className="fixed z-40 inset-0 sm:inset-auto sm:right-4 sm:bottom-[68px] sm:w-[340px] sm:h-[min(520px,calc(100vh-96px))] flex flex-col overflow-hidden bg-[var(--bg-card)] sm:rounded-2xl shadow-[0_18px_44px_rgba(10,20,15,0.28),0_2px_6px_rgba(10,20,15,0.12)] border border-[var(--border-main)] text-[13px]">
           <header className="flex items-center gap-2.5 px-3 py-2.5 text-white bg-[linear-gradient(135deg,#0F1A15,#15322A)]">
             {telaAtual.tipo !== 'inicio' && (
               <button type="button" onClick={irInicio} aria-label="Voltar" className="-ml-1 w-7 h-7 rounded-full grid place-items-center hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
@@ -529,7 +529,7 @@ export default function BotaoAjuda() {
         onClick={alternar}
         aria-expanded={painelAberto}
         aria-label={painelAberto ? 'Fechar o suporte' : 'Ajuda: falar com o suporte'}
-        className={clsx('fixed bottom-4 left-4 z-40 w-11 h-11 grid place-items-center rounded-full bg-[var(--primary)] text-[var(--text-on-primary)] shadow-[0_6px_18px_rgba(19,111,77,0.4)] hover:bg-[var(--primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--primary)]',
+        className={clsx('fixed bottom-4 right-4 z-40 w-11 h-11 grid place-items-center rounded-full bg-[var(--primary)] text-[var(--text-on-primary)] shadow-[0_6px_18px_rgba(19,111,77,0.4)] hover:bg-[var(--primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--primary)]',
           painelAberto && 'max-sm:hidden')}
       >
         {painelAberto ? <ChevronDown size={18} /> : <MessageCircle size={18} aria-hidden="true" />}
