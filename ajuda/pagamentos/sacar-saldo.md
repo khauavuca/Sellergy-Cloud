@@ -8,7 +8,7 @@ ordem: 4
 
 Com a conta de recebimento ativa, o dinheiro das vendas fica na conta. Você saca para a sua chave Pix quando quiser.
 
-<small>Leva 1 minuto · quem pode fazer: dono [CONFERIR: perfis com acesso]</small>
+<small>Leva 1 minuto · quem pode fazer: dono e administrador</small>
 
 ## Passo a passo
 
@@ -35,7 +35,7 @@ Clique em **Confirmar saque**. O dinheiro vai para a chave Pix cadastrada.
 ## Extrato e taxas
 
 - **Extrato**: as movimentações da conta, das mais novas para as mais antigas. Clique em **Carregar mais** para ver as antigas.
-- **Suas taxas**: as taxas da conta e o custo de cada saque. [CONFERIR: valores das taxas e da taxa de saque]
+- **Suas taxas**: as taxas da conta e o custo de cada saque. Os valores são do Asaas e aparecem aqui atualizados.
 - **Quando o dinheiro fica disponível**: mostra o prazo de cada forma de pagamento.
 
 ## Trocar a chave Pix ou o prazo

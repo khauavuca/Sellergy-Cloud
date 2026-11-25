@@ -8,7 +8,7 @@ ordem: 1
 
 O assistente **Configurar nota fiscal** liga a emissão de nota em 4 passos: **Empresa**, **Certificado**, **Configuração** e **Teste**. No fim, você pode deixar a nota sair sozinha em toda venda paga.
 
-<small>Leva 10 minutos · quem pode fazer: dono e administrador [CONFERIR: perfis com acesso]</small>
+<small>Leva 10 minutos · quem pode fazer: dono e administrador</small>
 
 ## Antes de começar
 
@@ -51,7 +51,7 @@ No menu, abra **Fiscal › Configurar nota fiscal**.
 </Passo>
 
 ::: warning Atenção
-A integração com o emissor da nota é ligada pelo suporte do Sellergy. Se a tela pedir, fale com a gente pelo chat. [CONFERIR: quais emissores e cidades/estados já estão atendidos]
+A integração com o emissor da nota é ligada pelo suporte do Sellergy. Se a tela pedir, fale com a gente pelo chat. A nota sai por um emissor parceiro (Focus NFe ou Nuvem Fiscal). Como a NFS-e muda de prefeitura pra prefeitura, confirme com a gente se a sua cidade é atendida.
 :::
 
 ::: tip Dica

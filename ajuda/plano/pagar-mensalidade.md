@@ -8,7 +8,7 @@ ordem: 2
 
 Todas as faturas da sua assinatura ficam em **Meu plano**, com link para pagar.
 
-<small>Leva 2 minutos · quem pode fazer: dono e administrador [CONFERIR: se o administrador consegue pagar faturas]</small>
+<small>Leva 2 minutos · quem pode fazer: dono e administrador (trocar ou cancelar o plano, só o dono)</small>
 
 ## Passo a passo
 
@@ -44,7 +44,7 @@ Com uma fatura em atraso, a conta pode ficar só para consulta até o pagamento 
 
 <Pergunta titulo="Aparece que o link de pagamento ainda não foi gerado. O que faço?">
 
-Espere alguns minutos e abra **Meu plano** de novo. [CONFERIR: em quanto tempo o link é gerado e a quem pedir ajuda]
+Espere um pouco e abra **Meu plano** de novo. Se o link continuar sem aparecer, fale com o suporte do Sellergy pelo botão de ajuda.
 
 </Pergunta>
 

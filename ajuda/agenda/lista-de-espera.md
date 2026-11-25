@@ -46,13 +46,13 @@ Ligue **Oferecer sozinho, sem me perguntar** e a fila recebe as vagas automatica
 
 <Pergunta titulo="Pra quantas pessoas a vaga é oferecida?">
 
-Até 3 pessoas da fila de cada vez. [CONFERIR: quem fica com a vaga quando mais de uma aceita]
+Até 3 pessoas da fila de cada vez. Quem aceitar primeiro fica com o horário. A oferta vale por 30 minutos.
 
 </Pergunta>
 
 <Pergunta titulo="A cliente pode entrar na fila sozinha?">
 
-Sim. No link de agendamento aparece o botão **Entrar na fila**. [CONFERIR: em que situação o botão aparece]
+Sim. Quando o dia escolhido no link de agendamento não tem horário livre, aparece o botão **Me avise se vagar um horário**. Ela preenche **Nome** e **WhatsApp** e clica em **Entrar na fila**.
 
 </Pergunta>
 

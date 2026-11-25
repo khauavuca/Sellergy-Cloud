@@ -8,7 +8,7 @@ ordem: 2
 
 Quando a mercadoria chega, lance a nota no Sellergy. De uma vez só, o estoque soma, o custo do produto é atualizado (o preço recalcula mantendo o seu lucro) e a despesa vai para o financeiro.
 
-<small>Leva 3 minutos · quem pode fazer: [CONFERIR: perfis com permissão no Estoque]</small>
+<small>Leva 3 minutos · quem pode fazer: dono, administrador e quem recebeu a permissão **Criar** em **Estoque** na tela **Equipe**</small>
 
 ## Passo a passo
 
@@ -64,7 +64,7 @@ Só aparecem produtos físicos cadastrados. Se a lista estiver vazia, clique em 
 
 <Pergunta titulo="Como o custo novo é calculado?">
 
-O sistema faz a média entre o que você já tinha em estoque e o que entrou agora (custo médio). [CONFERIR: se a conta usa custo médio ou "última nota"]
+O sistema faz a média entre o que você já tinha em estoque e o que entrou agora (custo médio). Se o estoque estava zerado, vale o custo da nota.
 
 </Pergunta>
 

@@ -27,7 +27,7 @@ Na janela **Cancelar assinatura?**, se quiser, conte o motivo. Clique em **Cance
 </Passo>
 
 ::: warning Atenção
-Depois de cancelar, você não registra vendas nem agendamentos. Exporte o que precisar dentro dos 60 dias. [CONFERIR: o que acontece com os dados depois dos 60 dias]
+Depois de cancelar, você não registra vendas nem agendamentos. Exporte o que precisar dentro dos 60 dias. Pela nossa Política de privacidade, depois desse prazo os dados são apagados. Documentos fiscais e de cobrança ficam guardados pelo tempo que a lei exige.
 :::
 
 ## Perguntas frequentes

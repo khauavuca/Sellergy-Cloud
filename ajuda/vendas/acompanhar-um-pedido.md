@@ -64,6 +64,6 @@ Não. O estoque só baixa quando o pedido é pago.
 
 <Pergunta titulo="Como vendo pelo WhatsApp sem loja online?">
 
-Em **Pedidos**, clique em **Vender pelo WhatsApp** e monte o pedido. [CONFERIR: campos do formulário Vender pelo WhatsApp]
+Em **Pedidos**, clique em **Vender pelo WhatsApp** e monte o pedido: em **Cliente**, busque um cliente cadastrado ou preencha **Nome**, **WhatsApp** e **CPF do cliente**; em **Produtos**, adicione os itens; depois escolha **Retira no local** ou **Entrega** (com **Endereço** e **Frete (R$)**). Clique em **Enviar no WhatsApp**. Quando o cliente pagar, o pedido anda sozinho e o estoque baixa.
 
 </Pergunta>

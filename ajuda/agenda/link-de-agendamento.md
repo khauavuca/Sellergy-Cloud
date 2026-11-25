@@ -33,7 +33,7 @@ A cliente abre a página **Agende seu horário**, escolhe o serviço e o horári
 </Passo>
 
 ::: tip Dica
-O endereço do link também aparece em **Configurações**, no bloco **Link de agendamento**. [CONFERIR: se dá pra mudar o endereço por lá]
+O endereço do link também aparece em **Configurações**, no bloco **Link de agendamento**. Lá o dono ou o administrador pode trocar o **Endereço** e clicar em **Salvar endereço**. Atenção: se trocar, o link antigo para de funcionar, inclusive o da loja online.
 :::
 
 ::: warning Atenção
@@ -44,13 +44,13 @@ Só aparecem no link os serviços com **Aparece no link de agendamento** ligado.
 
 <Pergunta titulo="Não acho o botão Link de agendamento. Por quê?">
 
-Ele depende do seu plano e não aparece pra negócios que só vendem produto. Veja em **Meu plano**. [CONFERIR: quais planos incluem o link]
+Ele depende do seu plano e não aparece pra negócios que só vendem produto. O link vem nos planos Profissional e Negócio (e no teste grátis). Veja em **Meu plano**.
 
 </Pergunta>
 
 <Pergunta titulo="A cliente viu Agenda online indisponível. O que faço?">
 
-[CONFERIR: em que situação essa mensagem aparece e como resolver]
+Ela aparece quando o endereço do link está errado ou não existe, quando o seu plano não inclui o link, quando a Agenda não está ativa na conta ou quando a conta está só para consulta (teste grátis vencido ou mensalidade em atraso). Confira o endereço em **Configurações › Link de agendamento** e a situação da conta em **Meu plano**.
 
 </Pergunta>
 

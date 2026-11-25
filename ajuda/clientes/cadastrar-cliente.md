@@ -46,12 +46,12 @@ Em **O que ele quer comprar**, use **Adicionar produto/serviço do catálogo** p
 
 <Passo n="6">
 
-Escreva o que for importante em **Anotações** e salve. [CONFERIR: rótulo exato do botão de salvar no modal Novo lead]
+Escreva o que for importante em **Anotações** e clique em **Criar lead**. Ao editar um cadastro, o botão se chama **Salvar**.
 
 </Passo>
 
 ::: tip Dica
-Quem marca horário pelo link de agendamento ou entra pela agenda também vira cliente. [CONFERIR: se o agendamento cria o lead em Clientes automaticamente]
+Quem marca horário sozinho pelo link de agendamento, entra na lista de espera ou compra um pacote já entra em **Clientes** sozinho. Horário marcado pela equipe direto na agenda não cria o cadastro: cadastre a pessoa aqui.
 :::
 
 ::: warning Atenção
@@ -68,7 +68,7 @@ Use o número com DDD. É por ele que o Sellergy acha o cliente na agenda, nos p
 
 <Pergunta titulo="Posso cadastrar muitos clientes de uma vez?">
 
-Pode, por planilha, em **Conta › Importar planilha**. [CONFERIR: se a importação aceita clientes]
+Pode, por planilha, em **Conta › Importar planilha**, escolhendo **Clientes**.
 
 </Pergunta>
 

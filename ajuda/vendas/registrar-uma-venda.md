@@ -55,7 +55,7 @@ Produto marcado como **Aluguel** pede a data em **Devolução em**, e aí o clie
 :::
 
 ::: warning Atenção
-Venda no Pix pode ficar como **Aguardando Pix** até o pagamento ser confirmado. [CONFERIR: em que casos a venda manual no Pix fica "Aguardando Pix" e quando passa a "Concluída"]
+A venda registrada aqui entra como concluída na hora, mesmo no Pix: o sistema entende que você já recebeu. Confira o Pix no seu banco antes de registrar. Para cobrar um Pix e esperar o pagamento cair, use **Nova cobrança** em **Pagamentos** ou na tela **Hoje**.
 :::
 
 ## Perguntas frequentes

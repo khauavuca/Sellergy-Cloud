@@ -51,7 +51,7 @@ O lucro bruto olha a margem das vendas. O saldo olha o dinheiro que entrou e sai
 
 <Pergunta titulo="O que é Dinheiro na mesa?">
 
-[CONFERIR: o que o painel "Dinheiro na mesa" mostra na Visão executiva]
+É o que o sistema achou pra você vender ou receber: as cobranças vencidas (botão **Ver dívidas**), os clientes parados no funil há 7 dias ou mais (botão **Ver quem chamar**) e o valor do que está em negociação agora. No alto, o total aparece como "possíveis".
 
 </Pergunta>
 

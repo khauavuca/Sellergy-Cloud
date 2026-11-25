@@ -39,7 +39,7 @@ Escreva em **Motivo / observação** o que houve (ex.: 2 unidades quebradas no m
 </Passo>
 
 ::: warning Atenção
-[CONFERIR: se "Venda manual" ou "Compra de fornecedor" registradas por aqui lançam algo no financeiro ou só mexem no estoque]
+**Compra de fornecedor** também lança uma despesa já paga no Financeiro (custo × quantidade), e **Venda manual** lança uma receita já paga (preço × quantidade). Não registre a mesma venda aqui e em **Vendas**, senão ela conta duas vezes. Os outros tipos só mexem no estoque.
 :::
 
 ## Perguntas frequentes

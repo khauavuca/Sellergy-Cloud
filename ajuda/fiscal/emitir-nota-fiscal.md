@@ -51,12 +51,12 @@ Clique em **Emitir**. Aparece **Nota enviada para emissão.** e a nota entra na 
 </Passo>
 
 ::: warning Atenção
-A gaveta avisa que a emissão roda em modo de teste (sem SEFAZ) por enquanto. [CONFERIR: se a emissão real já está ligada e para quais clientes]
+A gaveta avisa que a emissão roda em modo de teste (sem SEFAZ) por enquanto. Nota de teste não vale como nota de verdade. Fale com o suporte do Sellergy pra saber se a emissão real já está ativa na sua conta.
 :::
 
 ## Baixar os arquivos
 
-Clique na nota na lista para ver o **Detalhe da nota**. Ali tem **Baixar PDF**, **Baixar XML** e **Itens em CSV**. [CONFERIR: PDF e XML ainda aparecem como "ainda não disponível"]
+Clique na nota na lista para ver o **Detalhe da nota**. Ali tem **Baixar PDF**, **Baixar XML** e **Itens em CSV**. **Baixar PDF** e **Baixar XML** ficam apagados ("ainda não disponível") enquanto o emissor não devolve os arquivos da nota.
 
 ## Leia também
 

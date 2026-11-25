@@ -65,7 +65,7 @@ Cada convite pendente já reserva um lugar no limite de usuários do seu plano. 
 
 <Pergunta titulo="O convite venceu. E agora?">
 
-O link vale 7 dias. Na aba **Convites**, clique em **Reenviar**. [CONFERIR: se Reenviar gera um link novo com mais 7 dias]
+O link vale 7 dias. Na aba **Convites**, clique em **Reenviar**. Sai um link novo, que vale mais 7 dias. O link antigo para de funcionar.
 
 </Pergunta>
 

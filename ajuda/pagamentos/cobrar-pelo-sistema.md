@@ -56,6 +56,6 @@ Se aparecer **O provedor não devolveu Pix nem link para esta cobrança**, confi
 
 <Pergunta titulo="Quanto custa cada cobrança?">
 
-A taxa é a do seu provedor (Mercado Pago ou Asaas). [CONFERIR: se o Sellergy cobra alguma taxa própria]
+Você paga a taxa do seu provedor (Mercado Pago ou Asaas). Confira os valores no site do provedor. Hoje o Sellergy não cobra taxa por cobrança.
 
 </Pergunta>

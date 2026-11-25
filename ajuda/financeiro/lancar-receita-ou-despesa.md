@@ -8,7 +8,7 @@ ordem: 1
 
 Todo dinheiro que entra ou sai e não veio de uma venda pode ser lançado à mão: aluguel, conta de luz, um serviço avulso.
 
-<small>Leva 2 minutos · quem pode fazer: [CONFERIR: perfis com permissão de criar no Financeiro]</small>
+<small>Leva 2 minutos · quem pode fazer: dono, administrador e quem recebeu a permissão **Criar** em **Financeiro e caixa** na tela **Equipe**</small>
 
 ## Passo a passo
 

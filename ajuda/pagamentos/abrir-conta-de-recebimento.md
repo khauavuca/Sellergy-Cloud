@@ -8,7 +8,7 @@ ordem: 3
 
 A **Conta de recebimento** é uma conta aberta no Asaas, instituição de pagamento autorizada pelo Banco Central, direto pelo Sellergy. Depois de aprovada, os pedidos e cobranças já saem por ela.
 
-<small>Leva 5 minutos para preencher · quem pode fazer: dono [CONFERIR: perfis com acesso]</small>
+<small>Leva 5 minutos para preencher · quem pode fazer: dono e administrador</small>
 
 ## Passo a passo
 
@@ -50,7 +50,7 @@ Clique em **Enviar para análise**. A conta fica **Em análise**. Use **Atualiza
 </Passo>
 
 ::: warning Atenção
-Depois do envio, o Asaas pode pedir foto do documento e uma selfie. O link aparece na própria tela, no quadro **Falta enviar**. Prazo da análise: [CONFERIR: prazo médio de análise do Asaas]
+Depois do envio, o Asaas pode pedir foto do documento e uma selfie. O link aparece na própria tela, no quadro **Falta enviar**. Quem faz a análise e define o prazo é o Asaas. Clique em **Atualizar status** de vez em quando para ver se já foi liberada.
 :::
 
 ::: tip Dica

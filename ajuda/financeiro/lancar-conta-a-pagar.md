@@ -8,7 +8,7 @@ ordem: 3
 
 Cadastre as contas que você paga (aluguel, internet, fornecedor) para não esquecer o vencimento. Na hora de pagar, um clique cria a despesa no financeiro.
 
-<small>Leva 2 minutos · quem pode fazer: [CONFERIR: perfis com permissão de criar no Financeiro]</small>
+<small>Leva 2 minutos · quem pode fazer: dono, administrador e quem recebeu a permissão **Criar** em **Financeiro e caixa** na tela **Equipe**</small>
 
 ## Cadastrar a conta
 

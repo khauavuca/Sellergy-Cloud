@@ -8,13 +8,13 @@ ordem: 3
 
 Categorias agrupam os serviços e deixam a lista mais fácil de achar.
 
-<small>Leva 1 minuto · quem pode fazer: [CONFERIR: perfis que podem editar Serviços]</small>
+<small>Leva 1 minuto · quem pode fazer: dono, administrador e quem recebeu a permissão **Criar** em **Financeiro e caixa** na tela **Equipe**</small>
 
 ## Passo a passo
 
 <Passo n="1">
 
-Abra **Serviços**. [CONFERIR: onde fica o botão que abre Nova categoria de serviço]
+Abra **Serviços** e clique em **Categoria de serviço**, à direita dos filtros da lista.
 
 </Passo>
 
@@ -34,7 +34,7 @@ Na lista, use **Buscar serviço** e o filtro **Categoria** pra achar o que preci
 
 <Pergunta titulo="Posso excluir um serviço?">
 
-Pode, com **Excluir**. Se ele já tem histórico, prefira **Arquivar**. [CONFERIR: quando a exclusão é bloqueada]
+Pode, com **Excluir**. Se ele já tem histórico, prefira **Arquivar**. O sistema não deixa excluir um serviço que já tem movimentação registrada, como uma venda.
 
 </Pergunta>
 

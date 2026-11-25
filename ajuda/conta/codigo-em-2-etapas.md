@@ -12,7 +12,7 @@ Com o código em 2 etapas, além da senha o Sellergy pede um código de 6 dígit
 
 ## Antes de começar
 
-Instale no celular um app autenticador. [CONFERIR: quais apps recomendar, ex.: Google Authenticator ou Microsoft Authenticator]
+Instale no celular um app autenticador: Google Authenticator, Microsoft Authenticator, Authy ou outro.
 
 ## Passo a passo
 
@@ -50,7 +50,7 @@ Em **Meu perfil**, clique em **Desativar código em 2 etapas**, informe a **Senh
 
 <Pergunta titulo="Troquei de celular ou perdi o app. E agora?">
 
-[CONFERIR: como recuperar o acesso sem o app autenticador; não há códigos de recuperação na tela]
+Sem o código do app não dá pra entrar, e o Sellergy não tem códigos de recuperação. Antes de trocar de celular, desligue o código em **Meu perfil** e ligue de novo no aparelho novo. Se o seu app guarda cópia na nuvem, restaure no celular novo. Se perdeu o acesso de vez, fale com o suporte do Sellergy.
 
 </Pergunta>
 

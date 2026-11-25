@@ -13,7 +13,7 @@ Todo mês o Sellergy tira uma "foto" dos números do mês anterior: financeiro, 
 ## Como funciona
 
 - O fechamento é gerado sozinho **todo dia 7**, com os números do mês anterior.
-- Antes disso, o sistema avisa para você lançar as despesas que faltam. [CONFERIR: onde aparecem os avisos dos dias 1 e 5]
+- Antes disso, o sistema avisa nas notificações do Sellergy: no dia 1, pra lançar as despesas que faltam, e no dia 5, que faltam 2 dias pro fechamento.
 - Depois de gerado, o fechamento **não muda** (snapshot).
 - Lançamentos pagos em mês anterior ficam travados em **Financeiro** para não mudar os relatórios.
 

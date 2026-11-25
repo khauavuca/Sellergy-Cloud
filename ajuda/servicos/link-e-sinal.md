@@ -8,7 +8,7 @@ ordem: 2
 
 Você decide quais serviços aparecem no link de agendamento e se a cliente paga uma parte adiantada (sinal) pra garantir o horário.
 
-<small>Leva 2 minutos · quem pode fazer: [CONFERIR: perfis que podem editar Serviços]</small>
+<small>Leva 2 minutos · quem pode fazer: dono, administrador e quem recebeu a permissão **Editar** em **Catálogo de serviços** na tela **Equipe**; o sinal, só dono e administrador</small>
 
 ## Passo a passo
 
@@ -43,7 +43,7 @@ Na lista, use o filtro **Visibilidade** pra ver quais serviços estão no link.
 :::
 
 ::: warning Atenção
-**Arquivar** tira o serviço do link e da agenda. O sinal é pago por Pix e precisa do recebimento configurado em **Pagamentos**. [CONFERIR: onde se define o sinal padrão do negócio]
+**Arquivar** tira o serviço do link e da agenda. O sinal é pago por Pix e precisa do recebimento configurado em **Pagamentos**. O **Padrão do negócio** é definido em **Configurações › Agenda e sinal**, no campo **Sinal padrão (% do preço)** (0 = não cobra), com o botão **Salvar sinal**.
 :::
 
 ## Leia também

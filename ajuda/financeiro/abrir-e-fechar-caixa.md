@@ -70,7 +70,7 @@ As sessões fechadas ficam no histórico, e as que tiveram diferença aparecem e
 
 <Pergunta titulo="Meu caixa abriu sozinho. Por quê?">
 
-Aparece **Abertura automática** quando o sistema abriu a sessão por você. [CONFERIR: em que situação o caixa abre automaticamente]
+Aparece **Abertura automática** quando o sistema abriu a sessão por você. Isso acontece na primeira venda do dia (ou no primeiro atendimento concluído) sem caixa aberto, pra não travar a venda. O valor inicial é o que ficou no último fechamento. Esse caixa é fechado e reaberto sozinho todo dia às 00:01.
 
 </Pergunta>
 

@@ -40,7 +40,7 @@ O disparo não pode ser desfeito. Se aparecer **Falta o modelo na Meta**, edite 
 
 <Pergunta titulo="Por que alguns clientes falharam?">
 
-Os mais comuns: cliente **Sem telefone** ou número inválido. [CONFERIR: outros motivos de falha mostrados]
+A tela mostra quantos falharam, não o motivo de cada um. Os motivos possíveis são: cliente **Sem telefone** ou com número inválido, cliente que pediu pra não receber mais mensagens (respondeu SAIR), WhatsApp do negócio desconectado em **Bots** ou, no WhatsApp oficial, campanha sem o modelo aprovado na Meta.
 
 </Pergunta>
 

@@ -8,7 +8,7 @@ ordem: 5
 
 Um pacote junta várias sessões de um serviço com preço e validade. Cada atendimento concluído na agenda desconta uma sessão sozinho.
 
-<small>Leva 3 minutos · quem pode fazer: [CONFERIR: perfis que podem criar e vender pacotes]</small>
+<small>Leva 3 minutos · quem pode fazer: criar pacote, dono e administrador; vender, dono, administrador e quem recebeu a permissão **Criar** em **Agenda** na tela **Equipe**</small>
 
 ## Passo a passo
 
@@ -34,7 +34,7 @@ No pacote, clique em **Vender**. Preencha **Nome da cliente** e **WhatsApp**. Se
 
 <Passo n="4">
 
-Em **Como ela paga**, escolha **Agora, no caixa** (com **Forma de pagamento** e **Parcelas**) ou **Pix pelo WhatsApp**. Confirme. [CONFERIR: rótulo do botão que confirma a venda]
+Em **Como ela paga**, escolha **Agora, no caixa** (com **Forma de pagamento** e **Parcelas**) ou **Pix pelo WhatsApp**. Clique em **Registrar venda de R$ ...** (no caixa) ou **Gerar Pix** (pelo WhatsApp).
 
 </Passo>
 

@@ -8,7 +8,7 @@ ordem: 3
 
 O **Início** mostra como está o seu negócio: vendas do dia, saldo em caixa, agendamentos e Pix pendentes. A tela **Hoje** é para o balcão: o atendimento de agora, os próximos horários, avisos e uma cobrança rápida por Pix.
 
-<small>Leva 3 minutos · quem pode fazer: todos da equipe [CONFERIR: o que cada perfil vê no Início e no Hoje]</small>
+<small>Leva 3 minutos · quem pode fazer: o **Início**, toda a equipe (o saldo do caixa e o Pix a receber só aparecem para dono e administrador); a tela **Hoje**, dono e administrador</small>
 
 ## Passo a passo
 
@@ -22,7 +22,7 @@ No menu, abra **Hoje**. Em **Atendimento agora** aparece quem está sendo atendi
 
 <Passo n="2">
 
-Ao terminar o atendimento, marque como feito. Isso lança a venda do serviço no caixa. [CONFERIR: rótulo exato do botão de concluir atendimento]
+Ao terminar o atendimento, clique em **Concluir e cobrar**. Isso lança a venda do serviço no caixa.
 
 </Passo>
 
@@ -39,7 +39,7 @@ Para ver o dia inteiro, clique em **Abrir agenda completa**. Se algo não atuali
 </Passo>
 
 ::: warning Atenção
-Para gerar Pix na hora, ative o recebimento por Pix uma vez. Se não estiver ativo, a tela Hoje avisa. [CONFERIR: onde ativar o recebimento por Pix]
+Para gerar Pix na hora, ative o recebimento por Pix uma vez. Se não estiver ativo, a tela Hoje avisa. Ative no menu **Pagamentos**, no quadro **Provedor de pagamento**.
 :::
 
 ::: tip Dica

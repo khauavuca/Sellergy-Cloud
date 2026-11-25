@@ -11,7 +11,7 @@ A tela **Devoluções** mostra os itens vendidos como aluguel que ainda precisam
 <small>Leva 1 minuto · quem pode fazer: quem tem acesso a Vendas</small>
 
 ::: tip Dica
-Esta tela não é para troca de produto vendido. É para aluguel: o item sai com data de volta (**Devolução em**) quando você [registra a venda](./registrar-uma-venda). [CONFERIR: como tratar troca/devolução de produto vendido, que não é desta tela]
+Esta tela não é para troca de produto vendido. É para aluguel: o item sai com data de volta (**Devolução em**) quando você [registra a venda](./registrar-uma-venda). Se o cliente devolveu um produto comprado, cancele a venda em **Vendas** (o estoque volta sozinho). Se a devolução for só de parte, registre uma movimentação **Devolução do cliente** em **Estoque**; ela não mexe no financeiro.
 :::
 
 ## Passo a passo
@@ -32,7 +32,7 @@ Confira a coluna do prazo: aparece **No prazo**, **Atrasada** ou há quantos dia
 
 <Passo n="3">
 
-Quando o item voltar, clique na ação de confirmar a devolução na linha do item e confirme a pergunta. Aparece **Devolução concluída. Estoque atualizado.** [CONFERIR: rótulo exato do botão de confirmar devolução]
+Quando o item voltar, clique em **Marcar devolvido** na linha do item e confirme a pergunta. Aparece **Devolução concluída. Estoque atualizado.**
 
 </Passo>
 

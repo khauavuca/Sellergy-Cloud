@@ -8,7 +8,7 @@ ordem: 1
 
 Cadastre cada produto que você vende para o Sellergy controlar a quantidade, o custo e o lucro. Você informa quanto pagou e quanto quer ganhar, e o sistema calcula o preço de venda.
 
-<small>Leva 3 minutos · quem pode fazer: [CONFERIR: perfis com permissão de criar no Estoque]</small>
+<small>Leva 3 minutos · quem pode fazer: dono, administrador e quem recebeu a permissão **Criar** em **Catálogo de serviços** na tela **Equipe**</small>
 
 ## Antes de começar
 

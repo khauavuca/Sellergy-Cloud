@@ -22,7 +22,7 @@ No menu, em **Conta**, abra **Meu plano**. Clique em **Escolher plano** (no test
 
 <Passo n="2">
 
-Na janela **Escolha seu plano**, compare os planos: limites de profissionais, usuários e lembretes de WhatsApp por mês. Se quiser, escolha a cobrança **Anual · 20% off**. [CONFERIR: rótulo da opção de cobrança mensal]
+Na janela **Escolha seu plano**, compare os planos: limites de profissionais, usuários e lembretes de WhatsApp por mês. Escolha a cobrança **Mensal** ou **Anual · 20% off**.
 
 </Passo>
 
@@ -46,7 +46,7 @@ Se você assinar durante o teste, os dias grátis que faltam continuam valendo: 
 
 <Pergunta titulo="O que muda na cobrança quando troco de plano no meio do mês?">
 
-[CONFERIR: regra de proporcional ou de data na troca de plano]
+O Sellergy não calcula valor proporcional. O plano novo vale na hora, e o valor novo aparece nas próximas faturas, em **Meu plano**.
 
 </Pergunta>
 

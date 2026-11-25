@@ -22,7 +22,11 @@ No menu, abra **Início**. Procure o quadro **Primeiros passos**.
 
 <Passo n="2">
 
-Siga os itens da lista na ordem. Cada item leva para a tela certa. [CONFERIR: lista exata dos itens do checklist, que muda conforme o tipo de negócio]
+Siga os itens da lista na ordem. Cada item leva para a tela certa e fica marcado sozinho quando você faz.
+
+- **Serviço** (salão, clínica): Defina o horário de funcionamento · Cadastre quem atende · Cadastre seus serviços com preço e duração · Traga seus clientes (importe a planilha) · Marque o primeiro atendimento · Conecte o WhatsApp do negócio · Divulgue seu link de agendamento · Ative o recebimento por Pix e link.
+- **Loja**: Cadastre seus produtos (ou importe a planilha) · Traga seus clientes (importe a planilha) · Registre a primeira venda · Ative o recebimento por Pix e link · Conecte o WhatsApp do negócio.
+- **Serviço e loja**: Defina o horário de funcionamento · Cadastre seus produtos (ou importe a planilha) · Cadastre quem atende · Cadastre seus serviços com preço e duração · Traga seus clientes (importe a planilha) · Registre a primeira venda · Marque o primeiro atendimento · Conecte o WhatsApp do negócio · Ative o recebimento por Pix e link.
 
 </Passo>
 

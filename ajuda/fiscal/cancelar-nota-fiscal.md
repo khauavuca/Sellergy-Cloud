@@ -37,5 +37,5 @@ Clique em **Cancelar nota**. Aparece **Pedido de cancelamento enviado.** e, quan
 </Passo>
 
 ::: warning Atenção
-O cancelamento não pode ser desfeito. O prazo para cancelar depende do tipo de nota e da prefeitura/SEFAZ. [CONFERIR: prazos de cancelamento por tipo de nota]
+O cancelamento não pode ser desfeito. NFC-e: o prazo comum da SEFAZ é de 30 minutos depois da emissão. Passou disso, o sistema avisa e pede confirmação pra tentar mesmo assim, e o cancelamento pode ser recusado. NFS-e: o prazo é de cada prefeitura; se o emissor recusar, o cancelamento tem que ser pedido na prefeitura.
 :::

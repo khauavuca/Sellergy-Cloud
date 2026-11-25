@@ -8,7 +8,7 @@ ordem: 1
 
 Os serviços são o que a agenda marca e o que aparece no link de agendamento. A duração do serviço é o que impede a agenda de marcar duas clientes no mesmo horário.
 
-<small>Leva 3 minutos · quem pode fazer: [CONFERIR: perfis que podem editar Serviços]</small>
+<small>Leva 3 minutos · quem pode fazer: dono, administrador e quem recebeu a permissão **Criar** em **Catálogo de serviços** na tela **Equipe**</small>
 
 ## Passo a passo
 

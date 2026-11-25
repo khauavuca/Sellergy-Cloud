@@ -14,7 +14,7 @@ Você cria a conta em poucos minutos e já usa o Sellergy com tudo liberado por 
 
 <Passo n="1">
 
-Abra a página **Comece seu teste grátis** do Sellergy. [CONFERIR: endereço público da página de cadastro]
+Abra a página **Comece seu teste grátis** do Sellergy, em sellergycloud.com/cadastro.
 
 <!-- PRINT: tela de cadastro "Comece seu teste grátis" -->
 

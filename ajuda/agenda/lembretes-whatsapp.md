@@ -8,7 +8,7 @@ ordem: 6
 
 O Sellergy manda lembretes sozinho pelo WhatsApp antes do horário. A cliente confirma ou pede pra remarcar.
 
-<small>Leva 1 minuto · quem pode fazer: [CONFERIR: quem pode mudar essa configuração]</small>
+<small>Leva 1 minuto · quem pode fazer: dono e administrador</small>
 
 ## Passo a passo
 
@@ -28,12 +28,12 @@ Deixe **Lembretes ligados** e escolha **24 horas antes** (vai com Confirmar e Re
 
 <Passo n="3">
 
-A cliente recebe o lembrete e escolhe **Confirmar presença** ou **Preciso remarcar**. O status muda na agenda. [CONFERIR: o que acontece na agenda quando ela pede pra remarcar]
+A cliente recebe o lembrete e escolhe **Confirmar presença** ou **Preciso remarcar**. Se ela confirma, o horário fica confirmado na agenda. Se pede pra remarcar, o horário é cancelado e a vaga fica livre (e pode ir pra lista de espera). Você recebe o aviso **Cliente pediu para remarcar** pra combinar um novo horário, e ela recebe o link de agendamento pra escolher outro, se o seu negócio tiver um.
 
 </Passo>
 
 ::: warning Atenção
-Os lembretes dependem do plano e do WhatsApp conectado. [CONFERIR: onde conectar o WhatsApp e quais planos têm lembretes]
+Os lembretes estão em todos os planos, com um limite por mês que aparece no próprio bloco (ex.: "120 de 1.000 no mês"). Eles só saem com o WhatsApp do negócio conectado, no menu **Bots**. Se aparecer **Seu plano não inclui lembretes por WhatsApp**, clique em **Ver planos**.
 :::
 
 ## Leia também

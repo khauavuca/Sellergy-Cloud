@@ -8,7 +8,7 @@ ordem: 4
 
 O Sellergy calcula a comissão sozinho a cada atendimento concluído. Você só define a regra de cada profissional e, no fim do mês, paga.
 
-<small>Leva 3 minutos · quem pode fazer: [CONFERIR: perfis com acesso a Comissões]</small>
+<small>Leva 3 minutos · quem pode fazer: dono e administrador</small>
 
 ## Antes de começar
 

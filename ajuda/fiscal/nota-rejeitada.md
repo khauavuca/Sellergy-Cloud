@@ -28,7 +28,7 @@ Clique na nota. No detalhe aparece **A nota foi recusada.** com o motivo.
 
 <Passo n="3">
 
-Use o botão do detalhe que abre a emissão com o destinatário desta nota já preenchido. Corrija os dados e clique em **Emitir**. [CONFERIR: rótulo exato do botão de refazer a nota]
+No detalhe, clique em **Corrigir e emitir de novo**. A emissão abre com o tipo e o destinatário desta nota já preenchidos. Corrija os dados e clique em **Emitir**.
 
 </Passo>
 

@@ -8,11 +8,11 @@ ordem: 1
 
 Para cobrar pelo Sellergy, você precisa ligar um provedor de pagamento. Hoje dá para usar **Mercado Pago** ou **Asaas**. Quando a configuração está ativa, o botão **Nova cobrança** fica liberado.
 
-<small>Leva 3 minutos · quem pode fazer: dono e administrador [CONFERIR: perfis com acesso]</small>
+<small>Leva 3 minutos · quem pode fazer: dono e administrador</small>
 
 ## Antes de começar
 
-Tenha a chave de acesso (credencial) do seu Mercado Pago ou Asaas cadastrada no cofre de credenciais do Sellergy. [CONFERIR: onde cadastrar a credencial no cofre e onde o cliente pega a chave em cada provedor]
+A chave de acesso (credencial) do seu Mercado Pago ou Asaas precisa estar cadastrada no Sellergy. Por segurança, só a equipe do Sellergy cadastra ou troca essa chave: fale com o suporte, que também ajuda a achar a chave no painel do seu provedor. Depois disso, você só escolhe o provedor nesta tela.
 
 ## Passo a passo
 
