@@ -108,3 +108,16 @@ test('adapter manda o nome resolvido pela env', async () => {
     delete process.env.IA_MODELO_PADRAO;
   }
 });
+
+test('OpenRouter: IA_BASE_URL troca o endereco (so https) e IA_MODELO_FORCADO manda no modelo', () => {
+  const { baseUrl, modeloForcado, resolverModelo } = DeepSeekAdapter;
+  assert.equal(baseUrl({}), 'https://api.deepseek.com');
+  assert.equal(baseUrl({ IA_BASE_URL: 'https://openrouter.ai/api/v1/' }), 'https://openrouter.ai/api/v1');
+  assert.equal(baseUrl({ IA_BASE_URL: 'http://openrouter.ai/api/v1' }), 'https://api.deepseek.com');
+  assert.equal(baseUrl({ IA_BASE_URL: 'javascript:alert(1)' }), 'https://api.deepseek.com');
+  const env = { IA_MODELO_FORCADO: 'deepseek/deepseek-v4-flash-0731:free' };
+  assert.equal(modeloForcado(env), 'deepseek/deepseek-v4-flash-0731:free');
+  assert.equal(modeloForcado({ IA_MODELO_FORCADO: 'x y' }), null);
+  assert.equal(resolverModelo('deepseek-v4-pro', env), 'deepseek/deepseek-v4-flash-0731:free');
+  assert.equal(resolverModelo('deepseek-v4-pro', {}), 'deepseek-v4-pro');
+});

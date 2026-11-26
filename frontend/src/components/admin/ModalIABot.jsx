@@ -32,7 +32,7 @@ function formDoBot(bot) {
   };
 }
 
-function CartaoBot({ bot, chaveOk, onSalvou }) {
+function CartaoBot({ bot, chaveOk, modeloFixo, onSalvou }) {
   const toast = useToast();
   const [form, setForm] = useState(() => formDoBot(bot));
   const [consumo, setConsumo] = useState(null);
@@ -89,7 +89,13 @@ function CartaoBot({ bot, chaveOk, onSalvou }) {
 
       <div className="p-4 grid gap-3 sm:grid-cols-2">
         <div className="sm:col-span-2">
-          <Select label="Modelo" options={MODELOS} value={form.iaModelo} onChange={muda('iaModelo')} />
+          {modeloFixo ? (
+            <p className="m-0 text-xs text-[var(--text-secondary)]">
+              Modelo: <strong className="text-[var(--text-main)]">{modeloFixo}</strong> (OpenRouter, o mesmo para todos os clientes; muda em Admin › Integrações).
+            </p>
+          ) : (
+            <Select label="Modelo" options={MODELOS} value={form.iaModelo} onChange={muda('iaModelo')} />
+          )}
         </div>
         <Input label="Tokens incluídos por mês" inputMode="numeric" value={form.tokensMes} onChange={muda('tokensMes')}
           hint="Cota do negócio (soma dos bots)." />
@@ -122,7 +128,11 @@ export default function ModalIABot({ isOpen, onClose, cliente }) {
   const [bots, setBots] = useState(null);
   const [erro, setErro] = useState(false);
   const [chaveOk, setChaveOk] = useState(true);
-  const aoMudarChave = useCallback((ok) => setChaveOk(ok), []);
+  const [modeloFixo, setModeloFixo] = useState(null);
+  const aoMudarChave = useCallback((ok, info) => {
+    setChaveOk(ok);
+    setModeloFixo(info?.provedor === 'OPENROUTER' ? info.modelo : null);
+  }, []);
 
   useEffect(() => {
     if (!isOpen || !cliente) return;
@@ -168,7 +178,7 @@ export default function ModalIABot({ isOpen, onClose, cliente }) {
             <p className="m-0 text-sm text-[var(--text-secondary)]">Este cliente ainda não tem bot. Ele aparece quando o cliente abre a tela de Bots.</p>
           </div>
         ) : (
-          bots.map((b) => <CartaoBot key={b.id} bot={b} chaveOk={chaveOk} onSalvou={trocarBot} />)
+          bots.map((b) => <CartaoBot key={b.id} bot={b} chaveOk={chaveOk} modeloFixo={modeloFixo} onSalvou={trocarBot} />)
         )}
       </div>
     </Modal>

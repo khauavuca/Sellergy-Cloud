@@ -229,6 +229,111 @@ roteador.get('/integracoes/clientes', async (req, res) => {
   }
 });
 
+// =====================================================================
+// IA DA PLATAFORMA (cartao "IA da plataforma" em Admin › Integracoes):
+// provedor (DeepSeek direto ou OpenRouter), modelo e teste. Tudo dentro da
+// mesma credencial cifrada DEEPSEEK_KEY — ver services/iaPlataforma.js.
+// =====================================================================
+const credModulo = require('../credenciais');
+const iaPlataforma = require('../services/iaPlataforma');
+const { criarProvedorIA } = require('../adapters/ia');
+
+// GET /admin/plataforma/ia — situacao (sem a chave).
+roteador.get('/ia', async (req, res) => {
+  try {
+    const linha = await prisma.credencial.findFirst({
+      where: { clienteId: null, tipo: TIPO },
+      select: { atualizadoEm: true, criadoEm: true, ultimoUsoEm: true },
+    });
+    let config = { provedor: 'DEEPSEEK', modelo: null };
+    if (linha) {
+      const cred = await credModulo.carregarCredencialPlataforma(TIPO);
+      config = iaPlataforma.configDaCredencial(cred?.dados);
+    }
+    res.json({
+      configurada: !!linha,
+      ...config,
+      desde: linha ? (linha.atualizadoEm || linha.criadoEm) : null,
+      ultimoUsoEm: linha?.ultimoUsoEm || null,
+      ligadaNosBots: process.env.IA_MODO === 'live',
+    });
+  } catch (erro) {
+    console.error('[admin/plataforma/ia/get]', erro);
+    res.status(500).json({ erro: 'Erro ao buscar a IA da plataforma.' });
+  }
+});
+
+// PUT /admin/plataforma/ia — { provedor, modelo?, apiKey? }. Sem apiKey,
+// mantem a chave atual (so troca o modelo) — mas trocar de provedor exige
+// chave nova, porque a chave de um nao vale no outro.
+roteador.put('/ia', async (req, res) => {
+  try {
+    const corpo = req.body || {};
+    const cfg = iaPlataforma.validarConfigIA(corpo);
+    if (cfg.erro) return res.status(400).json({ erro: cfg.erro });
+    let apiKey = typeof corpo.apiKey === 'string' ? corpo.apiKey.trim() : '';
+    if (apiKey.length > 2000) return res.status(400).json({ erro: 'Chave grande demais.' });
+    if (!apiKey) {
+      const atual = await credModulo.carregarCredencialPlataforma(TIPO);
+      if (!atual?.dados?.apiKey) return res.status(400).json({ erro: 'Cole a chave (API key).' });
+      if (iaPlataforma.configDaCredencial(atual.dados).provedor !== cfg.provedor) {
+        return res.status(400).json({ erro: `Cole a chave do ${iaPlataforma.PROVEDORES_IA[cfg.provedor].nome}.` });
+      }
+      apiKey = atual.dados.apiKey;
+    }
+    const payload = { apiKey, provedor: cfg.provedor, ...(cfg.modelo ? { modelo: cfg.modelo } : {}) };
+    await credModulo.salvarCredencialPlataforma({
+      tipo: TIPO,
+      nome: `${iaPlataforma.PROVEDORES_IA[cfg.provedor].nome} (plataforma)`,
+      payload,
+      criadoPorId: req.usuario.id || null,
+    });
+    res.json({ ok: true, configurada: true, provedor: cfg.provedor, modelo: cfg.modelo });
+  } catch (erro) {
+    console.error('[admin/plataforma/ia/put]', erro);
+    res.status(500).json({ erro: 'Erro ao salvar a IA da plataforma.' });
+  }
+});
+
+// GET /admin/plataforma/ia/modelos — modelos do OpenRouter que aceitam ferramentas.
+roteador.get('/ia/modelos', async (req, res) => {
+  try {
+    res.json(await iaPlataforma.modelosOpenRouter());
+  } catch (erro) {
+    console.error('[admin/plataforma/ia/modelos]', erro?.message || erro);
+    res.status(502).json({ erro: 'Não foi possível buscar a lista do OpenRouter agora.' });
+  }
+});
+
+// POST /admin/plataforma/ia/testar — manda um "oi" de verdade (ignora
+// IA_MODO) com a chave salva e devolve a resposta ou o erro do provedor.
+roteador.post('/ia/testar', async (req, res) => {
+  const inicio = Date.now();
+  let config = null;
+  try {
+    const cred = await credModulo.carregarCredencialPlataforma(TIPO);
+    if (!cred) return res.status(400).json({ ok: false, erro: 'Salve a chave antes de testar.' });
+    config = iaPlataforma.configDaCredencial(cred.dados);
+    const provedor = criarProvedorIA('DEEPSEEK', { credencial: cred, modo: 'live' });
+    const r = await provedor.responder({
+      mensagens: [
+        { role: 'system', content: 'Você é o atendente de uma loja. Responda em português, em uma frase curta.' },
+        { role: 'user', content: 'Oi, tudo bem? Vocês estão abertos hoje?' },
+      ],
+      maxTokens: 400,
+    });
+    res.json({
+      ok: true,
+      texto: String(r.texto || '').slice(0, 500),
+      modelo: r.bruto?.model || config.modelo,
+      ms: Date.now() - inicio,
+      tokens: r.tokensTotal,
+    });
+  } catch (erro) {
+    res.json({ ok: false, erro: iaPlataforma.mensagemDoErro(erro), modelo: config?.modelo || null, ms: Date.now() - inicio });
+  }
+});
+
 module.exports = roteador;
 module.exports.situacaoWhatsapp = situacaoWhatsapp;
 module.exports.situacaoNotas = situacaoNotas;

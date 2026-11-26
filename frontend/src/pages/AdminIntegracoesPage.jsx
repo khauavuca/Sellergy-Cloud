@@ -5,14 +5,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Sparkles, FileText, KeyRound, Lock } from 'lucide-react';
 import api from '../services/api';
+import FormIAPlataforma from '../components/admin/FormIAPlataforma';
 import {
   Pagina, FaixaNumeros, Numero, ColunasPagina, Painel, Badge, Button, Input, SearchBar, useToast,
 } from '../components/ui';
 
 const CHAVES = [
   {
-    tipo: 'DEEPSEEK_KEY', grupo: 'IA', nome: 'DeepSeek', icone: Sparkles,
-    desc: 'Respostas do bot com IA. O gasto de cada cliente é limitado pela cota dele.',
+    tipo: 'DEEPSEEK_KEY', grupo: 'IA', nome: 'IA da plataforma', icone: Sparkles,
+    desc: 'Respostas do bot com IA (DeepSeek ou OpenRouter). O gasto de cada cliente é limitado pela cota dele.',
     campos: [{ campo: 'apiKey', rotulo: 'Chave (API key)', exemplo: 'sk-...' }],
     ajuda: 'Cota e modelo de cada cliente ficam em Clientes › IA do bot.',
   },
@@ -96,6 +97,7 @@ export default function AdminIntegracoesPage() {
   const [aberta, setAberta] = useState(null);
   const [busca, setBusca] = useState('');
   const [erro, setErro] = useState(false);
+  const [ia, setIa] = useState(null);
 
   const carregarChaves = useCallback(() => api.get('/admin/plataforma/credenciais')
     .then((r) => setChaves(Object.fromEntries((r.data || []).map((c) => [c.tipo, c]))))
@@ -104,7 +106,12 @@ export default function AdminIntegracoesPage() {
     .then((r) => setPorCliente(r.data))
     .catch(() => setErro(true)), []);
 
-  useEffect(() => { carregarChaves(); carregarClientes(); }, [carregarChaves, carregarClientes]);
+  const carregarIa = useCallback(() => api.get('/admin/plataforma/ia')
+    .then((r) => setIa(r.data))
+    .catch(() => setErro(true)), []);
+
+  useEffect(() => { carregarChaves(); carregarClientes(); carregarIa(); }, [carregarChaves, carregarClientes, carregarIa]);
+  const recarregarIa = () => { carregarChaves(); carregarIa(); };
 
   const configuradas = chaves ? Object.values(chaves).filter((c) => c.configurada).length : null;
   const totais = porCliente?.totais;
@@ -135,7 +142,16 @@ export default function AdminIntegracoesPage() {
         larguraLateral={340}
         lateral={(
           <>
-            {defAberta && (
+            {defAberta?.tipo === 'DEEPSEEK_KEY' && (
+              <FormIAPlataforma
+                key={`${ia?.provedor}-${ia?.modelo}-${ia?.configurada}`}
+                info={ia}
+                onSalvou={recarregarIa}
+                onRemoveu={recarregarIa}
+                onFechar={() => setAberta(null)}
+              />
+            )}
+            {defAberta && defAberta.tipo !== 'DEEPSEEK_KEY' && (
               <FormChave
                 key={defAberta.tipo}
                 def={defAberta}
@@ -172,7 +188,11 @@ export default function AdminIntegracoesPage() {
                     </span>
                     <div className="flex-[1_1_220px] min-w-0">
                       <p className="m-0 text-sm font-semibold text-[var(--text-main)]">{c.nome}</p>
-                      <p className="m-0 mt-0.5 text-xs text-[var(--text-muted)]">{c.desc}</p>
+                      <p className="m-0 mt-0.5 text-xs text-[var(--text-muted)]">
+                        {c.tipo === 'DEEPSEEK_KEY' && ia?.configurada
+                          ? <>Usando <strong className="text-[var(--text-secondary)]">{ia.provedor === 'OPENROUTER' ? `OpenRouter · ${ia.modelo}` : 'DeepSeek direto'}</strong>{ia.ligadaNosBots ? '' : ' (servidor em modo simulado)'}</>
+                          : c.desc}
+                      </p>
                     </div>
                     {info?.configurada && <span className="text-xs text-[var(--text-secondary)]">desde {data(info.atualizadoEm || info.criadoEm)}</span>}
                     {chaves && (
