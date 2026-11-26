@@ -1,0 +1,112 @@
+@@title Sellergy — nova campanha
+@@nav WhatsApp.dc.html
+@@h 1040
+@@main
+<div class="row">
+<a href="WhatsApp.dc.html" class="bg"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"></path></svg>WhatsApp</a>
+<h1 class="t1 grow">Nova campanha</h1>
+<span class="pill ok">WhatsApp oficial conectado</span>
+</div>
+<div class="steps"><sc-for list="{{passos}}" as="p" hint-placeholder-count="4"><span class="{{p.cls}}"><b>{{p.n}}</b>{{p.t}}</span></sc-for></div>
+
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section class="card" style="flex: 999 1 560px; min-width: 0; padding: 22px; box-sizing: border-box">
+
+<sc-if value="{{e1}}" hint-placeholder-val="{{ true }}">
+<h2 class="t2">O que você quer?</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 10px; margin-top: 14px">
+<sc-for list="{{objetivos}}" as="o" hint-placeholder-count="4"><button type="button" class="{{o.cls}}" onClick="{{o.pick}}"><span class="grow"><strong style="display: block">{{o.t}}</strong><span class="sm mut">{{o.d}}</span></span></button></sc-for>
+</div>
+</sc-if>
+
+<sc-if value="{{e2}}" hint-placeholder-val="{{ false }}">
+<h2 class="t2">Pra quem vai</h2>
+<div style="display: flex; flex-direction: column; gap: 10px; margin-top: 14px">
+<sc-for list="{{filtros}}" as="f" hint-placeholder-count="3"><div class="row" style="padding: 12px 14px; border: 1px solid #E3E5E8; border-radius: 12px"><span class="grow sm"><strong>{{f.t}}</strong></span><button type="button" class="{{f.cls}}" onClick="{{f.pick}}" aria-label="{{f.t}}"></button></div></sc-for>
+</div>
+<div class="row" style="margin-top: 16px; padding: 14px; border-radius: 12px; background: #F3FAF6"><strong class="grow">{{publico}} clientes recebem</strong><span class="sm mut">{{semOk}} sem permissão de mensagem ficam de fora</span></div>
+</sc-if>
+
+<sc-if value="{{e3}}" hint-placeholder-val="{{ false }}">
+<div class="row"><h2 class="t2 grow">Mensagem</h2><span class="{{modeloCls}}">{{modeloSt}}</span></div>
+<p class="sm mut" style="margin: 6px 0 0">Campanha usa modelo aprovado pelo WhatsApp. Os campos entre colchetes trocam pelo nome e dados de cada cliente.</p>
+<div class="f" style="margin-top: 14px"><label for="mt">Texto</label><textarea id="mt" style="min-height: 150px">Oi, [nome]! Faz tempo que você não vem na Lumi e a gente sentiu sua falta. Até domingo, sua [último serviço] sai com 15% de desconto. Toque abaixo e escolha o horário.</textarea></div>
+<div class="row" style="margin-top: 10px"><span class="sm">Botão:</span><span class="pill neu">Marcar horário → seu link de agendamento</span></div>
+<sc-if value="{{analise}}" hint-placeholder-val="{{ false }}"><p class="sm" style="margin: 14px 0 0; padding: 10px 12px; border-radius: 10px; background: #FDF0D9; color: #7A4A00">O WhatsApp está analisando o texto. Costuma levar alguns minutos.</p><button type="button" class="bs" style="margin-top: 10px" onClick="{{aprovar}}">Simular: modelo aprovado</button></sc-if>
+<sc-if value="{{precisaEnviar}}" hint-placeholder-val="{{ true }}"><button type="button" class="bs" style="margin-top: 14px" onClick="{{enviarAnalise}}">Mandar texto pra aprovação</button></sc-if>
+</sc-if>
+
+<sc-if value="{{e4}}" hint-placeholder-val="{{ false }}">
+<h2 class="t2">Quando enviar</h2>
+<div style="display: flex; flex-direction: column; gap: 10px; margin-top: 14px">
+<sc-for list="{{quandos}}" as="q" hint-placeholder-count="2"><button type="button" class="{{q.cls}}" onClick="{{q.pick}}"><span class="grow"><strong style="display: block">{{q.t}}</strong><span class="sm mut">{{q.d}}</span></span></button></sc-for>
+</div>
+<div style="margin-top: 16px; padding: 14px; border-radius: 12px; background: #F6F7F5; font-size: 14px; line-height: 1.8">
+<div class="row"><span class="grow">Mensagens</span><span class="n">{{publico}}</span></div>
+<div class="row"><span class="grow">Custo do WhatsApp (R$ 0,35 cada)</span><span class="n">{{custo}}</span></div>
+<div class="row"><span class="grow">Do seu plano (500 por mês)</span><span class="n" style="color: #0E5C34">incluído</span></div>
+</div>
+<p class="ajuda" style="margin: 8px 0 0">Enviamos aos poucos, 1 a cada 3 segundos, pra proteger seu número.</p>
+</sc-if>
+
+<sc-if value="{{e5}}" hint-placeholder-val="{{ false }}">
+<div class="row"><h2 class="t2 grow">Chamar de volta · sumidos 60+</h2><span class="pill ok">Enviada hoje às 18:00</span></div>
+<div class="grid" style="margin-top: 16px">
+<div class="card k"><p class="kl">Entregues</p><p class="kv">36</p><p class="kx">de 38</p></div>
+<div class="card k"><p class="kl">Leram</p><p class="kv">29</p><p class="kx">81%</p></div>
+<div class="card k"><p class="kl">Tocaram em Marcar</p><p class="kv">11</p><p class="kx">31%</p></div>
+<div class="card k" style="background: #E3F1EA; border-color: #BFE0CF"><p class="kl" style="color: #0E5C34">Agendaram</p><p class="kv" style="color: #0E5C34">7</p><p class="kx" style="color: #0E5C34">R$ 1.280,00 previstos</p></div>
+</div>
+<p class="sm mut" style="margin: 14px 0 0">Quem respondeu com texto aparece em Conversas. Quem pediu pra sair não recebe mais.</p>
+<div class="row" style="margin-top: 16px"><a href="WhatsApp.dc.html" class="bp">Ver conversas</a><button type="button" class="bg" onClick="{{reiniciar}}">Criar outra</button></div>
+</sc-if>
+
+<sc-if value="{{navegando}}" hint-placeholder-val="{{ true }}">
+<div class="row" style="margin-top: 22px; padding-top: 16px; border-top: 1px solid #EEF0EC"><button type="button" class="bg" onClick="{{voltar}}">Voltar</button><span class="grow"></span><button type="button" class="{{avCls}}" onClick="{{avancar}}">{{avancarTxt}}</button></div>
+</sc-if>
+</section>
+
+<aside style="flex: 1 1 320px; align-self: flex-start">
+<p class="sm mut" style="margin: 0 0 8px; font-weight: 600">Como chega no celular</p>
+<div style="background: #EFE7DD; border-radius: 18px; padding: 16px">
+<div style="background: #fff; border-radius: 10px; padding: 10px 12px; font-size: 14px; line-height: 1.5; box-shadow: 0 1px 0 rgba(0,0,0,.08)">Oi, Camila! Faz tempo que você não vem na Lumi e a gente sentiu sua falta. Até domingo, sua limpeza de pele sai com 15% de desconto. Toque abaixo e escolha o horário.
+<div style="border-top: 1px solid #E8E8E8; margin-top: 10px; padding-top: 8px; text-align: center; color: #0A7CFF; font-weight: 600">Marcar horário</div>
+<div style="border-top: 1px solid #E8E8E8; margin-top: 8px; padding-top: 8px; text-align: center; color: #0A7CFF; font-weight: 600">Não quero receber</div></div>
+</div>
+<p class="ajuda" style="margin: 10px 0 0">Todo envio tem o botão de sair. É regra do WhatsApp e evita denúncia.</p>
+</aside>
+</div>
+@@script
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { e: 1, obj: 0, f: [true, true, false], modelo: 0, quando: 0 }; }
+  renderVals() {
+    const s = this.state; const set = (o) => this.setState(o);
+    const nomes = ['Objetivo', 'Público', 'Mensagem', 'Envio'];
+    const objs = [
+      { t: 'Chamar de volta quem sumiu', d: 'Clientes sem visita há 60 dias ou mais' },
+      { t: 'Parabéns com presente', d: 'Aniversariantes do mês, com cupom' },
+      { t: 'Avisar de novidade', d: 'Serviço ou produto novo' },
+      { t: 'Preencher horário vazio', d: 'Promoção pra dias e horários fracos' },
+    ];
+    const filtros = ['Sem visita há 60 dias ou mais', 'Gastou mais de R$ 100,00 na última visita', 'Só quem fez limpeza de pele'];
+    let pub = 52; if (s.f[0]) pub = 44; if (s.f[1]) pub -= 6; if (s.f[2]) pub = Math.round(pub / 2);
+    const podeAvancar = s.e !== 3 || s.modelo === 2;
+    return {
+      passos: nomes.map((t, i) => ({ t, n: i + 1 < s.e ? '✓' : i + 1, cls: 'st' + (i + 1 === s.e ? ' on' : i + 1 < s.e ? ' done' : '') })),
+      e1: s.e === 1, e2: s.e === 2, e3: s.e === 3, e4: s.e === 4, e5: s.e === 5, navegando: s.e < 5,
+      objetivos: objs.map((o, i) => ({ ...o, cls: 'opt' + (s.obj === i ? ' on' : ''), pick: () => set({ obj: i }) })),
+      filtros: filtros.map((t, i) => ({ t, cls: 'sw' + (s.f[i] ? ' on' : ''), pick: () => { const a = [...s.f]; a[i] = !a[i]; set({ f: a }); } })),
+      publico: pub, semOk: 4,
+      modeloSt: ['Rascunho', 'Em análise', 'Aprovado pelo WhatsApp'][s.modelo], modeloCls: 'pill ' + ['neu', 'wait', 'ok'][s.modelo],
+      analise: s.modelo === 1, precisaEnviar: s.modelo === 0,
+      enviarAnalise: () => set({ modelo: 1 }), aprovar: () => set({ modelo: 2 }),
+      quandos: [{ t: 'Hoje às 18:00', d: 'Horário com mais leitura pra clínicas' }, { t: 'Agora', d: 'Começa em 1 minuto' }].map((q, i) => ({ ...q, cls: 'opt' + (s.quando === i ? ' on' : ''), pick: () => set({ quando: i }) })),
+      custo: 'R$ ' + (pub * 0.35).toFixed(2).replace('.', ','),
+      avCls: podeAvancar ? 'bp' : 'bs',
+      avancarTxt: s.e === 4 ? 'Agendar campanha' : s.e === 3 && !podeAvancar ? 'Espere a aprovação' : 'Continuar',
+      avancar: () => { if (podeAvancar) set({ e: s.e + 1 }); },
+      voltar: () => set({ e: Math.max(1, s.e - 1) }),
+      reiniciar: () => set({ e: 1, modelo: 0 }),
+    };
+  }
+}

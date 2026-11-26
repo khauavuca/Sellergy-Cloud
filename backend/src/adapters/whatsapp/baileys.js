@@ -1,57 +1,119 @@
-// Adapter BAILEYS — WhatsApp Web não oficial (QR Code), sem app/aprovação da
-// Meta. Precisa de uma conexão viva (`this.socket`, um `sock` do Baileys) —
-// só existe dentro do processo worker.js, onde o gerenciador de conexão
-// (services/baileys/gerenciadorConexao.js) mantém o registro por bot. Quem
-// chama resolve o socket ANTES de instanciar este adapter (ver
-// gerenciadorConexao.obterSocket) — o adapter não sabe de onde ele veio.
+// Adapter BAILEYS — WhatsApp Web nao oficial (QR Code), sem app/aprovacao da
+// Meta. Precisa de uma conexao viva (`this.socket`, um `sock` do Baileys) —
+// so existe dentro do processo worker.js, onde o gerenciador de conexao
+// (services/baileys/gerenciadorConexao.js) mantem o registro por bot.
 //
-// Sem templates: WhatsApp Web não tem HSM aprovado, é tudo texto livre.
-// enviarTemplate lança — quem dispara campanha (routes/campanhas.routes.js)
-// já decide ANTES de chegar aqui que bot BAILEYS nunca chama enviarTemplate;
-// isso aqui é defesa em profundidade, não um caminho esperado em uso normal.
+// Todo envio passa pelo "envio humano" (services/baileys/envioHumano.js):
+// espera a vez do numero, mostra "digitando..." e confere se o destino tem
+// WhatsApp. E isso que segura o risco de banimento do numero do cliente.
 //
-// BAILEYS_ENVIO_REAL: interruptor global próprio (mesmo padrão de
-// WHATSAPP_ENVIO_REAL), separado do da Meta — dado o risco de banimento já
-// reconhecido, faz sentido ops poder desligar só o envio não oficial.
+// Sem templates HSM (isso e da API oficial). Em troca o WhatsApp Web aceita
+// texto livre, imagem, documento e ENQUETE — usada no lembrete de horario
+// (Confirmar / Remarcar), que o cliente responde com um toque.
+//
+// BAILEYS_ENVIO_REAL=1 liga o envio de verdade (sem isso, so loga).
 
 const { ProvedorWhatsApp } = require('./ProvedorWhatsApp');
+const envioHumano = require('../../services/baileys/envioHumano');
 
-const ENVIO_REAL = process.env.BAILEYS_ENVIO_REAL === '1';
+function digitosDe(para) {
+  return String(para || '').replace(/\D/g, '');
+}
 
 function paraJid(para) {
-  const digitos = String(para || '').replace(/\D/g, '');
-  return `${digitos}@s.whatsapp.net`;
+  return `${digitosDe(para)}@s.whatsapp.net`;
 }
 
 class BaileysAdapter extends ProvedorWhatsApp {
   static get provedor() { return 'BAILEYS'; }
 
-  async _enviar(descricao, montarPayload) {
-    if (!ENVIO_REAL || this.modo !== 'live') {
+  get _envioReal() { return process.env.BAILEYS_ENVIO_REAL === '1'; }
+
+  get _numeroProprio() {
+    return String(this.socket?.user?.id || '').split(':')[0].split('@')[0] || 'desconhecido';
+  }
+
+  /**
+   * @param {string} descricao  pra log
+   * @param {string} para
+   * @param {object} conteudo   payload do sock.sendMessage
+   * @param {{ tipo?: 'conversa'|'lembrete'|'campanha', textoParaDigitar?: string }} [opcoes]
+   */
+  async _enviar(descricao, para, conteudo, { tipo = 'conversa', textoParaDigitar = '' } = {}) {
+    if (!this._envioReal || this.modo !== 'live') {
       console.log('[baileys:DRY_RUN]', descricao);
       return { ok: true, simulado: true };
     }
-    if (!this.socket) {
-      return { ok: false, simulado: false, erro: 'Sessão WhatsApp Web não conectada.' };
-    }
+    if (!this.socket) return { ok: false, simulado: false, erro: 'Sessão WhatsApp Web não conectada.' };
+
+    const digitos = digitosDe(para);
+    if (digitos.length < 10) return { ok: false, simulado: false, erro: 'Telefone inválido.' };
+    const jid = paraJid(digitos);
+    const numero = this._numeroProprio;
+
     try {
-      const resultado = await this.socket.sendMessage(...montarPayload());
-      return { ok: true, simulado: false, idMensagem: resultado?.key?.id || null };
+      if (!(await envioHumano.temWhatsapp(this.socket, digitos))) {
+        return { ok: false, simulado: false, erro: 'Esse número não tem WhatsApp.', codigo: 'SEM_WHATSAPP' };
+      }
+      await envioHumano.aguardarVez(numero, tipo);
+      await envioHumano.simularDigitacao(this.socket, jid, textoParaDigitar);
+      const resultado = await this.socket.sendMessage(jid, conteudo);
+      await envioHumano.registrarResultado(numero, true);
+      return { ok: true, simulado: false, idMensagem: resultado?.key?.id || null, mensagem: resultado };
     } catch (erro) {
+      await envioHumano.registrarResultado(numero, false);
       console.error('[baileys] envio falhou', erro?.message);
       return { ok: false, simulado: false, erro: erro?.message || 'falha no envio' };
     }
   }
 
-  enviarTexto({ para, texto }) {
-    return this._enviar(`texto -> ${para}`, () => [paraJid(para), { text: texto }]);
+  enviarTexto({ para, texto, tipo = 'conversa' }) {
+    const final = tipo === 'campanha' ? envioHumano.variarTexto(texto) : texto;
+    return this._enviar(`texto -> ${para}`, para, { text: final }, { tipo, textoParaDigitar: final });
   }
 
-  enviarDocumento({ para, link, filename, caption }) {
-    return this._enviar(`documento -> ${para}`, () => [
-      paraJid(para),
+  enviarDocumento({ para, link, filename, caption, tipo = 'conversa' }) {
+    return this._enviar(`documento -> ${para}`, para,
       { document: { url: link }, fileName: filename, caption, mimetype: 'application/pdf' },
-    ]);
+      { tipo, textoParaDigitar: caption || '' });
+  }
+
+  enviarImagem({ para, link, legenda, tipo = 'conversa' }) {
+    const final = tipo === 'campanha' ? envioHumano.variarTexto(legenda) : legenda;
+    return this._enviar(`imagem -> ${para}`, para, { image: { url: link }, caption: final }, { tipo, textoParaDigitar: final || '' });
+  }
+
+  /**
+   * Enquete de escolha unica. Devolve tambem a mensagem enviada (com o
+   * messageSecret) — quem chama guarda pra conseguir ler o voto depois.
+   */
+  enviarEnquete({ para, pergunta, opcoes, tipo = 'lembrete' }) {
+    return this._enviar(`enquete -> ${para}`, para,
+      { poll: { name: pergunta, values: opcoes, selectableCount: 1 } },
+      { tipo, textoParaDigitar: pergunta });
+  }
+
+  /**
+   * Foto, video, GIF, audio, mensagem de voz, documento ou figurinha a partir
+   * do arquivo (Buffer). Voz vai como "bolinha" (ptt).
+   */
+  enviarMidia({ para, tipo, buffer, mime, nome, legenda, segundos, tipoEnvio = 'conversa' }) {
+    const montar = {
+      IMAGEM: () => ({ image: buffer, caption: legenda || undefined, mimetype: mime }),
+      VIDEO: () => ({ video: buffer, caption: legenda || undefined, mimetype: mime }),
+      GIF: () => ({ video: buffer, caption: legenda || undefined, gifPlayback: true, mimetype: mime }),
+      AUDIO: () => ({ audio: buffer, mimetype: mime, ptt: false, seconds: segundos || undefined }),
+      VOZ: () => ({ audio: buffer, mimetype: 'audio/ogg; codecs=opus', ptt: true, seconds: segundos || undefined }),
+      DOCUMENTO: () => ({ document: buffer, mimetype: mime || 'application/octet-stream', fileName: nome || 'arquivo', caption: legenda || undefined }),
+      FIGURINHA: () => ({ sticker: buffer, mimetype: mime || 'image/webp' }),
+    }[tipo];
+    if (!montar) return Promise.resolve({ ok: false, erro: `Tipo de mídia não suportado: ${tipo}` });
+    return this._enviar(`${tipo.toLowerCase()} -> ${para}`, para, montar(), { tipo: tipoEnvio, textoParaDigitar: legenda || '' });
+  }
+
+  /** Reacao com emoji (emoji vazio tira a reacao). */
+  enviarReacao({ para, alvoId, emoji, deMim = false }) {
+    return this._enviar(`reacao -> ${para}`, para, { react: { text: emoji || '', key: { remoteJid: paraJid(para), id: alvoId, fromMe: deMim } } });
   }
 
   async enviarTemplate() {

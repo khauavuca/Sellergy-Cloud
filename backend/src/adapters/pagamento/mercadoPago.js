@@ -2,11 +2,22 @@
 // Auth: Bearer access_token. Base: https://api.mercadopago.com
 // Docs: /v1/payments (Pix), /checkout/preferences (link), /v1/payments/{id}/refunds.
 // Webhook: { type:'payment', data:{ id } } + assinatura x-signature (ts,v1=HMAC).
+// O `data.id` do webhook e sempre o id do PAYMENT. No Pix ele e o mesmo id
+// gravado na Cobranca; no link (preference) nao — por isso a notification_url
+// leva `?ref=<id da Cobranca>` e o external_reference do payment consultado
+// confirma o casamento (ver webhooks.routes.js).
 
 const crypto = require('crypto');
 const { ProvedorPagamento, STATUS } = require('./ProvedorPagamento');
 
 const BASE = 'https://api.mercadopago.com';
+
+function urlNotificacao(refExterna) {
+  const base = String(process.env.API_URL_PUBLICA || '').replace(/\/$/, '');
+  if (!/^https:\/\//.test(base)) return undefined;
+  const url = `${base}/webhooks/pagamento/mercado_pago`;
+  return refExterna ? `${url}?ref=${encodeURIComponent(refExterna)}` : url;
+}
 
 // status do MP → status normalizado
 function normalizarStatus(s) {
@@ -45,7 +56,10 @@ class MercadoPagoAdapter extends ProvedorPagamento {
         description: descricao,
         payment_method_id: 'pix',
         external_reference: refExterna,
-        payer: { email: pagador?.email || 'sem-email@sellergy.app' },
+        payer: { email: pagador?.email || 'sem-email@sellergy.app', first_name: pagador?.nome || undefined },
+        // Com a URL publica da API configurada, o MP avisa direto a rota de
+        // webhook (sem depender de cadastro manual no painel do MP).
+        notification_url: urlNotificacao(refExterna),
       },
     };
     const raw = await this._executar(req, () => ({
@@ -80,6 +94,9 @@ class MercadoPagoAdapter extends ProvedorPagamento {
       corpo: {
         items: [{ title: descricao, quantity: 1, unit_price: Number(valor), currency_id: 'BRL' }],
         external_reference: refExterna,
+        // O payment do link nasce com outro id: o ?ref= e o external_reference
+        // ligam o webhook de volta a esta Cobranca.
+        notification_url: urlNotificacao(refExterna),
       },
     };
     const raw = await this._executar(req, () => ({
@@ -94,10 +111,20 @@ class MercadoPagoAdapter extends ProvedorPagamento {
     };
   }
 
-  async consultarStatus(provedorCobrancaId) {
-    const req = { url: `${BASE}/v1/payments/${provedorCobrancaId}`, headers: this._headers() };
-    const raw = await this._executar(req, () => ({ id: provedorCobrancaId, status: 'approved', date_approved: new Date().toISOString() }));
-    return { status: normalizarStatus(raw.status), pagoEm: raw.date_approved || undefined };
+  /**
+   * Consulta um PAYMENT pelo id. `refExterna` volta o external_reference (id
+   * da Cobranca) pra quem casou o webhook pela referencia conferir.
+   * @param {string} id  id do payment
+   * @param {{refExterna?:string}} [opts]  so pro fixture ecoar a referencia
+   */
+  async consultarStatus(id, { refExterna } = {}) {
+    const req = { url: `${BASE}/v1/payments/${encodeURIComponent(id)}`, headers: this._headers() };
+    const raw = await this._executar(req, () => ({ id, status: 'approved', date_approved: new Date().toISOString(), external_reference: refExterna }));
+    return {
+      status: normalizarStatus(raw.status),
+      pagoEm: raw.date_approved || undefined,
+      refExterna: raw.external_reference ? String(raw.external_reference) : undefined,
+    };
   }
 
   async estornar(provedorCobrancaId) {
@@ -106,29 +133,52 @@ class MercadoPagoAdapter extends ProvedorPagamento {
     return { status: STATUS.ESTORNADO };
   }
 
-  // x-signature: "ts=<unix>,v1=<hmac>"; manifest = id:<data.id>;request-id:<x-request-id>;ts:<ts>;
-  verificarAssinatura({ headers, segredo }) {
+  /**
+   * x-signature: "ts=<unix>,v1=<hmac>". Manifest (doc do MP):
+   *   id:<data.id>;request-id:<x-request-id>;ts:<ts>;
+   * O `data.id` vem na QUERY STRING da notificacao (?data.id=...&type=payment),
+   * nao nos headers; id alfanumerico vai em minusculas. Parte ausente sai do
+   * manifest.
+   * @param {{headers:Object, segredo:string, query?:Object, body?:Object}} p
+   */
+  verificarAssinatura({ headers = {}, segredo, query = {}, body } = {}) {
     const sig = headers['x-signature'] || headers['X-Signature'];
     if (!sig || !segredo) return false;
-    const partes = Object.fromEntries(String(sig).split(',').map((p) => p.split('=').map((x) => x.trim())));
-    const ts = partes.ts;
-    const v1 = partes.v1;
+    const partes = {};
+    for (const p of String(sig).split(',')) {
+      const i = p.indexOf('=');
+      if (i > 0) partes[p.slice(0, i).trim()] = p.slice(i + 1).trim();
+    }
+    const { ts, v1 } = partes;
     if (!ts || !v1) return false;
-    const dataId = headers['x-data-id'] || headers['data.id'] || '';
-    const requestId = headers['x-request-id'] || '';
-    const manifest = `id:${dataId};request-id:${requestId};ts:${ts};`;
+    const dataIdBruto = query?.['data.id'] ?? query?.data?.id ?? query?.id ?? body?.data?.id ?? '';
+    const dataId = String(dataIdBruto).toLowerCase();
+    const requestId = headers['x-request-id'] || headers['X-Request-Id'] || '';
+    let manifest = '';
+    if (dataId) manifest += `id:${dataId};`;
+    if (requestId) manifest += `request-id:${requestId};`;
+    manifest += `ts:${ts};`;
     const esperado = crypto.createHmac('sha256', segredo).update(manifest).digest('hex');
     try {
-      return crypto.timingSafeEqual(Buffer.from(esperado), Buffer.from(v1));
+      return crypto.timingSafeEqual(Buffer.from(esperado), Buffer.from(String(v1)));
     } catch { return false; }
   }
 
-  parsearWebhook({ body }) {
-    if (!body || body.type !== 'payment') return null;
-    const id = body.data?.id;
+  parsearWebhook({ body, query = {} } = {}) {
+    const tipo = body?.type || query?.type || query?.topic;
+    if (tipo !== 'payment') return null;
+    const id = body?.data?.id ?? query?.['data.id'] ?? query?.id;
     if (!id) return null;
-    // O webhook do MP traz só o id — o status definitivo vem de consultarStatus().
-    return { provedorCobrancaId: String(id), status: STATUS.PENDENTE, evento: body.action || body.type };
+    const ref = typeof query?.ref === 'string' && query.ref ? query.ref : undefined;
+    // O webhook do MP traz so o id do payment — o status definitivo (e o
+    // external_reference que confirma a Cobranca) vem de consultarStatus().
+    return {
+      provedorCobrancaId: String(id),
+      pagamentoId: String(id),
+      refExterna: ref,
+      status: STATUS.PENDENTE,
+      evento: body?.action || tipo,
+    };
   }
 }
 

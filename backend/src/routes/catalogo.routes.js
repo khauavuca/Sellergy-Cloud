@@ -1,4 +1,5 @@
 const express = require('express');
+const { uploadSeguro } = require('../seguranca/uploadSeguro');
 const prisma = require('../prisma');
 const CatalogoController = require('../controllers/CatalogoController');
 const middlewareAutenticacao = require('../middlewares/auth.middleware');
@@ -168,7 +169,7 @@ const crypto = require('crypto');
 roteador.post(
   '/imagens-temp',
   requerPermissao('CATALOGO', 'criar'),
-  aceitarUmaImagem('imagem'),
+  aceitarUmaImagem('imagem'), uploadSeguro('imagem'),
   async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ erro: 'Arquivo "imagem" obrigatorio.' });
@@ -212,7 +213,7 @@ roteador.delete('/imagens-temp', requerPermissao('CATALOGO', 'criar'), async (re
 roteador.post(
   '/:produtoId/imagem',
   requerPermissao('CATALOGO', 'editar'),
-  aceitarUmaImagem('imagem'),
+  aceitarUmaImagem('imagem'), uploadSeguro('imagem'),
   async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ erro: 'Arquivo "imagem" obrigatorio.' });
@@ -264,7 +265,7 @@ roteador.delete('/:produtoId/imagem', requerPermissao('CATALOGO', 'editar'), asy
 roteador.post(
   '/variacoes/:id/imagem',
   requerPermissao('CATALOGO', 'editar'),
-  aceitarUmaImagem('imagem'),
+  aceitarUmaImagem('imagem'), uploadSeguro('imagem'),
   async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ erro: 'Arquivo "imagem" obrigatorio.' });

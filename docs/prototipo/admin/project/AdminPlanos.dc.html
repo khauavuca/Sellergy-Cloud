@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Sellergy Admin — Planos e preços</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#136F4D}
+.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.anav{display:flex;align-items:center;gap:12px;padding:0 12px;min-height:42px;border-radius:9px;color:#C9CDD3;font:inherit;font-weight:500;font-size:14px;background:none;border:0;cursor:pointer;width:100%;text-align:left}
+.anav:hover{background:#23272D;color:#fff}
+.anav.on{background:#2C3138;color:#fff;font-weight:600}
+.anav .ct{margin-left:auto;background:#F2C46B;color:#4A3000;font-size:11px;font-weight:700;border-radius:99px;padding:1px 7px}
+.bp,.bs,.bd,.bg{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 14px;border-radius:10px;font-weight:600;font-size:14px;cursor:pointer;font-family:inherit;box-sizing:border-box;white-space:nowrap;text-decoration:none}
+.bp{background:#136F4D;color:#fff;border:1px solid #136F4D}
+.bs{background:#fff;color:#15171A;border:1px solid #D5D8DC}
+.bd{background:#fff;color:#B42318;border:1px solid #E7B3AD}
+.bg{background:none;border:1px solid transparent;color:#3D434B}
+.chip{border:1px solid #D5D8DC;background:#fff;font:inherit;font-size:13px;font-weight:600;color:#3D434B;padding:0 12px;min-height:36px;border-radius:999px;cursor:pointer}
+.chip.on{background:#15171A;border-color:#15171A;color:#fff}
+.card{background:#fff;border:1px solid #E3E5E8;border-radius:16px}
+.k{background:#fff;border:1px solid #E3E5E8;border-radius:14px;padding:16px}
+.kl{margin:0;font-size:13px;color:#5B616B}.kv{margin:6px 0 0;font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}.kx{margin:4px 0 0;font-size:12px;color:#5B616B}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:12px}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.grow{flex:1}
+.mut{color:#5B616B}.sm{font-size:13px}.n{font-variant-numeric:tabular-nums}
+.t2{margin:0;font-size:16px}
+.cap{margin:0 0 8px;font-size:12px;font-weight:700;color:#5B616B;text-transform:uppercase;letter-spacing:.06em}
+.lin{width:100%;display:grid;grid-template-columns:minmax(0,2fr) 110px 110px 100px 130px;gap:12px;align-items:center;padding:12px 18px;border:0;border-top:1px solid #EEF0EC;background:#fff;font:inherit;font-size:14px;color:#15171A;text-align:left;cursor:pointer}
+.lin.on{background:#EEF6F1}
+.li{display:flex;gap:12px;align-items:center;padding:12px 18px;border-top:1px solid #EEF0EC;font-size:14px;flex-wrap:wrap}
+.lib{width:100%;border:0;background:#fff;font:inherit;text-align:left;cursor:pointer;color:#15171A}
+.lib.on{background:#EEF6F1}
+.st{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;display:inline-flex;white-space:nowrap}
+.ATIVA,.ok{background:#E3F4EA;color:#0E5C34}.TRIAL,.info{background:#E6EEF6;color:#1D4F7A}.ATRASADA,.wait{background:#FDF0D9;color:#7A4A00}.SUSPENSA,.bad{background:#FBE4E1;color:#8F1D12}.CANCELADA,.neu{background:#E8EAED;color:#3D434B}
+td,th{padding:10px 16px;border-top:1px solid #EEF0EC;text-align:left;font-size:14px}
+th{font-size:12px;color:#5B616B;font-weight:600}
+.f{display:flex;flex-direction:column;gap:6px;min-width:0}
+.f label,.f .lb{font-size:13px;font-weight:600;color:#3D434B}
+.f input,.f select,.f textarea{font:inherit;font-size:14px;min-height:40px;padding:0 10px;border:1px solid #CDD1D6;border-radius:9px;background:#fff;box-sizing:border-box;width:100%}
+.f textarea{padding:10px;min-height:90px;line-height:1.5}
+.sw{width:42px;height:26px;border-radius:999px;background:#CDD1D6;position:relative;border:0;cursor:pointer;flex-shrink:0;padding:0}
+.sw::after{content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left .15s}
+.sw.on{background:#136F4D}.sw.on::after{left:19px}
+.met{height:8px;border-radius:99px;background:#EEF0EC;overflow:hidden}.met div{height:100%;border-radius:99px;background:#136F4D}.met div.alto{background:#D9822B}
+.bars{display:flex;align-items:flex-end;gap:12px;height:150px}
+.bars div{flex:1;background:#BFE0CF;border-radius:6px 6px 0 0}.bars div.hi{background:#136F4D}
+.p5{width:5%}.p10{width:10%}.p15{width:15%}.p20{width:20%}.p25{width:25%}.p30{width:30%}.p35{width:35%}.p40{width:40%}.p45{width:45%}.p50{width:50%}.p55{width:55%}.p60{width:60%}.p65{width:65%}.p70{width:70%}.p75{width:75%}.p80{width:80%}.p85{width:85%}.p90{width:90%}.p95{width:95%}.p100{width:100%}
+.b20{height:20%}.b30{height:30%}.b40{height:40%}.b45{height:45%}.b55{height:55%}.b60{height:60%}.b70{height:70%}.b80{height:80%}.b90{height:90%}.b100{height:100%}
+.ov{position:absolute;inset:0;background:rgba(21,23,26,.45);display:flex;align-items:flex-start;justify-content:center;padding:80px 16px;z-index:5}
+.modal{background:#fff;border-radius:18px;width:min(520px,100%);padding:24px;box-sizing:border-box;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.opt{display:flex;gap:12px;align-items:center;text-align:left;padding:12px 14px;border:1px solid #D5D8DC;border-radius:12px;background:#fff;font:inherit;cursor:pointer;width:100%;box-sizing:border-box;color:#15171A}
+.opt.on{border-color:#136F4D;box-shadow:0 0 0 1px #136F4D inset;background:#F3FAF6}
+.msg{max-width:80%;padding:10px 12px;border-radius:12px;font-size:14px;line-height:1.45;background:#F1F2EF}
+.msg.eu{align-self:flex-end;background:#E3F1EA}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex-shrink:0}
+.dot.ok{background:#137A3F}.dot.wait{background:#D9822B}.dot.bad{background:#B42318}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #15171A; background: #F6F7F5; min-height: 1100px; display: flex; flex-wrap: wrap; position: relative">
+<aside style="flex: 1 1 232px; background: #15171A; padding: 18px 14px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px">
+<div style="display: flex; align-items: center; gap: 10px; padding: 4px 8px; color: #fff"><span style="width: 30px; height: 30px; border-radius: 9px; background: #136F4D; display: grid; place-items: center; font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 17px">S</span><span style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 19px">Sellergy</span><span style="font-size: 11px; font-weight: 700; background: #F2C46B; color: #4A3000; padding: 2px 8px; border-radius: 999px">ADMIN</span></div>
+<nav aria-label="Menu do admin" style="display: flex; flex-direction: column; gap: 2px">
+<sc-for list="{{menu}}" as="m" hint-placeholder-count="9"><button type="button" class="{{m.cls}}" onClick="{{m.pick}}">{{m.t}}<sc-if value="{{m.temCt}}" hint-placeholder-val="{{ false }}"><span class="ct">{{m.ct}}</span></sc-if></button></sc-for>
+</nav>
+<div style="margin-top: auto; padding: 12px; border-radius: 12px; background: #23272D; color: #C9CDD3; font-size: 13px; line-height: 1.4"><strong style="color: #fff; display: block">Você · dono</strong>Acesso total · login com 2 fatores<a href="AdminEntrar.dc.html" style="display: block; margin-top: 8px; color: #7FD1A8; font-weight: 600">Sair</a></div>
+</aside>
+
+<main style="flex: 999 1 560px; min-width: 0; padding: 24px 28px 40px; box-sizing: border-box; display: flex; flex-direction: column; gap: 18px">
+<sc-if value="{{suporte}}" hint-placeholder-val="{{ false }}">
+<div class="row" style="padding: 12px 16px; border-radius: 12px; background: #FDF0D9; color: #7A4A00; font-size: 14px"><strong class="grow">Sessão de suporte aberta em {{sel.nome}} (só leitura, 30 min, registrada na auditoria)</strong><a href="https://claude.ai/artifact/Ln6dehHYUPB85BQWTWYUCB" class="bs">Abrir o sistema dela</a><button type="button" class="bg" onClick="{{sairSuporte}}">Encerrar</button></div>
+</sc-if>
+<div class="row"><h1 style="margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 28px; letter-spacing: -0.02em" class="grow">{{titulo}}</h1><span class="sm mut">{{subtitulo}}</span></div>
+
+<sc-if value="{{sGeral}}" hint-placeholder-val="{{ true }}">
+<div class="grid">
+<div class="k"><p class="kl">Receita mensal (MRR)</p><p class="kv">{{mrr}}</p><p class="kx">+22% vs outubro</p></div>
+<div class="k"><p class="kl">Pagantes</p><p class="kv">{{nPag}}</p><p class="kx">ticket médio R$ 131,00</p></div>
+<div class="k"><p class="kl">Em teste</p><p class="kv">{{nTrial}}</p><p class="kx">38% viram pagantes</p></div>
+<div class="k"><p class="kl">Cancelamentos no mês</p><p class="kv">2,1%</p><p class="kx">1 de 47</p></div>
+<div class="k"><p class="kl">Receita de transações</p><p class="kv">R$ 1.842,00</p><p class="kx">R$ 186 mil processados</p></div>
+</div>
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: stretch">
+<section class="card" style="flex: 999 1 460px; padding: 18px 20px; box-sizing: border-box">
+<div class="row"><h2 class="t2 grow">Receita mensal</h2><span class="sm mut">assinaturas + transações</span></div>
+<div class="bars" style="margin-top: 16px" role="img" aria-label="Receita de junho a novembro subindo"><div class="b20"></div><div class="b30"></div><div class="b45"></div><div class="b60"></div><div class="b80"></div><div class="b100 hi"></div></div>
+<div style="display: flex; gap: 12px; margin-top: 6px"><sc-for list="{{meses}}" as="m" hint-placeholder-count="6"><span class="sm mut" style="flex: 1; text-align: center">{{m}}</span></sc-for></div>
+</section>
+<section class="card" style="flex: 1 1 320px; padding: 18px 20px; box-sizing: border-box">
+<h2 class="t2">Funil de novembro</h2>
+<sc-for list="{{funil}}" as="f" hint-placeholder-count="3"><div style="margin-top: 14px"><div class="row sm"><strong class="grow">{{f.t}}</strong><span class="n">{{f.v}}</span></div><div class="met" style="margin-top: 6px"><div class="{{f.w}}"></div></div><p class="kx">{{f.x}}</p></div></sc-for>
+</section>
+</div>
+<section class="card" style="overflow: hidden">
+<div style="padding: 16px 18px"><h2 class="t2">Precisa de você</h2></div>
+<sc-for list="{{alertas}}" as="a" hint-placeholder-count="5"><div class="li"><span class="{{a.cls}}"></span><span class="grow">{{a.t}}</span><button type="button" class="bs" onClick="{{a.ir}}">{{a.btn}}</button></div></sc-for>
+</section>
+</sc-if>
+
+<sc-if value="{{sClientes}}" hint-placeholder-val="{{ false }}">
+<div class="row">
+<div class="row" style="gap: 8px" role="group" aria-label="Filtrar"><sc-for list="{{filtros}}" as="f" hint-placeholder-count="6"><button type="button" class="{{f.cls}}" onClick="{{f.pick}}">{{f.nome}}</button></sc-for></div>
+<span class="grow"></span>
+<div class="f" style="width: 260px"><input type="search" aria-label="Buscar negócio" value="" placeholder="Buscar por nome, CNPJ ou celular"></div>
+</div>
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section class="card" style="flex: 999 1 560px; min-width: 0; overflow: hidden">
+<div style="overflow-x: auto"><div style="min-width: 640px">
+<div style="display: grid; grid-template-columns: minmax(0,2fr) 110px 110px 100px 130px; gap: 12px; padding: 12px 18px; font-size: 12px; font-weight: 600; color: #5B616B"><span>Negócio</span><span>Plano</span><span>Situação</span><span style="text-align: right">Mensal</span><span>Próxima data</span></div>
+<sc-for list="{{lista}}" as="t" hint-placeholder-count="7">
+<button type="button" class="{{t.cls}}" onClick="{{t.pick}}"><span style="min-width: 0"><span style="display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{t.nome}}</span><span class="sm mut">{{t.seg}} · {{t.cidade}}</span></span><span>{{t.plano}}</span><span><span class="{{t.stCls}}">{{t.stNome}}</span></span><span class="n" style="text-align: right">{{t.valor}}</span><span class="mut">{{t.data}}</span></button>
+</sc-for>
+</div></div>
+</section>
+<aside class="card" style="flex: 1 1 340px; padding: 20px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px" aria-label="Detalhe do negócio">
+<div><span class="{{sel.stCls}}">{{sel.stNome}}</span><h2 style="margin: 10px 0 0; font-size: 20px">{{sel.nome}}</h2><p class="sm mut" style="margin: 4px 0 0">{{sel.dono}} · {{sel.tel}} · cliente desde {{sel.desde}}</p></div>
+<div><p class="cap">Plano e uso</p>
+<p style="margin: 0 0 10px; font-size: 14px"><strong>{{sel.plano}}</strong> · {{sel.valor}}/mês · última atividade {{sel.ativ}}</p>
+<sc-for list="{{sel.usos}}" as="u" hint-placeholder-count="3"><div style="margin-top: 8px"><div class="row sm"><span class="grow">{{u.t}}</span><span class="n mut">{{u.v}}</span></div><div class="met" style="margin-top: 4px"><div class="{{u.w}}"></div></div></div></sc-for>
+<div class="row" style="gap: 6px; margin-top: 12px"><sc-for list="{{sel.modulos}}" as="m" hint-placeholder-count="3"><span class="{{m.cls}}">{{m.t}}</span></sc-for></div>
+</div>
+<div><p class="cap">Faturas</p>
+<sc-for list="{{sel.faturas}}" as="f" hint-placeholder-count="2"><div class="row sm" style="padding: 8px 0; border-top: 1px solid #EEF0EC"><span class="grow">{{f.mes}}</span><span class="n">{{f.valor}}</span><span class="{{f.cls}}">{{f.st}}</span></div></sc-for>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<sc-if value="{{sel.temAberta}}" hint-placeholder-val="{{ false }}"><button type="button" class="bp" onClick="{{darBaixa}}">Dar baixa manual na fatura</button></sc-if>
+<sc-if value="{{sel.emTeste}}" hint-placeholder-val="{{ false }}"><button type="button" class="bs" onClick="{{estender}}">Estender teste em 7 dias</button></sc-if>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px">
+<button type="button" class="bs" onClick="{{abrirPlano}}">Mudar plano</button>
+<button type="button" class="bs" onClick="{{abrirDesconto}}">Dar desconto</button>
+<button type="button" class="bs" onClick="{{entrarSuporte}}">Entrar como suporte</button>
+<button type="button" class="bs">Exportar dados</button>
+</div>
+<sc-if value="{{sel.podeSuspender}}" hint-placeholder-val="{{ true }}"><button type="button" class="bs" onClick="{{suspender}}">Suspender agora</button></sc-if>
+<sc-if value="{{sel.podeReativar}}" hint-placeholder-val="{{ false }}"><button type="button" class="bp" onClick="{{reativar}}">Reativar conta</button></sc-if>
+<sc-if value="{{sel.podeCancelar}}" hint-placeholder-val="{{ true }}"><button type="button" class="bd" onClick="{{abrirCancelar}}">Cancelar assinatura</button></sc-if>
+</div>
+</aside>
+</div>
+</sc-if>
+
+<sc-if value="{{sCobranca}}" hint-placeholder-val="{{ false }}">
+<div class="grid">
+<div class="k"><p class="kl">Previsto em dezembro</p><p class="kv">{{previsto}}</p><p class="kx">{{nPag}} assinaturas + testes que vão virar</p></div>
+<div class="k"><p class="kl">Recebido em novembro</p><p class="kv">R$ 5.913,00</p><p class="kx">93% no cartão ou Pix Automático</p></div>
+<div class="k"><p class="kl">Vencido</p><p class="kv">{{vencidoTot}}</p><p class="kx">{{vencidoX}}</p></div>
+</div>
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section class="card" style="flex: 999 1 520px; min-width: 0; overflow: hidden">
+<div class="row" style="padding: 14px 18px"><h2 class="t2 grow">Faturas</h2><sc-for list="{{fFat}}" as="f" hint-placeholder-count="3"><button type="button" class="{{f.cls}}" onClick="{{f.pick}}">{{f.t}}</button></sc-for></div>
+<div style="overflow-x: auto"><table style="width: 100%; border-collapse: collapse; min-width: 600px"><thead><tr><th>Negócio</th><th>Mês</th><th>Forma</th><th style="text-align: right">Valor</th><th>Situação</th><th></th></tr></thead>
+<tbody><sc-for list="{{faturas}}" as="f" hint-placeholder-count="6"><tr><td style="font-weight: 600">{{f.nome}}</td><td>{{f.mes}}</td><td class="mut">{{f.forma}}</td><td class="n" style="text-align: right">{{f.valor}}</td><td><span class="{{f.cls}}">{{f.st}}</span></td><td><sc-if value="{{f.cobrar}}" hint-placeholder-val="{{ false }}"><button type="button" class="bs" onClick="{{f.acao}}">{{f.btn}}</button></sc-if></td></tr></sc-for></tbody></table></div>
+</section>
+<aside class="card" style="flex: 1 1 320px; padding: 20px; box-sizing: border-box">
+<h2 class="t2">Régua de cobrança</h2>
+<p class="sm mut" style="margin: 4px 0 12px">Roda sozinha todo dia às 07:00. Cada passo vale pra todos os clientes.</p>
+<sc-for list="{{regua}}" as="r" hint-placeholder-count="7"><div class="row" style="padding: 8px 0; border-top: 1px solid #EEF0EC; gap: 10px"><span class="n sm" style="width: 44px; font-weight: 700">{{r.d}}</span><span class="grow sm">{{r.t}}</span><button type="button" class="{{r.cls}}" onClick="{{r.pick}}" aria-label="{{r.t}}"></button></div></sc-for>
+</aside>
+</div>
+</sc-if>
+
+<sc-if value="{{sPlanos}}" hint-placeholder-val="{{ false }}">
+<sc-if value="{{precoSalvo}}" hint-placeholder-val="{{ false }}"><p style="margin: 0; padding: 12px 14px; border-radius: 12px; background: #E3F4EA; color: #0E5C34; font-size: 14px; font-weight: 600">Preços salvos. Valem pra quem assinar a partir de agora. Quem já paga mantém o preço até a renovação anual ou por 90 dias, com aviso no WhatsApp.</p></sc-if>
+<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr))">
+<sc-for list="{{planos}}" as="p" hint-placeholder-count="3">
+<section class="card" style="padding: 18px">
+<div class="row"><h2 class="t2 grow">{{p.n}}</h2><span class="st neu">{{p.clientes}}</span></div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px">
+<div class="f"><label>Preço mensal</label><input type="text" value="{{p.preco}}"></div>
+<div class="f"><label>Usuários</label><input type="text" value="{{p.usu}}"></div>
+<div class="f"><label>Lembretes/mês</label><input type="text" value="{{p.lem}}"></div>
+<div class="f"><label>Campanha/mês</label><input type="text" value="{{p.camp}}"></div>
+<div class="f"><label>Notas/mês</label><input type="text" value="{{p.nf}}"></div>
+<div class="f"><label>Taxa do Pix</label><input type="text" value="{{p.pix}}"></div>
+</div>
+</section>
+</sc-for>
+</div>
+<div class="row"><span class="sm mut grow">Desconto do plano anual: 20% · teste grátis: 14 dias do Profissional, sem cartão</span><button type="button" class="bp" onClick="{{salvarPreco}}">Salvar preços e limites</button></div>
+<section class="card" style="overflow: hidden">
+<div class="row" style="padding: 14px 18px"><h2 class="t2 grow">Cupons</h2><button type="button" class="bs" onClick="{{abrirCupom}}">Criar cupom</button></div>
+<table style="width: 100%; border-collapse: collapse"><thead><tr><th>Código</th><th>Desconto</th><th>Usos</th><th>Validade</th></tr></thead>
+<tbody><sc-for list="{{cupons}}" as="c" hint-placeholder-count="3"><tr><td style="font-weight: 700; font-family: monospace">{{c.c}}</td><td>{{c.d}}</td><td class="n">{{c.u}}</td><td class="mut">{{c.v}}</td></tr></sc-for></tbody></table>
+</section>
+</sc-if>
+
+<sc-if value="{{sUso}}" hint-placeholder-val="{{ false }}">
+<div class="grid">
+<div class="k"><p class="kl">Receita do mês</p><p class="kv">R$ 7.755,00</p><p class="kx">assinaturas + transações</p></div>
+<div class="k"><p class="kl">Custo do mês</p><p class="kv">R$ 1.186,40</p><p class="kx">WhatsApp, nota, servidor, gateway</p></div>
+<div class="k" style="background: #E3F1EA; border-color: #BFE0CF"><p class="kl" style="color: #0E5C34">Margem bruta</p><p class="kv" style="color: #0E5C34">84,7%</p><p class="kx" style="color: #0E5C34">meta: acima de 75%</p></div>
+</div>
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section class="card" style="flex: 999 1 560px; min-width: 0; overflow: hidden">
+<div style="padding: 14px 18px"><h2 class="t2">Por cliente</h2><p class="sm mut" style="margin: 2px 0 0">Ordenado por custo. Vermelho = custa mais do que o plano cobre.</p></div>
+<div style="overflow-x: auto"><table style="width: 100%; border-collapse: collapse; min-width: 640px"><thead><tr><th>Negócio</th><th style="text-align: right">Msgs WhatsApp</th><th style="text-align: right">Notas</th><th style="text-align: right">Custo</th><th style="text-align: right">Paga</th><th style="text-align: right">Margem</th></tr></thead>
+<tbody><sc-for list="{{usoLista}}" as="u" hint-placeholder-count="6"><tr><td style="font-weight: 600">{{u.n}}</td><td class="n" style="text-align: right">{{u.m}}</td><td class="n" style="text-align: right">{{u.nf}}</td><td class="n" style="text-align: right">{{u.c}}</td><td class="n" style="text-align: right">{{u.p}}</td><td style="text-align: right"><span class="{{u.cls}}">{{u.mg}}</span></td></tr></sc-for></tbody></table></div>
+</section>
+<aside class="card" style="flex: 1 1 300px; padding: 20px; box-sizing: border-box">
+<h2 class="t2">Custos fixos e por uso</h2>
+<sc-for list="{{custos}}" as="c" hint-placeholder-count="6"><div class="row sm" style="padding: 8px 0; border-top: 1px solid #EEF0EC"><span class="grow">{{c.t}}</span><span class="n" style="font-weight: 600">{{c.v}}</span></div></sc-for>
+<p class="kx" style="margin-top: 10px">Barbearia do Zé passou do limite de lembretes 2 meses seguidos. Sugestão: oferecer o plano Negócio.</p>
+</aside>
+</div>
+</sc-if>
+
+<sc-if value="{{sSuporte}}" hint-placeholder-val="{{ false }}">
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: stretch">
+<section class="card" style="flex: 1 1 320px; min-width: 0; overflow: hidden">
+<div style="padding: 14px 18px"><h2 class="t2">Chamados</h2><p class="sm mut" style="margin: 2px 0 0">Chegam pelo WhatsApp da Sellergy e pelo botão de ajuda</p></div>
+<sc-for list="{{chamados}}" as="c" hint-placeholder-count="4"><button type="button" class="{{c.cls}}" onClick="{{c.pick}}"><span class="li"><span class="grow" style="min-width: 0"><strong style="display: block">{{c.neg}}</strong><span class="sm mut">{{c.assunto}}</span></span><span class="sm mut n">{{c.h}}</span><span class="{{c.stCls}}">{{c.st}}</span></span></button></sc-for>
+</section>
+<section class="card" style="flex: 999 1 480px; min-width: 0; padding: 18px 20px; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px">
+<div class="row"><div class="grow"><h2 class="t2">{{ch.neg}}</h2><span class="sm mut">{{ch.quem}} · plano {{ch.plano}}</span></div><button type="button" class="bs" onClick="{{entrarSuporteCh}}">Entrar como suporte</button></div>
+<div style="display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 220px; padding: 12px; background: #FAFBF9; border-radius: 12px">
+<sc-for list="{{ch.msgs}}" as="m" hint-placeholder-count="3"><div class="{{m.cls}}">{{m.t}}</div></sc-for>
+</div>
+<div class="row" style="gap: 6px"><sc-for list="{{respostas}}" as="r" hint-placeholder-count="3"><button type="button" class="chip" onClick="{{r.usar}}">{{r.t}}</button></sc-for></div>
+<div class="row"><span class="grow"></span><button type="button" class="bs" onClick="{{resolver}}">Marcar como resolvido</button></div>
+</section>
+</div>
+</sc-if>
+
+<sc-if value="{{sSaude}}" hint-placeholder-val="{{ false }}">
+<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr))">
+<sc-for list="{{servicos}}" as="s" hint-placeholder-count="8"><div class="k"><div class="row" style="gap: 8px"><span class="{{s.dot}}"></span><strong class="sm grow">{{s.t}}</strong></div><p class="kx" style="margin-top: 6px">{{s.x}}</p></div></sc-for>
+</div>
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section class="card" style="flex: 1 1 320px; padding: 18px 20px; box-sizing: border-box">
+<h2 class="t2">Servidor (VPS 1 GB)</h2>
+<sc-for list="{{recursos}}" as="r" hint-placeholder-count="3"><div style="margin-top: 14px"><div class="row sm"><span class="grow">{{r.t}}</span><strong class="n">{{r.v}}</strong></div><div class="met" style="margin-top: 6px"><div class="{{r.w}}"></div></div></div></sc-for>
+<p class="kx" style="margin-top: 12px">Memória acima de 80% há 3 dias. Com mais 15 clientes ativos, vale subir pra 2 GB (+R$ 25,00/mês).</p>
+</section>
+<section class="card" style="flex: 1 1 320px; padding: 18px 20px; box-sizing: border-box">
+<h2 class="t2">Filas</h2>
+<sc-for list="{{filas}}" as="f" hint-placeholder-count="4"><div class="row sm" style="padding: 8px 0; border-top: 1px solid #EEF0EC"><span class="grow">{{f.t}}</span><span class="n mut">{{f.v}}</span></div></sc-for>
+<div class="row" style="margin-top: 14px"><div class="grow"><strong class="sm">Último backup</strong><p class="kx">{{backupTxt}}</p></div><button type="button" class="bs" onClick="{{backup}}">Fazer backup agora</button></div>
+</section>
+<section class="card" style="flex: 1 1 320px; padding: 18px 20px; box-sizing: border-box">
+<h2 class="t2">Erros nas últimas 24 h</h2>
+<sc-for list="{{erros}}" as="e" hint-placeholder-count="3"><div style="padding: 8px 0; border-top: 1px solid #EEF0EC; font-size: 13px"><strong>{{e.t}}</strong><span class="mut" style="display: block">{{e.x}}</span></div></sc-for>
+</section>
+</div>
+</sc-if>
+
+<sc-if value="{{sComunicados}}" hint-placeholder-val="{{ false }}">
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section class="card" style="flex: 999 1 480px; min-width: 0; padding: 20px; box-sizing: border-box">
+<h2 class="t2">Novo comunicado</h2>
+<div class="f" style="margin-top: 14px"><span class="lb">Pra quem</span><div class="row" style="gap: 6px"><sc-for list="{{publicos}}" as="p" hint-placeholder-count="4"><button type="button" class="{{p.cls}}" onClick="{{p.pick}}">{{p.t}}</button></sc-for></div></div>
+<div class="f" style="margin-top: 14px"><span class="lb">Onde aparece</span><div class="row" style="gap: 6px"><sc-for list="{{canais}}" as="c" hint-placeholder-count="2"><button type="button" class="{{c.cls}}" onClick="{{c.pick}}">{{c.t}}</button></sc-for></div></div>
+<div class="f" style="margin-top: 14px"><label for="ct">Título</label><input id="ct" type="text" value="Novidade: fila de encaixe"></div>
+<div class="f" style="margin-top: 12px"><label for="cx">Texto</label><textarea id="cx">Agora, quando alguém remarca, o Sellergy acha quem está esperando e oferece o horário pelo WhatsApp. Ative em Agenda › Fila de encaixe.</textarea></div>
+<div class="row" style="margin-top: 14px"><span class="sm mut grow">Vai pra {{alcance}} negócios</span><button type="button" class="bp" onClick="{{enviarCom}}">Enviar comunicado</button></div>
+</section>
+<section class="card" style="flex: 1 1 340px; overflow: hidden">
+<div style="padding: 14px 18px"><h2 class="t2">Enviados</h2></div>
+<sc-for list="{{historico}}" as="h" hint-placeholder-count="3"><div class="li"><div class="grow"><strong>{{h.t}}</strong><span class="sm mut" style="display: block">{{h.x}}</span></div><span class="sm mut">{{h.d}}</span></div></sc-for>
+</section>
+</div>
+</sc-if>
+
+<sc-if value="{{sEquipe}}" hint-placeholder-val="{{ false }}">
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section class="card" style="flex: 1 1 420px; min-width: 0; overflow: hidden">
+<div class="row" style="padding: 14px 18px"><h2 class="t2 grow">Equipe Sellergy</h2><button type="button" class="bs" onClick="{{convidarAdmin}}">Convidar pessoa</button></div>
+<sc-for list="{{admins}}" as="a" hint-placeholder-count="3"><div class="li"><div class="grow"><strong>{{a.n}}</strong><span class="sm mut" style="display: block">{{a.x}}</span></div><span class="{{a.cls}}">{{a.papel}}</span></div></sc-for>
+<div style="padding: 14px 18px; border-top: 1px solid #EEF0EC">
+<p class="cap">O que cada papel faz</p>
+<table style="width: 100%; border-collapse: collapse"><thead><tr><th></th><th>Dono</th><th>Suporte</th><th>Financeiro</th></tr></thead>
+<tbody><sc-for list="{{perm}}" as="p" hint-placeholder-count="6"><tr><td>{{p.t}}</td><td>{{p.a}}</td><td>{{p.b}}</td><td>{{p.c}}</td></tr></sc-for></tbody></table>
+</div>
+</section>
+<section class="card" style="flex: 999 1 420px; min-width: 0; overflow: hidden">
+<div style="padding: 14px 18px"><h2 class="t2">Auditoria</h2><p class="sm mut" style="margin: 2px 0 0">Tudo que alguém da equipe faz na conta de um cliente fica aqui. Não dá pra apagar.</p></div>
+<sc-for list="{{log}}" as="l" hint-placeholder-count="6"><div class="li"><span class="n sm mut" style="width: 92px">{{l.h}}</span><strong style="width: 70px" class="sm">{{l.quem}}</strong><span class="grow sm">{{l.t}}</span></div></sc-for>
+</section>
+</div>
+</sc-if>
+</main>
+
+<sc-if value="{{mPlano}}" hint-placeholder-val="{{ false }}">
+<div class="ov" role="dialog" aria-modal="true" aria-labelledby="mp"><div class="modal">
+<div class="row"><h2 id="mp" class="grow" style="margin: 0; font-size: 20px">Mudar plano · {{sel.nome}}</h2><button type="button" class="bg" onClick="{{fechar}}" aria-label="Fechar">✕</button></div>
+<div style="display: flex; flex-direction: column; gap: 8px; margin-top: 16px"><sc-for list="{{opPlanos}}" as="o" hint-placeholder-count="3"><button type="button" class="{{o.cls}}" onClick="{{o.pick}}"><strong class="grow">{{o.n}}</strong><span class="n">{{o.v}}</span></button></sc-for></div>
+<p class="kx" style="margin-top: 12px">A diferença é cobrada proporcional na próxima fatura. A cliente recebe aviso no WhatsApp.</p>
+<button type="button" class="bp" style="width: 100%; margin-top: 14px" onClick="{{confirmarPlano}}">Confirmar mudança</button>
+</div></div>
+</sc-if>
+<sc-if value="{{mDesconto}}" hint-placeholder-val="{{ false }}">
+<div class="ov" role="dialog" aria-modal="true" aria-labelledby="md"><div class="modal">
+<div class="row"><h2 id="md" class="grow" style="margin: 0; font-size: 20px">{{descTit}}</h2><button type="button" class="bg" onClick="{{fechar}}" aria-label="Fechar">✕</button></div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px">
+<div class="f"><label for="d1">Desconto</label><select id="d1"><option>30%</option><option>50%</option><option>1 mês grátis</option></select></div>
+<div class="f"><label for="d2">Por quanto tempo</label><select id="d2"><option>3 meses</option><option>Sempre</option></select></div>
+<sc-if value="{{ehCupom}}" hint-placeholder-val="{{ false }}"><div class="f" style="grid-column: 1 / -1"><label for="d3">Código</label><input id="d3" type="text" value="BLACKFRIDAY30"></div></sc-if>
+<div class="f" style="grid-column: 1 / -1"><label for="d4">Motivo (vai pra auditoria)</label><input id="d4" type="text" value="Campanha de Black Friday"></div>
+</div>
+<button type="button" class="bp" style="width: 100%; margin-top: 16px" onClick="{{confirmarDesconto}}">Salvar</button>
+</div></div>
+</sc-if>
+<sc-if value="{{mCancelar}}" hint-placeholder-val="{{ false }}">
+<div class="ov" role="dialog" aria-modal="true" aria-labelledby="mc"><div class="modal">
+<h2 id="mc" style="margin: 0; font-size: 20px">Cancelar {{sel.nome}}?</h2>
+<p class="sm mut" style="margin: 8px 0 0; line-height: 1.5">A conta fica só pra consulta por 60 dias, com os dados disponíveis pra exportar. Depois disso os dados são apagados e a cliente recebe aviso 7 dias antes.</p>
+<div class="f" style="margin-top: 14px"><label for="mo">Motivo</label><select id="mo"><option>Fechou o negócio</option><option>Achou caro</option><option>Foi pra outro sistema</option><option>Faltou funcionalidade</option></select></div>
+<div class="row" style="margin-top: 18px"><button type="button" class="bs grow" onClick="{{fechar}}">Voltar</button><button type="button" class="bd grow" onClick="{{confirmarCancelar}}">Cancelar assinatura</button></div>
+</div></div>
+</sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1100}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { sec: 'planos', sel: 'lumi', filtro: 'todos', pagos: {}, estendidos: {}, susp: {}, canc: {}, planoMod: {}, modal: null, planoEsc: 'Profissional', suporte: false,
+      fFat: 'todas', cobrados: {}, regua: [true, true, true, true, true, true, true], precoSalvo: false, cupons: 0, ch: 0, resolvidos: {}, resp: {},
+      backup: false, pub: 0, canal: [true, true], comEnviados: 0, convidado: false, log: [] };
+  }
+  renderVals() {
+    const s = this.state; const set = (o) => this.setState(o);
+    const PRECO = { Essencial: 59, Profissional: 119, 'Negócio': 199 };
+    const brl = (v) => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const reg = (t) => [{ h: 'agora', quem: 'Você', t }, ...s.log];
+    const NOME = { ATIVA: 'Ativa', TRIAL: 'Em teste', ATRASADA: 'Atrasada', SUSPENSA: 'Suspensa', CANCELADA: 'Cancelada' };
+    const T = [
+      { id: 'lumi', nome: 'Clínica Lumi Estética', seg: 'Estética', cidade: 'São Paulo', plano: 'Profissional', st: 'TRIAL', data: 'teste até 05/12', dono: 'Marina Lopes', tel: '(11) 98765-4321', desde: '21/11/2026', ativ: 'agora', usos: [[3, 5, 'Usuários'], [212, 1000, 'Lembretes'], [18, 200, 'Notas fiscais']], mod: ['WhatsApp QR', 'Nota fiscal', 'Recebimento'], faturas: [] },
+      { id: 'bella', nome: 'Bella Moda Feminina', seg: 'Loja de roupas', cidade: 'Campinas', plano: 'Essencial', st: 'ATIVA', data: 'vence 05/12', dono: 'Carla Menezes', tel: '(19) 99102-3344', desde: '05/09/2026', ativ: 'hoje 09:12', usos: [[2, 2, 'Usuários'], [41, 300, 'Lembretes'], [96, 100, 'Notas fiscais']], mod: ['Catálogo', 'Nota fiscal'], faturas: [{ mes: 'Nov/2026', st: 'PAGA', forma: 'Pix Automático' }, { mes: 'Out/2026', st: 'PAGA', forma: 'Pix Automático' }] },
+      { id: 'barba', nome: 'Barbearia do Zé', seg: 'Barbearia', cidade: 'Santos', plano: 'Profissional', st: 'ATRASADA', data: 'venceu 21/11', dono: 'José Arantes', tel: '(13) 98811-2020', desde: '21/08/2026', ativ: 'hoje 08:40', usos: [[4, 5, 'Usuários'], [1190, 1000, 'Lembretes'], [0, 200, 'Notas fiscais']], mod: ['WhatsApp oficial', 'Recebimento'], faturas: [{ mes: 'Nov/2026', st: 'VENCIDA', forma: 'Cartão recusado' }, { mes: 'Out/2026', st: 'PAGA', forma: 'Cartão' }] },
+      { id: 'fisio', nome: 'FisioVida', seg: 'Saúde', cidade: 'São Paulo', plano: 'Negócio', st: 'ATIVA', data: 'vence 12/12', dono: 'Paulo Reis', tel: '(11) 97700-4411', desde: '12/06/2026', ativ: 'hoje 10:02', usos: [[8, 15, 'Usuários'], [2140, 3000, 'Lembretes'], [140, 500, 'Notas fiscais']], mod: ['WhatsApp oficial', 'Nota fiscal', 'Recebimento'], faturas: [{ mes: 'Nov/2026', st: 'PAGA', forma: 'Cartão' }] },
+      { id: 'cheiro', nome: 'Cheirinho Cosméticos', seg: 'Cosméticos', cidade: 'Sorocaba', plano: 'Profissional', st: 'SUSPENSA', data: 'venceu 10/11', dono: 'Lúcia Prado', tel: '(15) 99633-1209', desde: '10/07/2026', ativ: 'há 9 dias', usos: [[2, 5, 'Usuários'], [0, 1000, 'Lembretes'], [0, 200, 'Notas fiscais']], mod: ['Catálogo'], faturas: [{ mes: 'Nov/2026', st: 'VENCIDA', forma: 'Pix' }, { mes: 'Out/2026', st: 'PAGA', forma: 'Pix' }] },
+      { id: 'unhas', nome: 'Studio Unhas da Nanda', seg: 'Salão', cidade: 'Osasco', plano: 'Profissional', st: 'TRIAL', data: 'teste até 26/11', dono: 'Fernanda Dias', tel: '(11) 96541-7780', desde: '12/11/2026', ativ: 'ontem', usos: [[1, 5, 'Usuários'], [18, 1000, 'Lembretes'], [0, 200, 'Notas fiscais']], mod: [], faturas: [] },
+      { id: 'aria', nome: 'Ária Moda Feminina', seg: 'Loja de roupas', cidade: 'São Paulo', plano: 'Profissional', st: 'TRIAL', data: 'teste até 06/12', dono: 'Rafaela Souza', tel: '(11) 98123-0045', desde: '22/11/2026', ativ: 'hoje 15:30', usos: [[1, 5, 'Usuários'], [0, 1000, 'Lembretes'], [0, 200, 'Notas fiscais']], mod: [], faturas: [] },
+      { id: 'pet', nome: 'Pet Mimo', seg: 'Pet shop', cidade: 'Guarulhos', plano: 'Essencial', st: 'CANCELADA', data: '—', dono: 'Rafael Couto', tel: '(11) 95500-1122', desde: '02/03/2026', ativ: 'há 40 dias', usos: [[0, 2, 'Usuários'], [0, 300, 'Lembretes'], [0, 100, 'Notas fiscais']], mod: [], faturas: [{ mes: 'Out/2026', st: 'PAGA', forma: 'Pix' }] },
+    ].map((t) => {
+      let st = t.st;
+      if (s.pagos[t.id] && (st === 'ATRASADA' || st === 'SUSPENSA')) st = 'ATIVA';
+      if (s.susp[t.id] === true) st = 'SUSPENSA';
+      if (s.susp[t.id] === false && st === 'SUSPENSA') st = 'ATIVA';
+      if (s.canc[t.id]) st = 'CANCELADA';
+      const plano = s.planoMod[t.id] || t.plano;
+      const data = s.canc[t.id] ? 'consulta até 22/01' : s.estendidos[t.id] ? 'teste até ' + (t.id === 'lumi' ? '12/12' : '03/12') : (s.pagos[t.id] ? 'vence 21/12' : t.data);
+      const faturas = t.faturas.map((f, i) => ({ ...f, st: i === 0 && s.pagos[t.id] ? 'PAGA' : f.st }));
+      return { ...t, st, plano, data, faturas };
+    });
+    const conta = (st) => T.filter((t) => t.st === st).length;
+    const pag = T.filter((t) => t.st === 'ATIVA' || t.st === 'ATRASADA');
+    const mrr = 6120 + pag.reduce((v, t) => v + PRECO[t.plano], 0);
+    const a = T.find((t) => t.id === s.sel) || T[0];
+    const vencidas = T.filter((t) => t.faturas.some((f) => f.st === 'VENCIDA'));
+    const irCli = (id) => () => set({ sec: 'clientes', sel: id, filtro: 'todos' });
+
+    const SEC = [['geral', 'Visão geral'], ['clientes', 'Clientes'], ['cobranca', 'Cobrança'], ['planos', 'Planos e preços'], ['uso', 'Uso e custos'], ['suporte', 'Suporte'], ['saude', 'Saúde do sistema'], ['comunicados', 'Comunicados'], ['equipe', 'Equipe e auditoria']];
+    const SUB = { geral: 'Novembro de 2026 · 47 negócios', clientes: T.length + ' de 47 negócios · dados de exemplo', cobranca: 'Mensalidades dos clientes do Sellergy', planos: 'Muda pra novos clientes na hora', uso: 'Quanto cada cliente custa e quanto paga', suporte: 'Responda e resolva sem sair daqui', saude: 'Atualizado há 30 s', comunicados: 'Aviso dentro do sistema e no WhatsApp', equipe: 'Quem da Sellergy acessa e o que fez' };
+    const chamadosAbertos = [0, 1, 2].filter((i) => !s.resolvidos[i]).length;
+    const CT = { clientes: vencidas.length, suporte: chamadosAbertos, saude: 1 };
+
+    const FT = [];
+    T.forEach((t) => t.faturas.forEach((f) => FT.push({ id: t.id, nome: t.nome, mes: f.mes, forma: f.forma, v: PRECO[t.plano], st: f.st })));
+    FT.push({ id: 'fisio2', nome: 'FisioVida', mes: 'Dez/2026', forma: 'Cartão', v: 199, st: 'ABERTA' });
+    const fatFilt = FT.filter((f) => s.fFat === 'todas' || (s.fFat === 'vencidas' && f.st === 'VENCIDA') || (s.fFat === 'pagas' && f.st === 'PAGA'));
+    const vencTot = FT.filter((f) => f.st === 'VENCIDA').reduce((v, f) => v + f.v, 0);
+
+    const CH = [
+      { neg: 'Barbearia do Zé', quem: 'José Arantes', plano: 'Profissional', assunto: 'Cartão recusado, como pago?', h: '15:02', tid: 'barba', msgs: ['Oi, meu cartão foi recusado na mensalidade. Como faço pra pagar?'] },
+      { neg: 'Clínica Lumi Estética', quem: 'Marina Lopes', plano: 'Profissional (teste)', assunto: 'Lembrete não saiu pra uma cliente', h: '14:20', tid: 'lumi', msgs: ['A Juliana disse que não recebeu o lembrete de ontem.', 'O número dela está com 8 dígitos na ficha, sem o 9.'] },
+      { neg: 'Bella Moda Feminina', quem: 'Carla Menezes', plano: 'Essencial', assunto: 'Notas quase no limite', h: 'ontem', tid: 'bella', msgs: ['Vou passar de 100 notas esse mês, o que acontece?'] },
+    ];
+    const RESP = ['Mandei um Pix de pagamento no seu WhatsApp, libera na hora.', 'Corrigi o número na ficha dela, o próximo lembrete já sai.', 'Passando do limite, as notas continuam saindo. Cobramos R$ 0,15 por nota extra ou você sobe pro Profissional.'];
+    const ch = CH[s.ch];
+    const msgsCh = ch.msgs.map((t, i) => ({ t, cls: i === 1 && s.ch === 1 ? 'msg eu' : 'msg' }));
+    if (s.resp[s.ch]) msgsCh.push({ t: s.resp[s.ch], cls: 'msg eu' });
+
+    const PL = [
+      { n: 'Essencial', preco: 'R$ 59,00', usu: '2', lem: '300', camp: '0', nf: '100', pix: '0,99%', clientes: '9 clientes' },
+      { n: 'Profissional', preco: 'R$ 119,00', usu: '5', lem: '1.000', camp: '500', nf: '200', pix: '0,99%', clientes: '24 clientes' },
+      { n: 'Negócio', preco: 'R$ 199,00', usu: '15', lem: '3.000', camp: '2.000', nf: '500', pix: '0,79%', clientes: '6 clientes' },
+    ];
+    const CUP = [{ c: 'INDICA1', d: '1 mês grátis pra quem indicou', u: '12', v: 'sempre' }, { c: 'CONTADOR20', d: '20% por 6 meses', u: '4', v: 'até 31/12' }];
+    if (s.cupons) CUP.unshift({ c: 'BLACKFRIDAY30', d: '30% por 3 meses', u: '0', v: 'até 30/11' });
+
+    const PUB = [['Todos', 47], ['Clínicas', 28], ['Lojas', 19], ['Em teste', 8]];
+
+    return {
+      menu: SEC.map(([id, t]) => ({ t, cls: 'anav' + (s.sec === id ? ' on' : ''), temCt: !!CT[id], ct: CT[id], pick: () => set({ sec: id }) })),
+      titulo: SEC.find((x) => x[0] === s.sec)[1], subtitulo: SUB[s.sec],
+      sGeral: s.sec === 'geral', sClientes: s.sec === 'clientes', sCobranca: s.sec === 'cobranca', sPlanos: s.sec === 'planos', sUso: s.sec === 'uso',
+      sSuporte: s.sec === 'suporte', sSaude: s.sec === 'saude', sComunicados: s.sec === 'comunicados', sEquipe: s.sec === 'equipe',
+      suporte: s.suporte, sairSuporte: () => set({ suporte: false, log: reg('Encerrou a sessão de suporte em ' + a.nome) }),
+
+      mrr: brl(mrr), nPag: 39 + pag.length - 3, nTrial: conta('TRIAL') + 5,
+      meses: ['Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov'],
+      funil: [
+        { t: 'Criaram conta', v: '64', w: 'p100', x: '41 pelo Instagram, 15 por indicação' },
+        { t: 'Ativaram (1ª venda ou agendamento)', v: '41', w: 'p65', x: 'quem não ativa em 3 dias recebe ligação' },
+        { t: 'Viraram pagantes', v: '24', w: 'p40', x: '38% dos testes' },
+      ],
+      alertas: [
+        { cls: 'dot bad', t: vencidas.length + ' clientes com mensalidade vencida', btn: 'Ver cobrança', ir: () => set({ sec: 'cobranca', fFat: 'vencidas' }) },
+        { cls: 'dot wait', t: 'Studio Unhas da Nanda: teste acaba em 2 dias e só mandou 18 lembretes', btn: 'Abrir cliente', ir: irCli('unhas') },
+        { cls: 'dot wait', t: chamadosAbertos + ' chamados de suporte esperando resposta', btn: 'Responder', ir: () => set({ sec: 'suporte' }) },
+        { cls: 'dot wait', t: 'Servidor com 82% de memória há 3 dias', btn: 'Ver saúde', ir: () => set({ sec: 'saude' }) },
+        { cls: 'dot ok', t: 'Barbearia do Zé passou do limite de lembretes: oportunidade de upgrade', btn: 'Abrir cliente', ir: irCli('barba') },
+      ],
+
+      filtros: [['todos', 'Todos'], ['TRIAL', 'Em teste'], ['ATIVA', 'Ativas'], ['ATRASADA', 'Atrasadas'], ['SUSPENSA', 'Suspensas'], ['CANCELADA', 'Canceladas']].map(([id, nome]) => ({ nome, cls: id === s.filtro ? 'chip on' : 'chip', pick: () => set({ filtro: id }) })),
+      lista: T.filter((t) => s.filtro === 'todos' || t.st === s.filtro).map((t) => ({ ...t, valor: brl(PRECO[t.plano]), stNome: NOME[t.st], stCls: 'st ' + t.st, cls: t.id === s.sel ? 'lin on' : 'lin', pick: () => set({ sel: t.id }) })),
+      sel: {
+        ...a, valor: brl(PRECO[a.plano]), stNome: NOME[a.st], stCls: 'st ' + a.st,
+        usos: a.usos.map(([u, m, t]) => ({ t, v: u.toLocaleString('pt-BR') + ' de ' + m.toLocaleString('pt-BR'), w: (u >= m ? 'alto ' : '') + 'p' + Math.max(5, Math.min(100, Math.round((u / m) * 20) * 5)) })),
+        modulos: a.mod.length ? a.mod.map((t) => ({ t, cls: 'st ok' })) : [{ t: 'Nenhum módulo ativado ainda', cls: 'st neu' }],
+        faturas: a.faturas.length ? a.faturas.map((f) => ({ mes: f.mes, valor: brl(PRECO[a.plano]), st: f.st === 'PAGA' ? 'Paga' : 'Vencida', cls: f.st === 'PAGA' ? 'st ok' : 'st bad' })) : [{ mes: 'Nenhuma fatura ainda', valor: '', st: 'Teste', cls: 'st info' }],
+        temAberta: a.faturas.some((f) => f.st === 'VENCIDA') && a.st !== 'CANCELADA',
+        emTeste: a.st === 'TRIAL' && !s.estendidos[a.id],
+        podeSuspender: a.st === 'ATIVA' || a.st === 'ATRASADA',
+        podeReativar: a.st === 'SUSPENSA' || a.st === 'CANCELADA',
+        podeCancelar: a.st !== 'CANCELADA',
+      },
+      darBaixa: () => set({ pagos: { ...s.pagos, [a.id]: true }, log: reg('Deu baixa manual na fatura vencida de ' + a.nome) }),
+      estender: () => set({ estendidos: { ...s.estendidos, [a.id]: true }, log: reg('Estendeu o teste de ' + a.nome + ' em 7 dias') }),
+      suspender: () => set({ susp: { ...s.susp, [a.id]: true }, log: reg('Suspendeu ' + a.nome) }),
+      reativar: () => set({ susp: { ...s.susp, [a.id]: false }, canc: { ...s.canc, [a.id]: false }, pagos: { ...s.pagos, [a.id]: true }, log: reg('Reativou ' + a.nome) }),
+      entrarSuporte: () => set({ suporte: true, log: reg('Entrou como suporte (só leitura) em ' + a.nome) }),
+      abrirPlano: () => set({ modal: 'plano', planoEsc: a.plano }), abrirDesconto: () => set({ modal: 'desconto' }), abrirCancelar: () => set({ modal: 'cancelar' }),
+      abrirCupom: () => set({ modal: 'cupom' }),
+      fechar: () => set({ modal: null }),
+      mPlano: s.modal === 'plano', mDesconto: s.modal === 'desconto' || s.modal === 'cupom', mCancelar: s.modal === 'cancelar',
+      ehCupom: s.modal === 'cupom', descTit: s.modal === 'cupom' ? 'Criar cupom' : 'Dar desconto · ' + a.nome,
+      opPlanos: Object.keys(PRECO).map((n) => ({ n, v: brl(PRECO[n]) + '/mês', cls: 'opt' + (s.planoEsc === n ? ' on' : ''), pick: () => set({ planoEsc: n }) })),
+      confirmarPlano: () => set({ modal: null, planoMod: { ...s.planoMod, [a.id]: s.planoEsc }, log: reg('Mudou o plano de ' + a.nome + ' de ' + a.plano + ' para ' + s.planoEsc) }),
+      confirmarDesconto: () => set(s.modal === 'cupom' ? { modal: null, cupons: 1, log: reg('Criou o cupom BLACKFRIDAY30 (30% por 3 meses)') } : { modal: null, log: reg('Deu 30% de desconto por 3 meses para ' + a.nome) }),
+      confirmarCancelar: () => set({ modal: null, canc: { ...s.canc, [a.id]: true }, log: reg('Cancelou a assinatura de ' + a.nome) }),
+
+      previsto: brl(mrr - 6120 + 5913 + 238), vencidoTot: brl(vencTot), vencidoX: FT.filter((f) => f.st === 'VENCIDA').length + ' faturas',
+      fFat: [['todas', 'Todas'], ['vencidas', 'Vencidas'], ['pagas', 'Pagas']].map(([id, t]) => ({ t, cls: 'chip' + (s.fFat === id ? ' on' : ''), pick: () => set({ fFat: id }) })),
+      faturas: fatFilt.map((f) => ({ ...f, valor: brl(f.v), st: f.st === 'PAGA' ? 'Paga' : f.st === 'VENCIDA' ? (s.cobrados[f.id] ? 'Cobrada agora' : 'Vencida') : 'Em aberto', cls: 'st ' + (f.st === 'PAGA' ? 'ok' : f.st === 'VENCIDA' ? 'bad' : 'info'),
+        cobrar: f.st === 'VENCIDA', btn: s.cobrados[f.id] ? 'Dar baixa' : 'Cobrar no WhatsApp',
+        acao: () => s.cobrados[f.id] ? set({ pagos: { ...s.pagos, [f.id]: true }, log: reg('Deu baixa manual na fatura de ' + f.nome) }) : set({ cobrados: { ...s.cobrados, [f.id]: true }, log: reg('Mandou cobrança por Pix no WhatsApp para ' + f.nome) }) })),
+      regua: [['D−3', 'Aviso: fatura chega em 3 dias'], ['D0', 'Cobra no cartão ou Pix Automático'], ['D+1', 'Manda Pix no WhatsApp'], ['D+3', 'Segundo aviso + nova tentativa'], ['D+8', 'Pausa vendas, campanhas e notas'], ['D+10', 'Conta só pra consulta'], ['D+60', 'Avisa e apaga dados (exportação enviada)']].map(([d, t], i) => ({ d, t, cls: 'sw' + (s.regua[i] ? ' on' : ''), pick: () => { const r = [...s.regua]; r[i] = !r[i]; set({ regua: r, log: reg((r[i] ? 'Ligou' : 'Desligou') + ' o passo ' + d + ' da régua de cobrança') }); } })),
+
+      planos: PL, precoSalvo: s.precoSalvo, cupons: CUP,
+      salvarPreco: () => set({ precoSalvo: true, log: reg('Salvou preços e limites dos planos') }),
+
+      usoLista: [
+        { n: 'Barbearia do Zé', m: '1.190', nf: '0', c: 'R$ 142,80', p: 'R$ 119,00', mg: '−20%', cls: 'st bad' },
+        { n: 'FisioVida', m: '2.140', nf: '140', c: 'R$ 98,60', p: 'R$ 199,00', mg: '50%', cls: 'st wait' },
+        { n: 'Clínica Lumi Estética', m: '212', nf: '18', c: 'R$ 11,18', p: 'R$ 119,00', mg: '91%', cls: 'st ok' },
+        { n: 'Bella Moda Feminina', m: '41', nf: '96', c: 'R$ 10,24', p: 'R$ 59,00', mg: '83%', cls: 'st ok' },
+        { n: 'Studio Unhas da Nanda', m: '18', nf: '0', c: 'R$ 0,72', p: 'teste', mg: '—', cls: 'st neu' },
+        { n: 'Ária Moda Feminina', m: '0', nf: '0', c: 'R$ 0,00', p: 'teste', mg: '—', cls: 'st neu' },
+      ],
+      custos: [{ t: 'WhatsApp oficial (Meta)', v: 'R$ 612,40' }, { t: 'Notas fiscais (emissor)', v: 'R$ 188,00' }, { t: 'Gateway de pagamento', v: 'R$ 251,00' }, { t: 'VPS 1 GB', v: 'R$ 45,00' }, { t: 'Hospedagem do site', v: 'R$ 30,00' }, { t: 'E-mail, domínio e backup', v: 'R$ 60,00' }],
+
+      chamados: CH.map((c, i) => ({ ...c, cls: 'lib' + (s.ch === i ? ' on' : ''), st: s.resolvidos[i] ? 'Resolvido' : s.resp[i] ? 'Respondido' : 'Esperando', stCls: 'st ' + (s.resolvidos[i] ? 'ok' : s.resp[i] ? 'info' : 'wait'), pick: () => set({ ch: i }) })),
+      ch: { ...ch, msgs: msgsCh },
+      respostas: [{ t: 'Usar resposta sugerida', usar: () => set({ resp: { ...s.resp, [s.ch]: RESP[s.ch] } }) }, { t: 'Pedir print', usar: () => set({ resp: { ...s.resp, [s.ch]: 'Consegue me mandar um print da tela?' } }) }],
+      resolver: () => set({ resolvidos: { ...s.resolvidos, [s.ch]: true }, log: reg('Resolveu o chamado de ' + ch.neg) }),
+      entrarSuporteCh: () => set({ sec: 'clientes', sel: ch.tid, suporte: true, log: reg('Entrou como suporte (só leitura) em ' + ch.neg) }),
+
+      servicos: [
+        { t: 'Sistema e API', x: 'Funcionando · 99,97% no mês', dot: 'dot ok' },
+        { t: 'Envio de lembretes', x: '1.842 enviados hoje · 0 falhas', dot: 'dot ok' },
+        { t: 'WhatsApp oficial (Meta)', x: 'Funcionando · 12 números conectados', dot: 'dot ok' },
+        { t: 'WhatsApp por QR Code', x: '2 de 26 sessões desconectadas', dot: 'dot wait' },
+        { t: 'Notas fiscais', x: 'Prefeitura de SP lenta (4 s)', dot: 'dot wait' },
+        { t: 'Pagamentos', x: 'Pix e cartão funcionando', dot: 'dot ok' },
+        { t: 'Banco de dados', x: '1,8 GB · consultas em 12 ms', dot: 'dot ok' },
+        { t: 'Memória do servidor', x: '82% usada', dot: 'dot wait' },
+      ],
+      recursos: [{ t: 'Memória', v: '82%', w: 'alto p80' }, { t: 'Processador', v: '23%', w: 'p25' }, { t: 'Disco', v: '41%', w: 'p40' }],
+      filas: [{ t: 'Lembretes agendados pra amanhã', v: '1.960' }, { t: 'Mensagens de campanha na fila', v: '38' }, { t: 'Notas esperando a prefeitura', v: '3' }, { t: 'Webhooks de pagamento com erro', v: '0' }],
+      backupTxt: s.backup ? 'Agora há pouco · 1,8 GB · guardado fora do servidor' : 'Hoje 03:00 · 1,8 GB · guardado fora do servidor',
+      backup: () => set({ backup: true, log: reg('Rodou backup manual do banco') }),
+      erros: [{ t: 'Sessão QR desconectada · Pet Mimo', x: '10:14 · o cliente precisa escanear de novo' }, { t: 'Timeout na prefeitura de SP', x: '11:02 · 3 notas na fila, vão ser reenviadas' }, { t: 'Cartão recusado · Barbearia do Zé', x: '07:00 · régua de cobrança seguiu pro Pix' }],
+
+      publicos: PUB.map(([t], i) => ({ t, cls: 'chip' + (s.pub === i ? ' on' : ''), pick: () => set({ pub: i }) })),
+      canais: ['Aviso dentro do sistema', 'WhatsApp'].map((t, i) => ({ t, cls: 'chip' + (s.canal[i] ? ' on' : ''), pick: () => { const c = [...s.canal]; c[i] = !c[i]; set({ canal: c }); } })),
+      alcance: PUB[s.pub][1],
+      enviarCom: () => set({ comEnviados: s.comEnviados + 1, log: reg('Enviou o comunicado "Novidade: fila de encaixe" para ' + PUB[s.pub][0].toLowerCase()) }),
+      historico: [
+        ...Array.from({ length: s.comEnviados }, () => ({ t: 'Novidade: fila de encaixe', x: PUB[s.pub][0] + ' · ' + PUB[s.pub][1] + ' negócios · enviado agora', d: 'hoje' })),
+        { t: 'Lembretes com botão de confirmar', x: 'Clínicas · 28 negócios · 71% leram', d: '10/11' },
+        { t: 'Manutenção domingo 02:00', x: 'Todos · 46 negócios · 88% leram', d: '01/11' },
+      ],
+
+      admins: [
+        { n: 'Você', x: 'dono · login com 2 fatores', papel: 'Dono', cls: 'st ok' },
+        { n: 'Júlia Andrade', x: 'suporte · último acesso hoje 14:50', papel: 'Suporte', cls: 'st info' },
+        ...(s.convidado ? [{ n: 'Escritório Contábil Ramos', x: 'convite enviado agora', papel: 'Financeiro', cls: 'st wait' }] : []),
+      ],
+      convidarAdmin: () => set({ convidado: true, log: reg('Convidou o escritório contábil com papel Financeiro') }),
+      perm: [
+        { t: 'Ver clientes e uso', a: '✓', b: '✓', c: '✓' },
+        { t: 'Entrar como suporte (só leitura)', a: '✓', b: '✓', c: '—' },
+        { t: 'Responder chamados', a: '✓', b: '✓', c: '—' },
+        { t: 'Dar baixa, desconto e mudar plano', a: '✓', b: '—', c: '✓' },
+        { t: 'Suspender e cancelar', a: '✓', b: '—', c: '—' },
+        { t: 'Preços, régua e equipe', a: '✓', b: '—', c: '—' },
+      ],
+      log: [
+        ...s.log,
+        { h: 'hoje 14:52', quem: 'Júlia', t: 'Entrou como suporte (só leitura) em Clínica Lumi Estética' },
+        { h: 'hoje 07:00', quem: 'Sistema', t: 'Régua de cobrança: Pix enviado para Barbearia do Zé' },
+        { h: 'ontem 18:10', quem: 'Você', t: 'Deu 1 mês grátis (cupom INDICA1) para FisioVida' },
+        { h: '19/11 09:30', quem: 'Sistema', t: 'Suspendeu Cheirinho Cosméticos (D+8 sem pagamento)' },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

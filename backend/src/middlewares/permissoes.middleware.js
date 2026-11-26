@@ -9,9 +9,16 @@
  *   VENDEDOR       -> colaborador do tenant com permissoes customizadas.
  *
  * O middlewareAutenticacao deve ser aplicado ANTES destes (req.usuario populado).
+ * Ele confere o usuario no BANCO a cada pedido (seguranca/sessaoUsuario.js):
+ * req.usuario.perfil/clienteId sao os atuais, nao os do login — quem e
+ * rebaixado ou excluido perde o acesso na hora.
  */
 
 const prisma = require('../prisma');
+const { situacaoAssinatura } = require('../assinatura/situacao');
+const { papelPode, papelDe } = require('../seguranca/papeis');
+
+const METODOS_LEITURA = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 const PERFIS_TENANT = ['CLIENT', 'ADMINISTRADOR', 'VENDEDOR'];
 
@@ -28,6 +35,32 @@ function requerAdmin(req, res, next) {
     return res.status(403).json({ erro: 'Acesso restrito ao administrador do sistema.' });
   }
   return next();
+}
+
+/**
+ * Equipe Sellergy por papel (DONO, SUPORTE, FINANCEIRO). Inclui o requerAdmin.
+ * O papel e carregado do banco pelo middlewareAutenticacao
+ * (req.usuario.papelAdmin). Matriz em seguranca/papeis.js.
+ *
+ *   roteador.post('/faturas/:id/pagar', requerPapelAdmin('cobranca.baixa'), ...)
+ */
+function requerPapelAdmin(acao) {
+  // Valida a acao ja na montagem da rota (erro de digitacao quebra no boot).
+  papelPode('DONO', acao);
+  return function (req, res, next) {
+    if (!ehAdmin(req.usuario)) {
+      return res.status(403).json({ erro: 'Acesso restrito ao administrador do sistema.' });
+    }
+    if (!papelPode(req.usuario.papelAdmin, acao)) {
+      return res.status(403).json({ erro: 'Seu papel na equipe não permite essa ação.', codigo: 'PAPEL_SEM_PERMISSAO', acao });
+    }
+    return next();
+  };
+}
+
+/** Papel efetivo do admin logado (DONO quando nao carregado). */
+function papelAdminDe(req) {
+  return papelDe(req?.usuario?.papelAdmin);
 }
 
 /**
@@ -56,7 +89,7 @@ function requerModuloLiberado(modulo) {
 
       const cliente = await prisma.cliente.findUnique({
         where: { id: req.usuario.clienteId },
-        select: { modulosLiberados: true, status: true }
+        select: { modulosLiberados: true, status: true, plano: true, statusAssinatura: true, trialAte: true }
       });
 
       if (!cliente) {
@@ -65,6 +98,19 @@ function requerModuloLiberado(modulo) {
 
       if (cliente.status !== 'ACTIVE') {
         return res.status(403).json({ erro: 'Conta inativa ou suspensa.' });
+      }
+
+      // Bloqueio suave da assinatura: trial vencido / conta suspensa ainda
+      // CONSULTA tudo (GET), mas nao cria nem altera. Nada e apagado.
+      const situacao = situacaoAssinatura(cliente);
+      if (situacao.somenteLeitura && !METODOS_LEITURA.has(req.method)) {
+        return res.status(402).json({
+          erro: situacao.aviso === 'TRIAL_VENCIDO'
+            ? 'Seu teste grátis terminou. Escolha um plano para continuar registrando — seus dados estão salvos.'
+            : 'Sua conta está em modo somente leitura por pendência na assinatura. Regularize para voltar a registrar.',
+          codigo: 'ASSINATURA_BLOQUEADA',
+          aviso: situacao.aviso,
+        });
       }
 
       const modulos = cliente.modulosLiberados || {};
@@ -105,10 +151,12 @@ function requerPermissao(modulo, acao) {
       if (req.usuario?.perfil === 'ADMINISTRADOR') return next();
 
       // VENDEDOR (e qualquer outro perfil de tenant): verifica permissoes JSON.
-      const usuario = await prisma.usuario.findUnique({
-        where: { id: req.usuario.id },
-        select: { permissoes: true }
-      });
+      // O auth.middleware ja carregou o usuario do banco (cache de 30 s, limpo
+      // quando a dona muda as permissoes): usa ele; senao consulta.
+      const usuario = req.usuarioAtual && req.usuarioAtual.id === req.usuario.id
+        ? req.usuarioAtual
+        : await prisma.usuario.findUnique({ where: { id: req.usuario.id }, select: { permissoes: true } });
+      if (!usuario) return res.status(401).json({ erro: 'Sessão inválida. Entre de novo.' });
 
       const permissoes = usuario?.permissoes || {};
       const permissoesModulo = permissoes[modulo] || {};
@@ -164,6 +212,8 @@ module.exports = {
   ehColaborador,
   ehDoTenant,
   requerAdmin,
+  requerPapelAdmin,
+  papelAdminDe,
   requerTenant,
   requerModuloLiberado,
   requerPermissao,

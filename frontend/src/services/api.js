@@ -37,6 +37,30 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Admin sem o codigo em 2 etapas, com ADMIN_2FA_OBRIGATORIO ligado: a API
+// barra tudo (403) menos perfil/configurar/ativar. Leva direto pra tela de
+// configurar o codigo, com o aviso ligado pela query string.
+export const ROTA_CONFIGURAR_2FA = '/admin/configuracoes/perfil';
+
+api.interceptors.response.use(
+  (resposta) => resposta,
+  (erro) => {
+    // Parte da API responde { error } e parte { erro }; as telas leem `erro`.
+    // Normaliza aqui pra mensagem certa sempre aparecer (o servidor tambem manda os dois).
+    const dados = erro?.response?.data;
+    if (dados && typeof dados === 'object' && !Array.isArray(dados)) {
+      if (dados.erro == null && typeof dados.error === 'string') dados.erro = dados.error;
+      if (dados.error == null && typeof dados.erro === 'string') dados.error = dados.erro;
+    }
+    if (erro?.response?.status === 403 && erro.response.data?.codigo === 'ADMIN_2FA_OBRIGATORIO') {
+      if (typeof window !== 'undefined' && window.location.pathname !== ROTA_CONFIGURAR_2FA) {
+        window.location.assign(`${ROTA_CONFIGURAR_2FA}?aviso=2fa`);
+      }
+    }
+    return Promise.reject(erro);
+  },
+);
+
 // URL publica do backend para colar em servicos externos (Meta, MP, etc).
 // Em dev, vem do tunel ngrok; em prod, do dominio publico real.
 // Fallback para a baseURL da API quando nao definida.

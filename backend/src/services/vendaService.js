@@ -8,15 +8,56 @@
 //     nao tiver caixa aberto) sem duplicar a parte arriscada (baixa de
 //     estoque + lancamento financeiro).
 //
-// Retry de numero sequencial: 2 vendas do mesmo tenant criadas em paralelo
-// podem colidir na unique constraint [clienteId, numero] — raro (precisa
-// cair no mesmo milissegundo) mas o retry torna a operacao segura.
+// Numero sequencial: tirado com trava advisory propria do tenant
+// (venda-numero:<clienteId>), entao 2 vendas em paralelo nunca pegam o mesmo
+// numero. O retry de P2002 fica so pra quem cria venda sem essa trava
+// (conclusao de agendamento).
+//
+// Estoque: a baixa e CONDICIONAL (estoqueAtual >= quantidade) dentro da
+// transacao. Duas vendas do ultimo item em paralelo -> so uma passa; a outra
+// recebe ErroVenda 422 e a transacao inteira desfaz. Quem ja recebeu o
+// dinheiro antes (bot/pedido pago) passa `exigirEstoque: false` e so e avisado.
+//
+// Cupom: o uso e incrementado so se ainda houver uso disponivel (mesma
+// transacao). Cupom de 1 uso em 10 vendas paralelas -> 1 venda com desconto.
 
 const prisma = require('./../prisma');
 const { registrarUsoCupom } = require('./cupomService');
 const { fecharLeadAutomatico } = require('./etapaLeadAuto');
+const { lockClienteAdvisory } = require('../utils/locks');
 
 const MAX_RETRIES_NUMERO = 5;
+
+/** Erro de regra de negocio da venda (vira 4xx no controller). */
+class ErroVenda extends Error {
+  constructor(mensagem, { status = 422, codigo, campos } = {}) {
+    super(mensagem);
+    this.name = 'ErroVenda';
+    this.status = status;
+    if (codigo) this.codigo = codigo;
+    if (campos) this.campos = campos;
+  }
+}
+
+const centavos = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+/**
+ * Baixa condicional: so desconta se ainda houver saldo. Postgres reavalia o
+ * WHERE depois de esperar a trava da linha, entao a corrida e segura.
+ * @returns {Promise<boolean>} true se baixou.
+ */
+async function baixarEstoque(tx, variacaoId, quantidade, { exigirEstoque = true } = {}) {
+  const qtd = Math.abs(quantidade);
+  if (!exigirEstoque) {
+    await tx.variacaoProduto.update({ where: { id: variacaoId }, data: { estoqueAtual: { decrement: qtd } } });
+    return true;
+  }
+  const r = await tx.variacaoProduto.updateMany({
+    where: { id: variacaoId, estoqueAtual: { gte: qtd } },
+    data: { estoqueAtual: { decrement: qtd } },
+  });
+  return r.count === 1;
+}
 
 /**
  * @param {{
@@ -36,15 +77,18 @@ const MAX_RETRIES_NUMERO = 5;
  * aqui so persiste o desconto e incrementa o uso, na mesma transacao da venda.
  * @returns {Promise<{venda:Object, totalItens:number, valorTotal:number, lancamentos:Array, totalLancamentos:number}>}
  */
-async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = null, metodoPagamento = null, descricaoVenda, cupomAplicado = null, tx: txExterna }) {
-  const valorBruto = itensValidados.reduce((acc, i) => acc + i.subtotal, 0);
-  const valorFinal = cupomAplicado ? cupomAplicado.valorComDesconto : valorBruto;
+async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = null, metodoPagamento = null, descricaoVenda, cupomAplicado = null, especialistaId = null, exigirEstoque = false, tx: txExterna }) {
+  // Dinheiro sempre em centavos (0.1 + 0.2 nao vira 0.30000000000000004).
+  const valorBruto = centavos(itensValidados.reduce((acc, i) => acc + i.subtotal, 0));
+  const valorFinal = cupomAplicado ? centavos(cupomAplicado.valorComDesconto) : valorBruto;
   // Proporcao do desconto — aplicada em cada grupo de lancamento pra soma dos
   // lancamentos bater com o valor de fato recebido (venda.valor), nao com o
   // preco cheio. Sem cupom, fator = 1 (nao muda nada).
   const fatorDesconto = valorBruto > 0 ? valorFinal / valorBruto : 1;
 
   const corpo = async (tx) => {
+    // Trava do numero da venda deste negocio (liberada no fim da transacao).
+    await lockClienteAdvisory(tx, `venda-numero:${clienteId}`);
     const venda = await tx.venda.create({
       data: {
         clienteId,
@@ -56,12 +100,16 @@ async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = n
         valorAntesDesconto: cupomAplicado ? valorBruto : null,
         metodoPagamento: metodoPagamento || null,
         descricao: descricaoVenda,
+        especialistaId: especialistaId || null,
         status: 'COMPLETED',
       },
     });
 
     if (cupomAplicado) {
-      await registrarUsoCupom(tx, cupomAplicado.cupomId);
+      const usou = await registrarUsoCupom(tx, cupomAplicado.cupomId);
+      if (!usou) {
+        throw new ErroVenda('Cupom esgotado (limite de uso atingido) ou não vale mais.', { codigo: 'CUPOM_ESGOTADO', campos: ['cupomCodigo'] });
+      }
     }
 
     for (const it of itensValidados) {
@@ -78,10 +126,14 @@ async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = n
         },
       });
       if (it.variacao.produto.tipo === 'FISICO') {
-        await tx.variacaoProduto.update({
-          where: { id: it.variacao.id },
-          data: { estoqueAtual: { increment: -Math.abs(it.quantidade) } },
-        });
+        const baixou = await baixarEstoque(tx, it.variacao.id, it.quantidade, { exigirEstoque });
+        if (!baixou) {
+          const atual = await tx.variacaoProduto.findUnique({ where: { id: it.variacao.id }, select: { estoqueAtual: true } });
+          throw new ErroVenda(
+            `Estoque insuficiente em ${it.variacao.produto.nome} (${it.variacao.nome}). Disponível: ${atual?.estoqueAtual ?? 0}, solicitado: ${it.quantidade}.`,
+            { codigo: 'ESTOQUE_INSUFICIENTE', campos: ['itens'] },
+          );
+        }
       }
 
       // Aluguel/devolucao: so cria o registro quando o produto pede devolucao,
@@ -115,7 +167,7 @@ async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = n
     for (const [catId, itensDoGrupo] of gruposPorCat.entries()) {
       const subtotalGrupo = itensDoGrupo.reduce((acc, i) => acc + i.subtotal, 0);
       // Desconto do cupom rateado proporcionalmente entre os grupos.
-      const subtotalComDesconto = Math.round(subtotalGrupo * fatorDesconto * 100) / 100;
+      const subtotalComDesconto = centavos(subtotalGrupo * fatorDesconto);
       const detalheItens = itensDoGrupo
         .map((it) => `${it.variacao.produto.nome} (${it.variacao.nome}) x${it.quantidade}`)
         .join(', ');
@@ -130,6 +182,8 @@ async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = n
           valor: subtotalComDesconto,
           tipo: 'RECEITA',
           status: 'PAGO',
+          // Sem isto o Caixa mostrava "Não informada" mesmo com a venda em Pix/Dinheiro.
+          metodoPagamento: metodoPagamento || null,
           dataVencimento: new Date(),
           dataPagamento: new Date(),
         },
@@ -177,6 +231,7 @@ async function criarVenda({ clienteId, sessaoCaixaId, itensValidados, leadId = n
   }
 }
 
+/** Proximo numero do negocio. Chamar DENTRO da transacao, depois da trava. */
 async function proximoNumero(tx, clienteId) {
   const ultima = await tx.venda.findFirst({
     where: { clienteId }, orderBy: { numero: 'desc' }, select: { numero: true },
@@ -184,4 +239,4 @@ async function proximoNumero(tx, clienteId) {
   return (ultima?.numero || 0) + 1;
 }
 
-module.exports = { criarVenda };
+module.exports = { criarVenda, ErroVenda, baixarEstoque, proximoNumero, centavos };

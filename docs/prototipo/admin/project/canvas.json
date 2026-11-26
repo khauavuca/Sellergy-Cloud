@@ -1,0 +1,126 @@
+{
+"v": 3,
+"createdOnFiles": {
+"v": 1,
+"at": "2026-11-23T21:30:00Z"
+},
+"title": "Sellergy Admin — Protótipo",
+"launch": {
+"view": "canvas"
+},
+"pages": [],
+"boards": {
+"AdminEntrar.dc.html": {
+"x": 0,
+"y": 0,
+"w": 1440,
+"h": 900,
+"title": "0. Entrar com 2 fatores",
+"expand": "fill",
+"is_interactive": true
+},
+"AdminGeral.dc.html": {
+"x": 1520,
+"y": 0,
+"w": 1440,
+"h": 1100,
+"title": "1. Visão geral",
+"expand": "fill",
+"is_interactive": true
+},
+"AdminClientes.dc.html": {
+"x": 3040,
+"y": 0,
+"w": 1440,
+"h": 1100,
+"title": "2. Clientes",
+"expand": "fill",
+"is_interactive": true
+},
+"AdminCobranca.dc.html": {
+"x": 0,
+"y": 1400,
+"w": 1440,
+"h": 1100,
+"title": "3. Cobrança",
+"expand": "fill",
+"is_interactive": true
+},
+"AdminPlanos.dc.html": {
+"x": 1520,
+"y": 1400,
+"w": 1440,
+"h": 1100,
+"title": "4. Planos e preços",
+"expand": "fill",
+"is_interactive": true
+},
+"AdminUso.dc.html": {
+"x": 3040,
+"y": 1400,
+"w": 1440,
+"h": 1100,
+"title": "5. Uso e custos",
+"expand": "fill",
+"is_interactive": true
+},
+"AdminSuporte.dc.html": {
+"x": 0,
+"y": 2800,
+"w": 1440,
+"h": 1100,
+"title": "6. Suporte",
+"expand": "fill",
+"is_interactive": true
+},
+"AdminSaude.dc.html": {
+"x": 1520,
+"y": 2800,
+"w": 1440,
+"h": 1100,
+"title": "7. Saúde do sistema",
+"expand": "fill",
+"is_interactive": true
+},
+"AdminComunicados.dc.html": {
+"x": 3040,
+"y": 2800,
+"w": 1440,
+"h": 1100,
+"title": "8. Comunicados",
+"expand": "fill",
+"is_interactive": true
+},
+"AdminEquipe.dc.html": {
+"x": 0,
+"y": 4200,
+"w": 1440,
+"h": 1100,
+"title": "9. Equipe e auditoria",
+"expand": "fill",
+"is_interactive": true
+}
+},
+"order": [
+"AdminEntrar.dc.html",
+"AdminGeral.dc.html",
+"AdminClientes.dc.html",
+"AdminCobranca.dc.html",
+"AdminPlanos.dc.html",
+"AdminUso.dc.html",
+"AdminSuporte.dc.html",
+"AdminSaude.dc.html",
+"AdminComunicados.dc.html",
+"AdminEquipe.dc.html"
+],
+"notes": {
+"t1": {
+"x": 0,
+"y": -300,
+"text": "Painel Sellergy Admin: sistema à parte, só pra equipe Sellergy",
+"kind": "title1",
+"maxW": 4480
+}
+},
+"designSystems": []
+}

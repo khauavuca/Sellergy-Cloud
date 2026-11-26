@@ -3,6 +3,8 @@
 
 const prisma = require('../prisma');
 const { gerarSnapshot, mesAnterior } = require('../jobs/gerarRelatorioMensal');
+const { lerInteiro } = require('../utils/numero');
+const { validarMesFechamento } = require('../financeiro/regras');
 
 class RelatorioMensalController {
 
@@ -32,9 +34,11 @@ class RelatorioMensalController {
       const { clienteId } = req.usuario;
       if (!clienteId) return res.status(403).json({ error: 'Acesso negado.' });
 
-      const ano = parseInt(req.params.ano, 10);
-      const mes = parseInt(req.params.mes, 10);
-      if (!Number.isInteger(ano) || !Number.isInteger(mes) || mes < 1 || mes > 12) {
+      const a = lerInteiro(req.params.ano, { min: 2000, max: 2100 });
+      const m = lerInteiro(req.params.mes, { min: 1, max: 12 });
+      const ano = a.valor;
+      const mes = m.valor;
+      if (!a.ok || !m.ok) {
         return res.status(422).json({ error: 'Ano ou mês inválido.' });
       }
 
@@ -60,16 +64,22 @@ class RelatorioMensalController {
         return res.status(403).json({ error: 'Apenas o dono ou administrador pode gerar manualmente.' });
       }
 
-      let ano = parseInt(req.body?.ano, 10);
-      let mes = parseInt(req.body?.mes, 10);
-      if (!Number.isInteger(ano) || !Number.isInteger(mes)) {
-        const anterior = mesAnterior();
-        ano = anterior.ano;
-        mes = anterior.mes;
+      let ano;
+      let mes;
+      const veioAno = req.body?.ano !== undefined && req.body?.ano !== null && req.body?.ano !== '';
+      const veioMes = req.body?.mes !== undefined && req.body?.mes !== null && req.body?.mes !== '';
+      if (!veioAno && !veioMes) {
+        ({ ano, mes } = mesAnterior());
+      } else {
+        const a = lerInteiro(req.body?.ano, { min: 2000, max: 2100 });
+        const m = lerInteiro(req.body?.mes, { min: 1, max: 12 });
+        if (!a.ok || !m.ok) return res.status(422).json({ erro: 'Ano ou mês inválido.' });
+        ano = a.valor;
+        mes = m.valor;
       }
-      if (mes < 1 || mes > 12) {
-        return res.status(422).json({ error: 'Mês inválido.' });
-      }
+      // So fecha mes que ja terminou (Brasilia) e de 2000 em diante.
+      const v = validarMesFechamento(ano, mes);
+      if (!v.ok) return res.status(422).json({ erro: v.erro });
 
       const r = await gerarSnapshot({ clienteId, ano, mes, geradoPor: usuarioId });
       res.status(201).json(r);

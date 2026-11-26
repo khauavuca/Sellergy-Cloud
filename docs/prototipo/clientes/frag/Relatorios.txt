@@ -1,0 +1,83 @@
+@@title Sellergy — relatórios
+@@nav Relatorios.dc.html
+@@h 1100
+@@main
+<div class="row">
+<h1 class="t1 grow">Relatórios</h1>
+<div class="row" style="gap: 6px"><sc-for list="{{periodos}}" as="p" hint-placeholder-count="3"><button type="button" class="{{p.cls}}" onClick="{{p.pick}}">{{p.t}}</button></sc-for></div>
+<button type="button" class="bs">Mandar no meu WhatsApp toda segunda</button>
+</div>
+
+<div class="grid">
+<div class="card k"><p class="kl">Faturamento</p><p class="kv">{{fat}}</p><p class="kx" style="color: #0E5C34; font-weight: 600">{{fatX}}</p></div>
+<div class="card k"><p class="kl">Ticket médio</p><p class="kv">{{ticket}}</p><p class="kx">por atendimento ou venda</p></div>
+<div class="card k"><p class="kl">Faltas</p><p class="kv">{{faltas}}</p><p class="kx" style="color: #0E5C34; font-weight: 600">era 14% antes dos lembretes</p></div>
+<div class="card k"><p class="kl">Clientes novos</p><p class="kv">{{novos}}</p><p class="kx">{{novosX}}</p></div>
+</div>
+
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: stretch">
+<section class="card" style="flex: 999 1 520px; min-width: 0; padding: 18px 20px; box-sizing: border-box">
+<div class="row"><h2 class="t2 grow">{{grafTit}}</h2><span class="sm mut">Barra escura = melhor {{grafUn}}</span></div>
+<div class="bars" style="margin-top: 18px" role="img" aria-label="{{grafTit}}"><sc-for list="{{barras}}" as="b" hint-placeholder-count="7"><div class="{{b.cls}}" title="{{b.v}}"></div></sc-for></div>
+<div style="display: flex; gap: 10px; padding: 6px 4px 0"><sc-for list="{{barras}}" as="b" hint-placeholder-count="7"><span class="sm mut" style="flex: 1; text-align: center; min-width: 10px">{{b.l}}</span></sc-for></div>
+</section>
+<section class="card" style="flex: 1 1 320px; padding: 18px 20px; box-sizing: border-box">
+<h2 class="t2">Por profissional</h2>
+<sc-for list="{{profs}}" as="p" hint-placeholder-count="3">
+<div style="margin-top: 14px"><div class="row" style="font-size: 14px"><strong class="grow">{{p.n}}</strong><span class="n">{{p.v}}</span></div>
+<div style="height: 8px; border-radius: 99px; background: #EEF0EC; margin-top: 6px; overflow: hidden"><div class="{{p.cls}}" style="height: 100%; background: #136F4D; border-radius: 99px"></div></div>
+<p class="ajuda" style="margin: 4px 0 0">{{p.x}}</p></div>
+</sc-for>
+<a href="Comissoes.dc.html" class="bs" style="width: 100%; margin-top: 16px">Ver comissões</a>
+</section>
+</div>
+
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section class="card" style="flex: 1 1 420px; min-width: 0; overflow: hidden">
+<div style="padding: 16px 18px"><h2 class="t2">O que mais vende</h2></div>
+<table style="width: 100%; border-collapse: collapse"><thead><tr><th>Serviço ou produto</th><th style="text-align: right">Qtd</th><th style="text-align: right">Total</th></tr></thead>
+<tbody><sc-for list="{{top}}" as="t" hint-placeholder-count="5"><tr><td>{{t.n}}</td><td class="n" style="text-align: right">{{t.q}}</td><td class="n" style="text-align: right; font-weight: 600">{{t.v}}</td></tr></sc-for></tbody></table>
+</section>
+<section class="card" style="flex: 1 1 420px; padding: 18px 20px; box-sizing: border-box">
+<h2 class="t2">Dinheiro na mesa</h2>
+<p class="sm mut" style="margin: 4px 0 0">O que o sistema achou pra você vender mais.</p>
+<div style="display: flex; flex-direction: column; gap: 10px; margin-top: 14px">
+<div class="row" style="padding: 12px; border-radius: 12px; background: #F6F7F5"><div class="grow" style="min-width: 200px"><strong>38 clientes sumidos há mais de 60 dias</strong><p class="sm mut" style="margin: 2px 0 0">Gastavam em média R$ 210,00 por visita</p></div><a href="NovaCampanha.dc.html" class="bp">Chamar de volta</a></div>
+<div class="row" style="padding: 12px; border-radius: 12px; background: #F6F7F5"><div class="grow" style="min-width: 200px"><strong>11 pacotes acabando</strong><p class="sm mut" style="margin: 2px 0 0">Faltam 1 ou 2 sessões. Hora de oferecer renovação.</p></div><a href="Servicos.dc.html" class="bs">Ver pacotes</a></div>
+<div class="row" style="padding: 12px; border-radius: 12px; background: #F6F7F5"><div class="grow" style="min-width: 200px"><strong>Terça de manhã tem 41% da agenda vazia</strong><p class="sm mut" style="margin: 2px 0 0">Que tal um preço especial nesse horário?</p></div><a href="NovaCampanha.dc.html" class="bs">Criar promoção</a></div>
+</div>
+</section>
+</div>
+@@script
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { per: 1 }; }
+  renderVals() {
+    const p = this.state.per;
+    const D = [
+      { fat: 'R$ 6.840,00', fatX: '+9% vs semana passada', ticket: 'R$ 171,00', faltas: '3%', novos: '6', novosX: '2 vieram pelo link', tit: 'Faturamento por dia', un: 'dia',
+        b: [['Seg', 55], ['Ter', 45], ['Qua', 70], ['Qui', 60], ['Sex', 90], ['Sáb', 100], ['Dom', 5]] },
+      { fat: 'R$ 28.940,00', fatX: '+18% vs outubro', ticket: 'R$ 168,30', faltas: '4%', novos: '23', novosX: '9 vieram pelo link', tit: 'Faturamento por semana', un: 'semana',
+        b: [['26/10', 60], ['02/11', 75], ['09/11', 80], ['16/11', 100], ['23/11', 25]] },
+      { fat: 'R$ 86.320,00', fatX: '+31% vs trimestre anterior', ticket: 'R$ 162,00', faltas: '5%', novos: '71', novosX: '30 vieram pelo link', tit: 'Faturamento por mês', un: 'mês',
+        b: [['Set', 70], ['Out', 85], ['Nov', 100]] },
+    ][p];
+    const max = Math.max(...D.b.map((x) => x[1]));
+    return {
+      periodos: ['Esta semana', 'Novembro', '3 meses'].map((t, i) => ({ t, cls: 'chip' + (p === i ? ' on' : ''), pick: () => this.setState({ per: i }) })),
+      fat: D.fat, fatX: D.fatX, ticket: D.ticket, faltas: D.faltas, novos: D.novos, novosX: D.novosX, grafTit: D.tit, grafUn: D.un,
+      barras: D.b.map(([l, v]) => ({ l, v: l, cls: 'b' + v + (v === max ? ' hi' : '') })),
+      profs: [
+        { n: 'Carla Nunes', v: 'R$ 12.250,00', x: '35 atendimentos · 0 faltas', cls: 'b100' },
+        { n: 'Ana Ribeiro', v: 'R$ 9.180,00', x: '51 atendimentos · 2 faltas', cls: 'b75' },
+        { n: 'Bruno Teles', v: 'R$ 5.120,00', x: '32 atendimentos · 3 faltas', cls: 'b40' },
+      ],
+      top: [
+        { n: 'Peeling químico', q: '35', v: 'R$ 12.250,00' },
+        { n: 'Limpeza de pele', q: '41', v: 'R$ 7.380,00' },
+        { n: 'Drenagem linfática', q: '22', v: 'R$ 3.300,00' },
+        { n: 'Sérum vitamina C 30 ml', q: '18', v: 'R$ 2.565,00' },
+        { n: 'Kit rotina skincare', q: '9', v: 'R$ 1.791,00' },
+      ],
+    };
+  }
+}

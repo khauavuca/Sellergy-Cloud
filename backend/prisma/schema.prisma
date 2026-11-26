@@ -20,7 +20,22 @@ model Usuario {
   perfil             Perfil                   @default(ADMIN)
   permissoes         Json?                    @default("{}")
   deveTrocarSenha    Boolean                  @default(false)
+  // Versao da sessao: vai no token (sv). Trocar senha/papel soma 1 e derruba
+  // as sessoes antigas (src/seguranca/sessaoUsuario.js).
+  versaoSessao       Int                      @default(0)
   foto               String? // URL ou data-URL base64 da foto pessoal
+  // Login em 2 fatores (TOTP, app autenticador). Segredo cifrado com o cofre
+  // (salt proprio). Obrigatorio pro ADMIN quando ADMIN_2FA_OBRIGATORIO=true.
+  totpSegredoCifrado String?
+  totpAtivo          Boolean                  @default(false)
+  // Papel dentro da equipe Sellergy (so pra perfil ADMIN): DONO | SUPORTE | FINANCEIRO.
+  // null = DONO (compatibilidade com o admin que ja existe).
+  papelAdmin         String?
+  telefone           String?
+  // Aceite dos Termos de uso e da Politica de privacidade (LGPD): quando e
+  // qual versao. Ver src/legal/versao.js.
+  termosAceitosEm    DateTime?
+  versaoTermos       String?
   criadoEm           DateTime                 @default(now())
   atualizadoEm       DateTime                 @updatedAt
   clienteId          String?
@@ -88,7 +103,72 @@ model Cliente {
   // dia. Ver jobs/cronDevolucoes.js.
   diasAvisoDevolucao     Int      @default(1)
 
+  // ---- Assinatura do Sellergy (ver src/assinatura/) ----
+  // Clientes criados pelo admin nascem ATIVA; os que se cadastram sozinhos
+  // nascem TRIAL com trialAte preenchido.
+  statusAssinatura       StatusAssinatura @default(ATIVA)
+  trialAte               DateTime?
+  proximaCobrancaEm      DateTime?
+  faturasAssinatura      FaturaAssinatura[]
+  // Cobranca automatica pelo Asaas da PLATAFORMA (ver src/assinatura/asaasPlataforma.js).
+  // Quando asaasAssinaturaId existe, quem gera as faturas e o Asaas (webhook);
+  // a rotina local so cuida de atraso, suspensao e avisos.
+  cpfCnpj                String?
+  asaasCustomerId        String?  @unique
+  asaasAssinaturaId      String?  @unique
+  cicloAssinatura        CicloAssinatura @default(MENSAL)
+  formaPagamento         String?  // PIX | CREDIT_CARD | BOLETO | UNDEFINED
+  canceladoEm            DateTime?
+  motivoCancelamento     String?
+
+  // Endereco publico do negocio (link de agendamento: /agendar/<slug>).
+  slugPublico            String?  @unique
+
+  // Abre o caixa sozinho na primeira venda do dia quando nao ha caixa aberto
+  // (fundo = saldo do ultimo fechamento). Desligado = exige abrir manual.
+  caixaAutomatico        Boolean  @default(true)
+
+  // Lembrete de agendamento por WhatsApp (ver src/agenda/lembretes.js).
+  // { ativo: bool, nomeTemplate: string, antecedencias: ["24h","2h"] }
+  // null = padrao (ativo, template "lembrete_agendamento", 24h e 2h).
+  configLembrete         Json?
+
+  // ---- Fase 2 ----
+  // Sinal padrao (% do preco) cobrado ao agendar; null/0 = nao cobra.
+  sinalPadraoPct         Int?
+  // Oferece horario vago pra fila de encaixe sem perguntar (vagas com +2 h).
+  encaixeAutomatico      Boolean  @default(false)
+
   @@map("clientes")
+}
+
+// Fatura mensal da assinatura do Sellergy (o que o CLIENTE paga pra
+// plataforma). Nao confundir com Cobranca (o que o cliente final paga pro
+// tenant). Uma por competencia (YYYY-MM).
+model FaturaAssinatura {
+  id                String        @id @default(uuid())
+  clienteId         String
+  competencia       String
+  valor             Float
+  vencimento        DateTime
+  status            StatusFatura  @default(ABERTA)
+  // Id e link da cobranca no provedor de pagamento da PLATAFORMA (quando a
+  // cobranca automatica estiver ligada — ASSINATURA_COBRANCA_LIVE).
+  cobrancaExternaId String?
+  linkPagamento     String?
+  formaPagamento    String?
+  // Passos da regua de cobranca ja avisados no WhatsApp (ex.: [-3, 0, 1, 3]).
+  avisosRegua       Json          @default("[]")
+  pagaEm            DateTime?
+  criadoEm          DateTime      @default(now())
+  atualizadoEm      DateTime      @updatedAt
+
+  cliente Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@unique([clienteId, competencia])
+  @@index([status, vencimento])
+  @@index([cobrancaExternaId])
+  @@map("faturas_assinatura")
 }
 
 // Movimentacoes manuais de saldo no caixa fisico. NAO confunde com
@@ -195,8 +275,16 @@ model Bot {
   //   identificadorCanal -> ex: phoneNumberId do WhatsApp / chatId do Telegram
   //   verifyTokenCanal   -> verify token usado pela Meta no GET de verificacao
   credencialCanalId  String?
-  identificadorCanal String?
+  // Unico: um numero (phoneNumberId da Meta / numero do QR Code) so pode
+  // estar em UM bot — senao outro tenant "sequestra" as mensagens dele. O
+  // indice unico do Postgres aceita varios NULL (bot sem canal).
+  identificadorCanal String?       @unique
   verifyTokenCanal   String?
+  // WhatsApp oficial (app do proprio cliente na Meta): quando a Meta confirmou
+  // o webhook (GET de verificacao ou 1a mensagem assinada que passou) e o
+  // numero/nome que a Meta devolveu ao conferir o token.
+  webhookConfirmadoEm   DateTime?
+  oficialNumeroExibicao String?
   // Estado tecnico da conexao Baileys — vocabulario proprio, nao reaproveita
   // StatusBot (que e so o liga/desliga manual do tenant). Null/sem sentido
   // pra bot provedorCanal=META_CLOUD.
@@ -220,12 +308,16 @@ model Bot {
   // Editavel via API desde ja; a tela do cliente pra preencher isso fica pra
   // depois (fora do escopo desta rodada).
   iaPromptSistema                      String?
-  // LIMITACAO CONHECIDA: os dois campos abaixo sao por-BOT, mas a fatura e
-  // por-CLIENTE. Um cliente com 2 bots de IA ativa ganharia 2x o limite
-  // gratuito na pratica. Aceitavel enquanto quase todo tenant tem 1 bot so;
-  // revisar (mover pra agregado por Cliente) se isso passar a importar.
-  iaTokensIncluidosMes                 Int      @default(100000)
-  iaPrecoPorMilTokensExcedenteCentavos Int      @default(8)
+  // Cota de IA do plano Negocio: 2 milhoes de tokens/mes por cliente. O teto
+  // duro (services/iaLimites.js) soma o consumo de TODOS os bots do cliente
+  // no mes e compara com cota + excedente autorizado deste bot. Excedente a
+  // R$ 15 por milhao = 1,5 centavo por mil tokens (por isso Float).
+  iaTokensIncluidosMes                 Int      @default(2000000)
+  iaPrecoPorMilTokensExcedenteCentavos Float    @default(1.5)
+  // Tokens extras autorizados no mes (pacote comprado / excedente liberado).
+  // 0 = sem excedente automatico: acabou a cota, o bot volta pro menu de
+  // perguntas sem IA e o dono recebe uma notificacao.
+  iaExcedenteAutorizadoTokens          Int      @default(0)
   // Quais acoes autonomas o bot pode executar durante o atendimento (tool
   // calling da DeepSeek) — ex.: ["CATALOGO", "CONSULTAR_ESTOQUE", "COBRANCA_PIX"].
   // Configurado pelo proprio cliente (nao pelo admin). Lista vazia = so
@@ -255,6 +347,8 @@ model ConsumoIA {
   tokensExcedentes       Int       @default(0)
   valorExcedenteCentavos Int       @default(0)
   faturadoEm             DateTime?
+  // Quando o dono foi avisado de que a cota do mes acabou (1 aviso por mes).
+  cotaEsgotadaAvisadaEm  DateTime?
   criadoEm               DateTime  @default(now())
   atualizadoEm           DateTime  @updatedAt
 
@@ -264,6 +358,18 @@ model ConsumoIA {
   @@unique([botId, periodo])
   @@index([clienteId, periodo])
   @@map("consumo_ia")
+}
+
+// Consumo de IA da PLATAFORMA inteira por dia (fuso de Sao Paulo) — base do
+// teto global IA_TETO_DIARIO_TOKENS (services/iaLimites.js). Estourou: a IA
+// desliga pra todos ate o dia virar e `tetoAtingidoEm` vira alerta na Saude.
+model ConsumoIADiario {
+  dia            String    @id // "AAAA-MM-DD"
+  tokensUsados   Int       @default(0)
+  tetoAtingidoEm DateTime?
+  atualizadoEm   DateTime  @updatedAt
+
+  @@map("consumo_ia_diario")
 }
 
 model VariavelBot {
@@ -388,6 +494,28 @@ model Agendamento {
   criadoEm        DateTime          @default(now())
   atualizadoEm    DateTime          @updatedAt
 
+  // ---- Lembrete e confirmacao (ver src/agenda/) ----
+  // Token do link publico de confirmacao (/confirmar/<token>). Gerado no
+  // primeiro lembrete; aleatorio, nao adivinhavel.
+  tokenConfirmacao String?          @unique
+  lembrete24hEm    DateTime?
+  lembrete2hEm     DateTime?
+  // Reserva do envio do lembrete (so um worker por vez; expira sozinha se o
+  // processo cair) e tentativas seguidas sem sucesso (socket fora do ar...).
+  // lembrete24hEm/lembrete2hEm so sao gravados DEPOIS do envio dar certo.
+  lembreteReservadoAte DateTime?
+  lembreteTentativas   Int       @default(0)
+  confirmadoEm     DateTime?
+  // Quem confirmou: CLIENTE_WHATSAPP | CLIENTE_LINK | EQUIPE
+  confirmadoPor    String?
+
+  // ---- Sinal por Pix e pacote (fase 2) ----
+  sinalValor       Float?
+  sinalStatus      String?   // PENDENTE | PAGO | EXPIRADO | DEVOLVIDO
+  sinalCobrancaId  String?
+  sinalExpiraEm    DateTime?
+  pacoteClienteId  String?
+
   cliente      Cliente                @relation(fields: [clienteId], references: [id], onDelete: Cascade)
   lead         Lead?                  @relation(fields: [leadId], references: [id])
   especialista Especialista?          @relation(fields: [especialistaId], references: [id], onDelete: SetNull)
@@ -395,6 +523,7 @@ model Agendamento {
   historico    HistoricoAgendamento[]
 
   @@index([especialistaId, data])
+  @@index([status, data])
   @@map("agendamentos")
 }
 
@@ -442,6 +571,10 @@ model Especialista {
   // (Cliente.horarioFuncionamento). Formato por dia (1=segunda..7=domingo):
   //   { "1": [{ "inicio": "08:00", "fim": "12:00" }, { "inicio": "13:00", "fim": "18:00" }], ... }
   jornada      Json?
+  // Regra de comissao (fase 2). Percentuais de 0 a 100; fixa em R$ por atendimento.
+  comissaoServicoPct Float?
+  comissaoProdutoPct Float?
+  comissaoFixa       Float?
   criadoEm     DateTime @default(now())
   atualizadoEm DateTime @updatedAt
 
@@ -500,6 +633,8 @@ model Venda {
   // @unique = 1 venda por agendamento (trava dupla-conclusao no banco). SetNull
   // preserva a venda se o agendamento for apagado.
   agendamentoId          String?                @unique
+  // Quem vendeu (profissional) — base da comissao de produto. Fase 2.
+  especialistaId         String?
   criadoEm               DateTime               @default(now())
   atualizadoEm           DateTime               @updatedAt
   cliente                Cliente                @relation(fields: [clienteId], references: [id], onDelete: Cascade)
@@ -536,6 +671,8 @@ model Produto {
   // Prazo padrao em dias corridos apos a venda — so sugestao pro funcionario,
   // que pode ajustar a data exata na hora de vender. Null = sempre manual.
   diasParaDevolucaoPadrao Int?
+  // Sinal cobrado ao agendar este servico (% do preco). null = padrao do negocio.
+  sinalPercentual         Int?
   criadoEm     DateTime            @default(now())
   atualizadoEm DateTime            @updatedAt
 
@@ -622,6 +759,10 @@ model Devolucao {
   // cancelamento de venda).
   devolvidoEm       DateTime?
   lembreteEnviadoEm DateTime?
+  // Preenchido quando a venda e cancelada com o item ainda fora: a devolucao
+  // sai da lista "pendente" e nao pode mais ser concluida (o cancelamento ja
+  // devolveu o estoque). Ver VendaController.cancelarVenda.
+  canceladaEm       DateTime?
   criadoEm          DateTime  @default(now())
   atualizadoEm      DateTime  @updatedAt
 
@@ -687,6 +828,17 @@ model Campanha {
   // em massa (bloqueio da propria Meta fora da janela de 24h).
   nomeTemplate String?
   cupomId      String?        @unique
+  // Objetivo escolhido na tela ('voltar' | 'aniversario' | 'novidade' |
+  // 'horario-vazio') — so registro.
+  objetivo     String?
+  // Filtro opcional: so quem gastou mais que isso na ultima venda concluida.
+  gastoMinimo  Float?
+  // Botao da mensagem: 'MARCAR_HORARIO' | 'FALAR'. No QR Code vira o link no
+  // fim do texto; no oficial o botao vem do modelo aprovado na Meta.
+  botao        String?
+  // Envio agendado: o cron (jobs/cronCampanhasAgendadas.js) dispara quando
+  // chega a hora. Continua RASCUNHO ate la.
+  agendadoPara DateTime?
   status       StatusCampanha @default(RASCUNHO)
   totalAlvo    Int            @default(0)
   totalEnviado Int            @default(0)
@@ -700,6 +852,7 @@ model Campanha {
   cupom   Cupom?          @relation(fields: [cupomId], references: [id])
   envios  CampanhaEnvio[]
 
+  @@index([status, agendadoPara])
   @@map("campanhas")
 }
 
@@ -832,6 +985,9 @@ model LancamentoFinanceiro {
   // Quando o pagamento veio de uma Conta a Pagar cadastrada (rastreamento
   // de pagamento recorrente). Nullable porque despesas avulsas nao tem.
   contaPagarId       String?
+  // Chave de repeticao (Idempotency-Key) do POST de criacao: clique duplo
+  // com a mesma chave devolve o lancamento ja criado em vez de duplicar.
+  chaveRepeticao     String?
   criadoEm           DateTime         @default(now())
   atualizadoEm       DateTime         @updatedAt
 
@@ -843,6 +999,7 @@ model LancamentoFinanceiro {
   contaPagar ContaPagar?           @relation(fields: [contaPagarId], references: [id], onDelete: SetNull)
   historico  HistoricoLancamento[]
 
+  @@unique([clienteId, chaveRepeticao])
   @@index([sessaoCaixaId])
   @@index([contaPagarId])
   @@map("lancamentos_financeiros")
@@ -1080,6 +1237,12 @@ model ConfiguracaoCatalogo {
   // — nao controla quantidade). Evita mandar pro cliente final algo que a
   // loja nao tem pra vender agora.
   ocultarSemEstoque Boolean          @default(true)
+  // Catalogo online (vitrine publica com sacola -> Pedido). Fase 2.
+  online            Boolean            @default(false)
+  aceitaRetirada    Boolean            @default(true)
+  aceitaEntrega     Boolean            @default(false)
+  freteEntrega      Float?
+  pedidoMinimo      Float?
   criadoEm       DateTime            @default(now())
   atualizadoEm   DateTime            @updatedAt
 
@@ -1093,6 +1256,7 @@ model Cobranca {
   clienteId          String
   origem             OrigemCobranca
   refId              String? // id da Venda/Agendamento de origem (solto — varia por origem)
+  leadId             String? // cliente final (cadastro em Clientes), quando conhecido
   valor              Float
   metodo             MetodoCobranca
   status             StatusCobranca    @default(PENDENTE)
@@ -1116,6 +1280,7 @@ model Cobranca {
   @@unique([provedor, provedorCobrancaId])
   @@index([clienteId, status])
   @@index([clienteId, origem, refId])
+  @@index([clienteId, leadId])
   @@map("cobrancas")
 }
 
@@ -1151,9 +1316,20 @@ model ConfiguracaoFiscal {
   cep            String?
   certificadoRef String? // referencia segura ao certificado digital (nunca o conteudo)
   csc            String? // Codigo de Seguranca do Contribuinte (NFC-e)
+  cscId          String? // ID do CSC (Identificador do token na SEFAZ, ex. 000001)
   serie          String?
   ambiente       AmbienteFiscal @default(HOMOLOGACAO)
   ativo          Boolean        @default(true)
+  // Fase 2 (assistente fiscal). O .pfx e a senha nunca ficam aqui: vao direto pro provedor.
+  emitirAutomatico     Boolean   @default(false)
+  proximoNumero        Int?
+  certificadoValidoAte DateTime?
+  certificadoTitular   String?
+  // Dados tributarios para o corpo real da nota (codigo IBGE do municipio, item
+  // da lista de servico, aliquota de ISS, CST/CSOSN, IBS/CBS...). Validado em
+  // utils/validacaoFiscal#normalizarTributacao. Opcional; o que faltar vira
+  // erro claro na emissao real.
+  tributacao           Json?
   criadoEm       DateTime       @default(now())
   atualizadoEm   DateTime       @updatedAt
 
@@ -1193,6 +1369,11 @@ model DocumentoFiscal {
 
   @@index([clienteId, status])
   @@index([clienteId, vendaId])
+  // Trava contra nota duplicada: indice unico PARCIAL criado a mao na migration
+  // 20261124234517_fiscal_documento_unico ("documentos_fiscais_vendaId_tipo_ativo_key":
+  // vendaId + tipo, so para status PENDENTE/PROCESSANDO/EMITIDA). O Prisma 5 nao
+  // descreve indice parcial aqui: se um `migrate dev` futuro gerar um DROP INDEX
+  // dele, APAGUE essa linha da migration gerada.
   @@map("documentos_fiscais")
 }
 
@@ -1387,6 +1568,27 @@ enum Prioridade {
 enum OrigemAgendamento {
   MANUAL
   AI
+  LINK_PUBLICO
+}
+
+enum StatusAssinatura {
+  TRIAL
+  ATIVA
+  ATRASADA
+  SUSPENSA
+  CANCELADA
+}
+
+enum CicloAssinatura {
+  MENSAL
+  ANUAL
+}
+
+enum StatusFatura {
+  ABERTA
+  PAGA
+  VENCIDA
+  CANCELADA
 }
 
 enum VisibilidadeProduto {
@@ -1437,8 +1639,10 @@ enum ProvedorPagamento {
 
 enum OrigemCobranca {
   VENDA
-  AGENDAMENTO
+  AGENDAMENTO // sinal do agendamento (refId = agendamentoId)
   AVULSA
+  PEDIDO      // pedido do catalogo online / WhatsApp (refId = pedidoId)
+  PACOTE      // parcela de pacote de sessoes (refId = pacoteClienteId)
 }
 
 enum TemplateCatalogo {
@@ -1587,4 +1791,458 @@ model RelatorioMensal {
   @@unique([clienteId, ano, mes])
   @@index([clienteId, ano, mes])
   @@map("relatorios_mensais")
+}
+
+// Eventos de webhook da cobranca da PLATAFORMA ja processados (idempotencia:
+// o Asaas reenvia o mesmo evento ate receber 200).
+model EventoWebhookAssinatura {
+  id         String   @id
+  evento     String
+  recebidoEm DateTime @default(now())
+
+  @@map("eventos_webhook_assinatura")
+}
+
+// Contatos que pediram pra nao receber mais mensagens (SAIR/PARAR) por
+// tenant. Vale pra campanha e mensagem automatica, nunca pra resposta a
+// quem escreveu primeiro.
+model OptOutWhatsapp {
+  id        String   @id @default(uuid())
+  clienteId String
+  telefone  String
+  criadoEm  DateTime @default(now())
+
+  @@unique([clienteId, telefone])
+  @@map("optout_whatsapp")
+}
+
+// Enquete (Confirmar / Remarcar) enviada pelo canal QR Code. Guarda o que o
+// Baileys precisa pra decifrar o voto que volta (messageSecret).
+model EnqueteWhatsapp {
+  id            String   @id // id da mensagem no WhatsApp
+  botId         String
+  remoteJid     String
+  mensagem      Json     // WAMessage serializada (com messageContextInfo)
+  tipo          String   // CONFIRMACAO_AGENDAMENTO
+  referenciaId  String   // agendamentoId
+  respondidaEm  DateTime?
+  criadoEm      DateTime @default(now())
+
+  @@index([criadoEm])
+  @@map("enquetes_whatsapp")
+}
+
+// =====================================================================
+// FASE 2 (23/11/2026) — fluxos do prototipo que faltavam.
+// =====================================================================
+
+// ---------- Fila de encaixe ----------
+// Cliente que quer um horario que esta cheio. Quando alguem cancela/remarca,
+// o sistema acha quem serve e oferece pelo WhatsApp; o primeiro que aceitar fica.
+model ListaEspera {
+  id             String   @id @default(uuid())
+  clienteId      String
+  leadId         String?
+  nome           String
+  telefone       String
+  produtoId      String?  // servico desejado
+  servico        String?  // nome do servico (texto, caso nao haja produto)
+  especialistaId String?  // null = qualquer profissional
+  preferencia    String?  // texto livre: "ter a qui, depois das 14h"
+  diasSemana     Json?    // [1,2,3] (0=domingo); null = qualquer dia
+  horaInicio     String?  // "14:00"; null = qualquer hora
+  horaFim        String?
+  ate            DateTime? // vale ate esta data
+  status         String   @default("AGUARDANDO") // AGUARDANDO | OFERTADO | AGENDADO | DESISTIU | EXPIRADO
+  agendamentoId  String?  // agendamento criado quando aceitou
+  criadoEm       DateTime @default(now())
+  atualizadoEm   DateTime @updatedAt
+
+  envios OfertaEncaixeEnvio[]
+
+  @@index([clienteId, status])
+  @@map("lista_espera")
+}
+
+model OfertaEncaixe {
+  id                 String    @id @default(uuid())
+  clienteId          String
+  agendamentoOrigemId String?  // o horario que vagou
+  data               DateTime
+  duracao            Int       @default(60)
+  especialistaId     String?
+  produtoId          String?
+  servico            String?
+  status             String    @default("ABERTA") // ABERTA | PREENCHIDA | EXPIRADA | CANCELADA
+  expiraEm           DateTime
+  aceitaPorEnvioId   String?
+  agendamentoNovoId  String?
+  automatica         Boolean   @default(false)
+  criadoEm           DateTime  @default(now())
+
+  envios OfertaEncaixeEnvio[]
+
+  @@index([clienteId, status])
+  @@index([status, expiraEm])
+  @@map("ofertas_encaixe")
+}
+
+model OfertaEncaixeEnvio {
+  id            String    @id @default(uuid())
+  ofertaId      String
+  listaEsperaId String
+  token         String    @unique
+  enviadoEm     DateTime  @default(now())
+  respostaEm    DateTime?
+  resposta      String?   // ACEITOU | RECUSOU | TARDE_DEMAIS
+
+  oferta      OfertaEncaixe @relation(fields: [ofertaId], references: [id], onDelete: Cascade)
+  listaEspera ListaEspera   @relation(fields: [listaEsperaId], references: [id], onDelete: Cascade)
+
+  @@unique([ofertaId, listaEsperaId])
+  @@map("ofertas_encaixe_envios")
+}
+
+// ---------- Pacotes de sessoes ----------
+model PacoteModelo {
+  id           String   @id @default(uuid())
+  clienteId    String
+  nome         String
+  produtoId    String?  // servico do pacote
+  servico      String?
+  sessoes      Int
+  preco        Float
+  validadeDias Int      @default(180)
+  intervaloMinDias Int?
+  ativo        Boolean  @default(true)
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  vendidos PacoteCliente[]
+
+  @@index([clienteId, ativo])
+  @@map("pacotes_modelo")
+}
+
+model PacoteCliente {
+  id            String    @id @default(uuid())
+  clienteId     String
+  modeloId      String
+  leadId        String
+  sessoesTotal  Int
+  sessoesUsadas Int       @default(0)
+  valor         Float
+  parcelas      Int       @default(1)
+  parcelasPagas Int       @default(0)
+  vendaId       String?
+  validoAte     DateTime
+  status        String    @default("ATIVO") // ATIVO | ACABOU | VENCIDO | CANCELADO
+  criadoEm      DateTime  @default(now())
+  atualizadoEm  DateTime  @updatedAt
+
+  modelo  PacoteModelo   @relation(fields: [modeloId], references: [id], onDelete: Restrict)
+  usos    PacoteUso[]
+
+  @@index([clienteId, status])
+  @@index([leadId])
+  @@map("pacotes_cliente")
+}
+
+model PacoteUso {
+  id              String   @id @default(uuid())
+  pacoteClienteId String
+  agendamentoId   String?  @unique
+  usadoEm         DateTime @default(now())
+  estornadoEm     DateTime?
+
+  pacote PacoteCliente @relation(fields: [pacoteClienteId], references: [id], onDelete: Cascade)
+
+  @@map("pacotes_uso")
+}
+
+// ---------- Comissoes ----------
+model Comissao {
+  id             String    @id @default(uuid())
+  clienteId      String
+  especialistaId String
+  tipo           String    @default("ATENDIMENTO") // ATENDIMENTO | PRODUTO | VALE | AJUSTE
+  vendaId        String?
+  agendamentoId  String?
+  descricao      String?
+  base           Float     @default(0)
+  valor          Float     // negativo para VALE
+  competencia    String    // YYYY-MM
+  status         String    @default("A_PAGAR") // A_PAGAR | PAGA | CANCELADA
+  pagaEm         DateTime?
+  criadoEm       DateTime  @default(now())
+
+  @@unique([agendamentoId, tipo])
+  @@unique([vendaId, tipo])
+  @@index([clienteId, competencia])
+  @@index([especialistaId, competencia])
+  @@map("comissoes")
+}
+
+// ---------- Pedidos (catalogo online e venda pelo WhatsApp) ----------
+model Pedido {
+  id           String    @id @default(uuid())
+  clienteId    String
+  numero       Int
+  leadId       String?
+  nomeCliente  String
+  telefone     String
+  itens        Json      // [{ variacaoId, produtoId, nome, quantidade, precoUnitario }]
+  subtotal     Float
+  frete        Float     @default(0)
+  total        Float
+  entrega      String    @default("RETIRADA") // RETIRADA | ENTREGA
+  endereco     String?
+  observacao   String?
+  origem       String    @default("CATALOGO") // CATALOGO | WHATSAPP | BALCAO
+  status       String    @default("NOVO") // NOVO | AGUARDANDO_PAGAMENTO | PAGO | ENTREGUE | CANCELADO
+  cobrancaId   String?
+  linkPagamento String?
+  vendaId      String?   @unique
+  tokenPublico String    @unique
+  pagoEm       DateTime?
+  entregueEm   DateTime?
+  canceladoEm  DateTime?
+  criadoEm     DateTime  @default(now())
+  atualizadoEm DateTime  @updatedAt
+
+  @@unique([clienteId, numero])
+  @@index([clienteId, status])
+  @@map("pedidos")
+}
+
+// ---------- Conta de recebimento (subconta Asaas aberta pela plataforma) ----------
+model ContaRecebimento {
+  id            String   @id @default(uuid())
+  clienteId     String   @unique
+  provedor      String   @default("ASAAS")
+  contaExternaId String? @unique
+  walletId      String?
+  status        String   @default("RASCUNHO") // RASCUNHO | EM_ANALISE | ATIVA | RECUSADA
+  dados         Json     // dados cadastrais enviados (sem segredo)
+  motivoRecusa  String?
+  prazoRepasse  String   @default("PADRAO") // PADRAO | ANTECIPADO
+  // Trava do saque: ate esse horario nao sai outro saque (duplo clique/abas).
+  saqueTravadoAte DateTime?
+  criadoEm      DateTime @default(now())
+  atualizadoEm  DateTime @updatedAt
+
+  @@map("contas_recebimento")
+}
+
+// ---------- Convite da equipe ----------
+model ConviteEquipe {
+  id             String    @id @default(uuid())
+  clienteId      String
+  nome           String
+  telefone       String?
+  email          String
+  perfil         String    @default("VENDEDOR") // ADMINISTRADOR | VENDEDOR
+  especialistaId String?
+  token          String    @unique
+  expiraEm       DateTime
+  aceitoEm       DateTime?
+  usuarioId      String?
+  criadoPorId    String?
+  criadoEm       DateTime  @default(now())
+
+  @@index([clienteId])
+  @@map("convites_equipe")
+}
+
+// ---------- Importacao de planilha ----------
+model Importacao {
+  id          String   @id @default(uuid())
+  clienteId   String
+  tipo        String   // CLIENTES | PRODUTOS | SERVICOS
+  arquivoNome String
+  total       Int      @default(0)
+  criados     Int      @default(0)
+  juntados    Int      @default(0)
+  ignorados   Int      @default(0)
+  idsCriados  Json     @default("[]") // pra desfazer
+  status      String   @default("CONCLUIDA") // CONCLUIDA | DESFEITA
+  criadoPorId String?
+  criadoEm    DateTime @default(now())
+
+  @@index([clienteId, criadoEm])
+  @@map("importacoes")
+}
+
+// ---------- Suporte ----------
+model Chamado {
+  id           String   @id @default(uuid())
+  clienteId    String
+  usuarioId    String?
+  assunto      String
+  status       String   @default("ABERTO") // ABERTO | RESPONDIDO | RESOLVIDO
+  canal        String   @default("APP") // APP | WHATSAPP
+  categoria    String   @default("DUVIDA") // DUVIDA | ERRO | COBRANCA | FISCAL | WHATSAPP | OUTRO
+  prioridade   String   @default("NORMAL") // ALTA | NORMAL | BAIXA
+  responsavelId String? // usuario ADMIN que esta cuidando
+  primeiraRespostaEm DateTime? // primeira resposta do suporte (tempo de resposta)
+  ultimaDoClienteEm  DateTime? // ultima mensagem do cliente (fila e "parado ha")
+  lidoSuporteEm      DateTime? // quando a equipe abriu a conversa pela ultima vez (nao lido)
+  avaliacao    Int? // 1 a 5, dada pelo cliente depois de resolvido
+  avaliacaoComentario String?
+  resolvidoEm  DateTime? // fotos apagadas aqui; a conversa some 7 dias depois
+  conversaApagadaEm DateTime? // mensagens apagadas (fica so o resumo do chamado)
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  mensagens ChamadoMensagem[]
+
+  @@index([status, atualizadoEm])
+  @@index([clienteId])
+  @@index([responsavelId])
+  @@index([status, resolvidoEm])
+  @@map("chamados")
+}
+
+model ChamadoMensagem {
+  id        String   @id @default(uuid())
+  chamadoId String
+  autor     String   // CLIENTE | SUPORTE | INTERNO (nota so da equipe)
+  autorNome String
+  texto     String
+  // Foto temporaria (MinIO, privada). Apagada quando o chamado e resolvido.
+  anexoChave     String?
+  anexoTipo      String?
+  anexoNome      String?
+  anexoApagadoEm DateTime?
+  criadoEm  DateTime @default(now())
+
+  chamado Chamado @relation(fields: [chamadoId], references: [id], onDelete: Cascade)
+
+  @@index([chamadoId, criadoEm])
+  @@map("chamados_mensagens")
+}
+
+// ---------- Comunicados da plataforma ----------
+model Comunicado {
+  id          String   @id @default(uuid())
+  titulo      String
+  texto       String
+  publico     String   @default("TODOS") // TODOS | SERVICO | PRODUTO | TRIAL
+  noSistema   Boolean  @default(true)
+  noWhatsapp  Boolean  @default(false)
+  alcance     Int      @default(0)
+  criadoPorId String?
+  criadoEm    DateTime @default(now())
+
+  @@map("comunicados")
+}
+
+// ---------- Auditoria do painel admin ----------
+// Tudo que alguem da equipe Sellergy faz na conta de um cliente. Sem update
+// nem delete pela aplicacao.
+model AuditoriaAdmin {
+  id          String   @id @default(uuid())
+  usuarioId   String?
+  usuarioNome String
+  acao        String
+  alvoTipo    String?  // CLIENTE | FATURA | PLANO | USUARIO | ...
+  alvoId      String?
+  detalhes    Json?
+  ip          String?
+  criadoEm    DateTime @default(now())
+
+  @@index([criadoEm])
+  @@index([alvoTipo, alvoId])
+  @@map("auditoria_admin")
+}
+
+// ---------- Planos editaveis pelo admin ----------
+// Sobrepoe o catalogo do codigo (src/planos/catalogo.js). Linha ausente = vale o codigo.
+model PlanoConfig {
+  codigo       String   @id // BASIC | PRO | PREMIUM
+  precoMensal  Float
+  limites      Json
+  atualizadoEm DateTime @updatedAt
+  atualizadoPor String?
+
+  @@map("planos_config")
+}
+
+// ---------- Configuracao da plataforma (chave/valor) ----------
+model ConfigPlataforma {
+  chave        String   @id
+  valor        Json
+  atualizadoEm DateTime @updatedAt
+
+  @@map("config_plataforma")
+}
+
+// ---------- Caixa de entrada do WhatsApp (tela /app/whatsapp) ----------
+// Uma conversa por contato (telefone) dentro do negocio. Guarda tudo o que
+// entra e sai pelo numero conectado (oficial ou QR Code): cliente, bot,
+// lembrete, campanha e equipe. Ver src/conversas/.
+// O model antigo `Mensagem` (preso a lead) nao e usado: a conversa existe
+// antes de virar lead e nem todo contato vira lead.
+model Conversa {
+  id                  String    @id @default(uuid())
+  clienteId           String
+  // Telefone so com digitos e DDI, com o 9 do celular brasileiro (chave unica).
+  telefone            String
+  // Como o numero chegou do WhatsApp (pode vir sem o 9): e pra onde a resposta vai.
+  telefoneEnvio       String
+  nomeContato         String?
+  leadId              String?   // lead do CRM com o mesmo telefone (quando existe)
+  botId               String?   // bot (numero) que recebeu/enviou por ultimo
+  canal               String?   // META_CLOUD | BAILEYS
+  ultimaMensagemEm    DateTime  @default(now())
+  ultimaMensagemTexto String?
+  ultimaMensagemOrigem String?  // CONTATO | BOT | EQUIPE | LEMBRETE | CAMPANHA | SISTEMA
+  ultimaEntradaEm     DateTime? // ultima mensagem do cliente (janela de 24 h da Meta)
+  naoLidas            Int       @default(0)
+  // Bot calado nesta conversa: a equipe assumiu. botPausadoAte null com
+  // botPausado = ate alguem devolver ao bot.
+  botPausado          Boolean   @default(false)
+  botPausadoAte       DateTime?
+  criadoEm            DateTime  @default(now())
+  atualizadoEm        DateTime  @updatedAt
+
+  mensagens MensagemConversa[]
+
+  @@unique([clienteId, telefone])
+  @@index([clienteId, ultimaMensagemEm])
+  @@index([leadId])
+  @@map("conversas")
+}
+
+model MensagemConversa {
+  id             String   @id @default(uuid())
+  conversaId     String
+  clienteId      String
+  direcao        String   // ENTRADA | SAIDA
+  origem         String   // CONTATO | BOT | EQUIPE | LEMBRETE | CAMPANHA | SISTEMA
+  texto          String
+  // RECEBIDA (entrada) | SIMULADA (trava de envio desligada) | PENDENTE | ENVIADA | FALHOU
+  status         String   @default("RECEBIDA")
+  erro           String?
+  idExterno      String?  // id da mensagem no WhatsApp (quando o provedor devolve)
+  autorUsuarioId String?
+  autorNome      String?
+  // Tipo do conteudo: TEXTO | IMAGEM | VIDEO | GIF | AUDIO | VOZ | DOCUMENTO |
+  // FIGURINHA | LOCALIZACAO | CONTATO | REACAO | NOTA (nota interna, so a equipe ve)
+  tipo           String   @default("TEXTO")
+  // Midia guardada no MinIO privado, SEM prazo de apagar (decisao do dono).
+  midiaChave     String?
+  midiaMime      String?
+  midiaNome      String?
+  midiaTamanho   Int?
+  midiaSegundos  Int?     // duracao de audio/video
+  extra          Json?    // localizacao {lat,lng,nome}, contato {nome,telefones}, reacao {emoji,alvo}
+  respondeAId    String?  // id externo da mensagem citada (responder com quote)
+  criadoEm       DateTime @default(now())
+
+  conversa Conversa @relation(fields: [conversaId], references: [id], onDelete: Cascade)
+
+  @@index([conversaId, criadoEm])
+  @@index([clienteId, criadoEm])
+  @@map("mensagens_conversa")
 }

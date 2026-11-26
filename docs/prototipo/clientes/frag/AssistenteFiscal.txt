@@ -1,0 +1,101 @@
+@@title Sellergy — ativar nota fiscal
+@@nav NotasFiscais.dc.html
+@@h 1040
+@@main
+<div class="row">
+<a href="NotasFiscais.dc.html" class="bg"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"></path></svg>Notas fiscais</a>
+<h1 class="t1 grow">Ativar nota fiscal</h1>
+<span class="sm mut">Faça uma vez. Depois a nota sai sozinha em cada venda.</span>
+</div>
+<div class="steps"><sc-for list="{{passos}}" as="p" hint-placeholder-count="4"><span class="{{p.cls}}"><b>{{p.n}}</b>{{p.t}}</span></sc-for></div>
+
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section class="card" style="flex: 999 1 560px; min-width: 0; padding: 22px; box-sizing: border-box">
+
+<sc-if value="{{e1}}" hint-placeholder-val="{{ true }}">
+<h2 class="t2">Dados da empresa</h2>
+<p class="sm mut" style="margin: 4px 0 0">Puxamos da Receita pelo CNPJ. Confira com seu contador se tiver dúvida.</p>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 14px; margin-top: 16px">
+<div class="f"><label for="c1">CNPJ</label><input id="c1" type="text" value="41.228.903/0001-17"></div>
+<div class="f"><label for="c2">Regime</label><select id="c2"><option>Simples Nacional</option></select></div>
+<div class="f"><label for="c3">Inscrição municipal</label><input id="c3" type="text" value="7.112.448-0"></div>
+<div class="f"><label for="c4">Cidade</label><input id="c4" type="text" value="São Paulo · SP"></div>
+</div>
+<div class="f" style="margin-top: 14px"><span class="lb">O que você emite</span>
+<div class="row"><button type="button" class="{{n1}}" onClick="{{t1}}">NFS-e · serviços</button><button type="button" class="{{n2}}" onClick="{{t2}}">NFC-e · produtos no balcão</button></div></div>
+</sc-if>
+
+<sc-if value="{{e2}}" hint-placeholder-val="{{ false }}">
+<h2 class="t2">Certificado digital A1</h2>
+<p class="sm mut" style="margin: 4px 0 0">É o arquivo .pfx que a certificadora te entregou. Sem ele a prefeitura não aceita a nota.</p>
+<sc-if value="{{semCert}}" hint-placeholder-val="{{ true }}">
+<div class="drop" style="margin-top: 16px"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width: 28px; height: 28px; color: #5B616B"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"></path></svg><p style="margin: 8px 0 0; font-weight: 600">Arraste o arquivo .pfx aqui</p><p class="sm mut" style="margin: 4px 0 12px">ou</p><button type="button" class="bs" onClick="{{enviarCert}}">Escolher arquivo</button></div>
+<p class="ajuda" style="margin: 10px 0 0">Não tem certificado? <a href="#">Compre com desconto pela Sellergy</a> (R$ 139,00 por ano, videochamada de 10 min).</p>
+</sc-if>
+<sc-if value="{{comCert}}" hint-placeholder-val="{{ false }}">
+<div class="row" style="margin-top: 16px; padding: 14px; border: 1px solid #E3E5E8; border-radius: 12px"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="color: #136F4D"><path d="M6 3h9l4 4v14H6z"></path></svg><span class="grow"><strong class="sm">lumi-estetica.pfx</strong><span class="ajuda" style="display: block">LUMI ESTETICA LTDA · válido até 12/02/2027</span></span><span class="pill ok">Lido</span></div>
+<div class="f" style="margin-top: 14px; max-width: 320px"><label for="cs">Senha do certificado</label><input id="cs" type="password" value="••••••••"></div>
+<p class="ajuda" style="margin: 8px 0 0">Guardamos criptografado. Avisamos 30 dias antes de vencer.</p>
+</sc-if>
+</sc-if>
+
+<sc-if value="{{e3}}" hint-placeholder-val="{{ false }}">
+<h2 class="t2">Como a nota sai</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 14px; margin-top: 16px">
+<div class="f"><label for="a1">Código do serviço (prefeitura)</label><select id="a1"><option>06.02 · Esteticistas e congêneres</option></select></div>
+<div class="f"><label for="a2">Alíquota do ISS</label><input id="a2" type="text" value="2%"></div>
+<div class="f"><label for="a3">Série da NFC-e</label><input id="a3" type="text" value="1"></div>
+<div class="f"><label for="a4">Próximo número</label><input id="a4" type="text" value="1"></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px; margin-top: 18px">
+<div class="row"><span class="grow sm"><strong>Emitir sozinho em toda venda paga</strong></span><button type="button" class="sw on" aria-label="Emitir sozinho"></button></div>
+<div class="row"><span class="grow sm"><strong>Mandar a nota pro WhatsApp da cliente</strong></span><button type="button" class="sw on" aria-label="Mandar nota no WhatsApp"></button></div>
+<div class="row"><span class="grow sm"><strong>Mandar todas pro e-mail do contador todo dia 1º</strong></span><button type="button" class="sw on" aria-label="Mandar ao contador"></button></div>
+</div>
+</sc-if>
+
+<sc-if value="{{e4}}" hint-placeholder-val="{{ false }}">
+<h2 class="t2">Nota de teste</h2>
+<p class="sm mut" style="margin: 4px 0 0">Mandamos uma nota de R$ 1,00 pro ambiente de teste da prefeitura. Não vale como nota de verdade.</p>
+<div style="margin-top: 16px; border: 1px solid #E3E5E8; border-radius: 12px; overflow: hidden">
+<sc-for list="{{checks}}" as="c" hint-placeholder-count="4"><div class="row" style="padding: 12px 14px; border-top: 1px solid #EEF0EC; font-size: 14px"><span class="{{c.cls}}">{{c.ic}}</span><span class="grow">{{c.t}}</span><span class="sm mut">{{c.x}}</span></div></sc-for>
+</div>
+<sc-if value="{{testando}}" hint-placeholder-val="{{ true }}"><button type="button" class="bp" style="margin-top: 16px" onClick="{{testar}}">Emitir nota de teste</button></sc-if>
+<sc-if value="{{ativo}}" hint-placeholder-val="{{ false }}">
+<p style="margin: 16px 0 0; padding: 12px 14px; border-radius: 12px; background: #E3F4EA; color: #0E5C34; font-weight: 600; line-height: 1.5">Nota fiscal ativada. A próxima venda paga já sai com nota.</p>
+<a href="NotasFiscais.dc.html" class="bs" style="margin-top: 12px">Ver notas fiscais</a>
+</sc-if>
+</sc-if>
+
+<sc-if value="{{navegando}}" hint-placeholder-val="{{ true }}">
+<div class="row" style="margin-top: 22px; padding-top: 16px; border-top: 1px solid #EEF0EC"><button type="button" class="bg" onClick="{{voltar}}">Voltar</button><span class="grow"></span><button type="button" class="bp" onClick="{{avancar}}">Continuar</button></div>
+</sc-if>
+</section>
+<aside style="flex: 1 1 280px; background: #fff; border: 1px solid #E3E5E8; border-radius: 16px; padding: 18px; font-size: 14px; line-height: 1.6">
+<strong>Precisa de ajuda?</strong>
+<p style="margin: 6px 0 0; color: #3D434B">Mande o acesso pro seu contador terminar por você. Ele recebe um link e só vê esta parte.</p>
+<button type="button" class="bs" style="width: 100%; margin-top: 12px">Convidar meu contador</button>
+<p class="ajuda" style="margin: 12px 0 0">Nota fiscal está no plano Profissional e no Negócio.</p>
+</aside>
+</div>
+@@script
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { e: 1, nfse: true, nfce: true, cert: false, teste: 0 }; }
+  renderVals() {
+    const s = this.state; const set = (o) => this.setState(o);
+    const nomes = ['Empresa', 'Certificado', 'Configuração', 'Teste'];
+    const ok = s.teste === 2;
+    const ck = (t, x) => ({ t, x: ok ? x : s.teste === 1 ? '...' : '', ic: ok ? '✓' : '•', cls: 'pill ' + (ok ? 'ok' : 'neu') });
+    return {
+      passos: nomes.map((t, i) => ({ t, n: i + 1 < s.e ? '✓' : i + 1, cls: 'st' + (i + 1 === s.e ? ' on' : i + 1 < s.e ? ' done' : '') })),
+      e1: s.e === 1, e2: s.e === 2, e3: s.e === 3, e4: s.e === 4, navegando: s.e < 4,
+      n1: 'chip' + (s.nfse ? ' on' : ''), n2: 'chip' + (s.nfce ? ' on' : ''),
+      t1: () => set({ nfse: !s.nfse }), t2: () => set({ nfce: !s.nfce }),
+      semCert: !s.cert, comCert: s.cert, enviarCert: () => set({ cert: true }),
+      checks: [ck('Certificado aceito', '0,4 s'), ck('Prefeitura de São Paulo respondeu', '1,2 s'), ck('NFS-e de teste autorizada', 'nº 1'), ck('NFC-e de teste autorizada (SEFAZ-SP)', 'nº 1')],
+      testando: !ok, ativo: ok,
+      testar: () => set({ teste: 2 }),
+      avancar: () => set({ e: s.e + 1, cert: s.e === 1 ? s.cert : true }), voltar: () => set({ e: Math.max(1, s.e - 1) }),
+    };
+  }
+}

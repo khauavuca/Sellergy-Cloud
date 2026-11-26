@@ -1,0 +1,453 @@
+{
+"v": 3,
+"createdOnFiles": {
+"v": 1,
+"at": "2026-11-23T12:00:00Z"
+},
+"title": "Sellergy Cloud — Protótipo",
+"launch": {
+"view": "canvas"
+},
+"pages": [],
+"boards": {
+"Main.dc.html": {
+"x": 0,
+"y": 0,
+"w": 1440,
+"h": 2900,
+"title": "1. Página inicial e preços",
+"expand": "fill",
+"is_interactive": true
+},
+"Cadastro.dc.html": {
+"x": 1520,
+"y": 0,
+"w": 1440,
+"h": 900,
+"title": "2. Cadastro com teste grátis",
+"expand": "fill",
+"is_interactive": true
+},
+"Entrar.dc.html": {
+"x": 3040,
+"y": 0,
+"w": 1440,
+"h": 900,
+"title": "2b. Entrar e recuperar senha",
+"expand": "fill",
+"is_interactive": true
+},
+"Inicio.dc.html": {
+"x": 0,
+"y": 3343,
+"w": 1440,
+"h": 1040,
+"title": "3. Início e primeiros passos",
+"expand": "fill",
+"is_interactive": true
+},
+"Agenda.dc.html": {
+"x": 1520,
+"y": 3343,
+"w": 1440,
+"h": 1040,
+"title": "4. Agenda da clínica",
+"expand": "fill",
+"is_interactive": true
+},
+"Lembrete.dc.html": {
+"x": 0,
+"y": 4806,
+"w": 390,
+"h": 844,
+"title": "5. Lembrete no WhatsApp",
+"is_interactive": true
+},
+"Confirmar.dc.html": {
+"x": 470,
+"y": 4806,
+"w": 390,
+"h": 844,
+"title": "6. Link de confirmação",
+"is_interactive": true
+},
+"AgendarLink.dc.html": {
+"x": 940,
+"y": 4806,
+"w": 390,
+"h": 844,
+"title": "7. Agendamento online",
+"is_interactive": true
+},
+"Catalogo.dc.html": {
+"x": 1410,
+"y": 4806,
+"w": 390,
+"h": 844,
+"title": "7b. Catálogo online",
+"is_interactive": true
+},
+"PDV.dc.html": {
+"x": 0,
+"y": 6073,
+"w": 1440,
+"h": 1000,
+"title": "8. Venda no balcão com Pix",
+"expand": "fill",
+"is_interactive": true
+},
+"Planos.dc.html": {
+"x": 1520,
+"y": 6073,
+"w": 1440,
+"h": 1100,
+"title": "9. Plano e cobrança",
+"expand": "fill",
+"is_interactive": true
+},
+"SistemaDesign.dc.html": {
+"x": 0,
+"y": 7596,
+"w": 1440,
+"h": 1500,
+"title": "Sistema de design"
+},
+"Clientes.dc.html": {
+"x": 0,
+"y": 9696,
+"w": 1440,
+"h": 1040,
+"title": "10. Clientes e ficha",
+"expand": "fill",
+"is_interactive": true
+},
+"Estoque.dc.html": {
+"x": 1520,
+"y": 9696,
+"w": 1440,
+"h": 1040,
+"title": "11. Estoque",
+"expand": "fill",
+"is_interactive": true
+},
+"Caixa.dc.html": {
+"x": 0,
+"y": 11336,
+"w": 1440,
+"h": 1040,
+"title": "12. Caixa e fechamento",
+"expand": "fill",
+"is_interactive": true
+},
+"WhatsApp.dc.html": {
+"x": 1520,
+"y": 11336,
+"w": 1440,
+"h": 1040,
+"title": "13. WhatsApp: conversas e campanhas",
+"expand": "fill",
+"is_interactive": true
+},
+"NotasFiscais.dc.html": {
+"x": 3040,
+"y": 11336,
+"w": 1440,
+"h": 1040,
+"title": "14. Notas fiscais",
+"expand": "fill",
+"is_interactive": true
+},
+"Configuracoes.dc.html": {
+"x": 0,
+"y": 12976,
+"w": 1440,
+"h": 1100,
+"title": "15. Configurações",
+"expand": "fill",
+"is_interactive": true
+},
+"NovoAgendamento.dc.html": {
+"x": 0,
+"y": 14676,
+"w": 1440,
+"h": 1040,
+"title": "17. Novo agendamento pela recepção",
+"expand": "fill",
+"is_interactive": true
+},
+"Encaixe.dc.html": {
+"x": 1520,
+"y": 14676,
+"w": 1440,
+"h": 1040,
+"title": "18. Fila de encaixe",
+"expand": "fill",
+"is_interactive": true
+},
+"SinalPix.dc.html": {
+"x": 3040,
+"y": 14676,
+"w": 390,
+"h": 844,
+"title": "19. Sinal por Pix (cliente)",
+"is_interactive": true
+},
+"EncaixeWhats.dc.html": {
+"x": 3510,
+"y": 14676,
+"w": 390,
+"h": 844,
+"title": "20. Oferta de encaixe (cliente)",
+"is_interactive": true
+},
+"Pedidos.dc.html": {
+"x": 0,
+"y": 16316,
+"w": 1440,
+"h": 1040,
+"title": "21. Pedidos do catálogo e venda pelo WhatsApp",
+"expand": "fill",
+"is_interactive": true
+},
+"Recebimentos.dc.html": {
+"x": 1520,
+"y": 16316,
+"w": 1440,
+"h": 1040,
+"title": "22. Conta de recebimento (Pix e cartão)",
+"expand": "fill",
+"is_interactive": true
+},
+"Financeiro.dc.html": {
+"x": 3040,
+"y": 16316,
+"w": 1440,
+"h": 1040,
+"title": "23. Financeiro",
+"expand": "fill",
+"is_interactive": true
+},
+"Comissoes.dc.html": {
+"x": 0,
+"y": 17656,
+"w": 1440,
+"h": 1040,
+"title": "24. Comissões da equipe",
+"expand": "fill",
+"is_interactive": true
+},
+"Relatorios.dc.html": {
+"x": 1520,
+"y": 17656,
+"w": 1440,
+"h": 1100,
+"title": "25. Relatórios",
+"expand": "fill",
+"is_interactive": true
+},
+"Servicos.dc.html": {
+"x": 3040,
+"y": 17656,
+"w": 1440,
+"h": 1040,
+"title": "26. Serviços e pacotes",
+"expand": "fill",
+"is_interactive": true
+},
+"ConectarWhatsApp.dc.html": {
+"x": 0,
+"y": 19356,
+"w": 1440,
+"h": 1040,
+"title": "27. Conectar WhatsApp oficial",
+"expand": "fill",
+"is_interactive": true
+},
+"AssistenteFiscal.dc.html": {
+"x": 1520,
+"y": 19356,
+"w": 1440,
+"h": 1040,
+"title": "28. Ativar nota fiscal",
+"expand": "fill",
+"is_interactive": true
+},
+"Importar.dc.html": {
+"x": 3040,
+"y": 19356,
+"w": 1440,
+"h": 1040,
+"title": "29. Importar planilha",
+"expand": "fill",
+"is_interactive": true
+},
+"InicioLoja.dc.html": {
+"x": 0,
+"y": 20996,
+"w": 1440,
+"h": 1040,
+"title": "30. Início da loja (primeiros passos)",
+"expand": "fill",
+"is_interactive": true
+},
+"ContaSuspensa.dc.html": {
+"x": 1520,
+"y": 20996,
+"w": 1440,
+"h": 1040,
+"title": "31. Mensalidade atrasada (13/12)",
+"expand": "fill",
+"is_interactive": true
+},
+"AppDono.dc.html": {
+"x": 3040,
+"y": 20996,
+"w": 390,
+"h": 844,
+"title": "32. Sellergy no celular da dona",
+"is_interactive": true
+},
+"ConviteEquipe.dc.html": {
+"x": 3510,
+"y": 20996,
+"w": 390,
+"h": 844,
+"title": "33. Convite da profissional",
+"is_interactive": true
+},
+"NovaCampanha.dc.html": {
+"x": 4560,
+"y": 19356,
+"w": 1440,
+"h": 1040,
+"title": "27b. Nova campanha",
+"expand": "fill",
+"is_interactive": true
+}
+},
+"order": [
+"Main.dc.html",
+"Cadastro.dc.html",
+"Entrar.dc.html",
+"Inicio.dc.html",
+"Agenda.dc.html",
+"Lembrete.dc.html",
+"Confirmar.dc.html",
+"AgendarLink.dc.html",
+"Catalogo.dc.html",
+"PDV.dc.html",
+"Planos.dc.html",
+"SistemaDesign.dc.html",
+"Clientes.dc.html",
+"Estoque.dc.html",
+"Caixa.dc.html",
+"WhatsApp.dc.html",
+"NotasFiscais.dc.html",
+"Configuracoes.dc.html",
+"NovoAgendamento.dc.html",
+"Encaixe.dc.html",
+"SinalPix.dc.html",
+"EncaixeWhats.dc.html",
+"Pedidos.dc.html",
+"Recebimentos.dc.html",
+"Financeiro.dc.html",
+"Comissoes.dc.html",
+"Relatorios.dc.html",
+"Servicos.dc.html",
+"ConectarWhatsApp.dc.html",
+"NovaCampanha.dc.html",
+"AssistenteFiscal.dc.html",
+"Importar.dc.html",
+"InicioLoja.dc.html",
+"ContaSuspensa.dc.html",
+"AppDono.dc.html",
+"ConviteEquipe.dc.html"
+],
+"notes": {
+"t1": {
+"x": 0,
+"y": -300,
+"text": "Aquisição: do anúncio à conta criada",
+"kind": "title1",
+"maxW": 4480
+},
+"t2": {
+"x": 0,
+"y": 3043,
+"text": "Primeiro uso e agenda",
+"kind": "title1",
+"maxW": 2960
+},
+"t3": {
+"x": 0,
+"y": 4506,
+"text": "Cliente final, no celular",
+"kind": "title1",
+"maxW": 2960
+},
+"t4": {
+"x": 0,
+"y": 5773,
+"text": "Venda e assinatura",
+"kind": "title1",
+"maxW": 2960
+},
+"t5": {
+"x": 0,
+"y": 7296,
+"text": "Sistema de design",
+"kind": "title1",
+"maxW": 2960
+},
+"t6": {
+"x": 0,
+"y": 9396,
+"text": "Clientes e estoque",
+"kind": "title1",
+"maxW": 2960
+},
+"t7": {
+"x": 0,
+"y": 11036,
+"text": "Caixa, WhatsApp e notas",
+"kind": "title1",
+"maxW": 4480
+},
+"t8": {
+"x": 0,
+"y": 12676,
+"text": "Configurações",
+"kind": "title1",
+"maxW": 2960
+},
+"t9": {
+"x": 0,
+"y": 14376,
+"text": "Agenda: novo horário, encaixe e sinal",
+"kind": "title1",
+"maxW": 3900
+},
+"t10": {
+"x": 0,
+"y": 16016,
+"text": "Pedidos, dinheiro e equipe",
+"kind": "title1",
+"maxW": 4480
+},
+"t11": {
+"x": 0,
+"y": 19056,
+"text": "Ativação: WhatsApp oficial, nota e importação",
+"kind": "title1",
+"maxW": 6000
+},
+"t12": {
+"x": 0,
+"y": 20696,
+"text": "Loja, atraso e celular",
+"kind": "title1",
+"maxW": 3900
+}
+},
+"designSystems": []
+}

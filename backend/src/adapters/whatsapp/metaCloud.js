@@ -20,6 +20,14 @@ class MetaCloudAdapter extends ProvedorWhatsApp {
     return whatsappCloud.enviarDocumento({ phoneNumberId: this.identificadorCanal, token: this._token, para, link, filename, caption });
   }
 
+  enviarMidia({ para, tipo, buffer, mime, nome, legenda, respondeAId }) {
+    return whatsappCloud.enviarMidia({ phoneNumberId: this.identificadorCanal, token: this._token, para, tipo, buffer, mime, nome, legenda, respondeAId });
+  }
+
+  enviarReacao({ para, alvoId, emoji }) {
+    return whatsappCloud.enviarReacao({ phoneNumberId: this.identificadorCanal, token: this._token, para, alvoId, emoji });
+  }
+
   enviarTemplate({ para, nomeTemplate, idioma, componentes }) {
     return whatsappCloud.enviarTemplate({ phoneNumberId: this.identificadorCanal, token: this._token, para, nomeTemplate, idioma, componentes });
   }

@@ -1,0 +1,2 @@
+ALTER TYPE "OrigemCobranca" ADD VALUE 'PEDIDO';
+ALTER TYPE "OrigemCobranca" ADD VALUE 'PACOTE';

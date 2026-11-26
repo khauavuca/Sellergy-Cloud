@@ -1,0 +1,96 @@
+@@title Sellergy — serviços e pacotes
+@@nav Configuracoes.dc.html
+@@h 1040
+@@main
+<div class="row">
+<a href="Configuracoes.dc.html" class="bg"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"></path></svg>Configurações</a>
+<h1 class="t1 grow">Serviços e pacotes</h1>
+<button type="button" class="bs">Importar de planilha</button>
+<button type="button" class="bp"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>{{novoTxt}}</button>
+</div>
+<div class="tabs"><sc-for list="{{abas}}" as="a" hint-placeholder-count="2"><button type="button" class="{{a.cls}}" onClick="{{a.pick}}">{{a.t}}</button></sc-for></div>
+
+<sc-if value="{{abaServ}}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section class="card" style="flex: 1 1 360px; min-width: 0; overflow: hidden">
+<sc-for list="{{servicos}}" as="s" hint-placeholder-count="6">
+<button type="button" class="{{s.cls}}" onClick="{{s.pick}}" style="border-radius: 0; border: 0; border-top: 1px solid #EEF0EC"><span class="grow"><strong style="display: block">{{s.n}}</strong><span class="sm mut">{{s.info}}</span></span><span class="n" style="font-weight: 700">{{s.p}}</span></button>
+</sc-for>
+</section>
+<section class="card" style="flex: 999 1 520px; min-width: 0; padding: 22px; box-sizing: border-box">
+<div class="row"><h2 class="t2 grow">Editar serviço</h2><sc-if value="{{salvo}}" hint-placeholder-val="{{ false }}"><span class="pill ok">Salvo · já vale no link de agendamento</span></sc-if></div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 14px; margin-top: 16px">
+<div class="f" style="grid-column: 1 / -1"><label for="sn">Nome</label><input id="sn" type="text" value="{{sel.n}}"></div>
+<div class="f"><label for="sd">Duração</label><select id="sd"><option>{{sel.dur}}</option></select></div>
+<div class="f"><label for="sp">Preço</label><input id="sp" type="text" value="{{sel.p}}"></div>
+<div class="f"><label for="si">Intervalo depois</label><select id="si"><option>10 min (limpar a sala)</option></select></div>
+</div>
+<div class="f" style="margin-top: 16px"><span class="lb">Quem faz</span><div class="row" style="gap: 8px"><sc-for list="{{profs}}" as="p" hint-placeholder-count="3"><button type="button" class="{{p.cls}}" onClick="{{p.pick}}">{{p.n}}</button></sc-for></div></div>
+<div style="display: flex; flex-direction: column; gap: 14px; margin-top: 20px; padding-top: 16px; border-top: 1px solid #EEF0EC">
+<div class="row"><div class="grow"><strong class="sm">Aparece no link de agendamento</strong><p class="ajuda" style="margin: 2px 0 0">Clientes marcam sozinhas pelo Instagram e WhatsApp</p></div><button type="button" class="{{sw1}}" onClick="{{t1}}" aria-label="Aparece no link"></button></div>
+<div class="row"><div class="grow"><strong class="sm">Cobrar sinal ao agendar</strong><p class="ajuda" style="margin: 2px 0 0">30% por Pix. Recomendado pra serviço acima de R$ 200,00</p></div><button type="button" class="{{sw2}}" onClick="{{t2}}" aria-label="Cobrar sinal"></button></div>
+<div class="row"><div class="grow"><strong class="sm">Lembrar a cliente de voltar</strong><p class="ajuda" style="margin: 2px 0 0">Manda mensagem {{sel.volta}} depois, com link pra marcar</p></div><button type="button" class="{{sw3}}" onClick="{{t3}}" aria-label="Lembrar de voltar"></button></div>
+<div class="row"><div class="grow"><strong class="sm">Produtos que a profissional usa</strong><p class="ajuda" style="margin: 2px 0 0">Baixa do estoque a cada atendimento: {{sel.insumo}}</p></div><button type="button" class="bs">Editar</button></div>
+</div>
+<div class="row" style="margin-top: 20px"><button type="button" class="bg">Desativar serviço</button><span class="grow"></span><button type="button" class="bp" onClick="{{salvar}}">Salvar</button></div>
+</section>
+</div>
+</sc-if>
+
+<sc-if value="{{abaPac}}" hint-placeholder-val="{{ false }}">
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px">
+<sc-for list="{{pacotes}}" as="p" hint-placeholder-count="3">
+<div class="card" style="padding: 18px"><strong>{{p.n}}</strong><p class="sm mut" style="margin: 4px 0 0">{{p.d}}</p><p class="n" style="margin: 12px 0 0; font-size: 22px; font-weight: 700">{{p.v}}</p><p class="ajuda" style="margin: 2px 0 0">{{p.eco}}</p><div class="row" style="margin-top: 14px"><span class="pill neu">{{p.ativos}}</span><span class="grow"></span><a href="PDV.dc.html" class="bs">Vender</a></div></div>
+</sc-for>
+</div>
+<section class="card" style="overflow: hidden">
+<div class="row" style="padding: 16px 18px"><h2 class="t2 grow">Clientes com pacote</h2><div class="row" style="gap: 6px"><button type="button" class="{{fTodos}}" onClick="{{verTodos}}">Todos</button><button type="button" class="{{fAcab}}" onClick="{{verAcab}}">Acabando</button></div></div>
+<div style="overflow-x: auto"><table style="width: 100%; border-collapse: collapse; min-width: 640px">
+<thead><tr><th>Cliente</th><th>Pacote</th><th>Sessões</th><th>Pagamento</th><th>Validade</th><th></th></tr></thead>
+<tbody><sc-for list="{{clientes}}" as="c" hint-placeholder-count="5"><tr><td style="font-weight: 600">{{c.n}}</td><td>{{c.p}}</td><td><span class="n">{{c.u}}</span><div style="height: 6px; border-radius: 99px; background: #EEF0EC; margin-top: 4px; width: 120px; overflow: hidden"><div class="{{c.bar}}" style="height: 100%; background: #136F4D"></div></div></td><td><span class="{{c.pgCls}}">{{c.pg}}</span></td><td class="mut">{{c.val}}</td><td><sc-if value="{{c.renovar}}" hint-placeholder-val="{{ false }}"><button type="button" class="bs">Oferecer renovação</button></sc-if></td></tr></sc-for></tbody>
+</table></div>
+</section>
+</sc-if>
+@@script
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { aba: 0, sel: 0, prof: { 0: [0], 1: [1], 2: [2], 3: [1, 0], 4: [0], 5: [2] }, sw: [true, false, true], salvo: false, acab: false }; }
+  renderVals() {
+    const s = this.state; const set = (o) => this.setState(o);
+    const S = [
+      { n: 'Limpeza de pele', dur: '1 h', p: 'R$ 180,00', volta: '30 dias', insumo: 'máscara de argila, sabonete' },
+      { n: 'Drenagem linfática', dur: '50 min', p: 'R$ 150,00', volta: '7 dias', insumo: 'óleo de massagem' },
+      { n: 'Peeling químico', dur: '1 h', p: 'R$ 350,00', volta: '21 dias', insumo: 'ácido mandélico 30%' },
+      { n: 'Massagem relaxante', dur: '1 h', p: 'R$ 160,00', volta: '15 dias', insumo: 'óleo de massagem' },
+      { n: 'Design de sobrancelha', dur: '30 min', p: 'R$ 60,00', volta: '20 dias', insumo: 'nenhum' },
+      { n: 'Microagulhamento', dur: '1 h 30', p: 'R$ 420,00', volta: '30 dias', insumo: 'sérum de ácido hialurônico' },
+    ];
+    const pf = ['Ana', 'Bruno', 'Carla'];
+    const sel = S[s.sel]; const quem = s.prof[s.sel];
+    const sw = (i) => 'sw' + (s.sw[i] ? ' on' : '');
+    const tg = (i) => () => { const a = [...s.sw]; a[i] = !a[i]; set({ sw: a, salvo: false }); };
+    const cli = [
+      { n: 'Paula Rocha', p: 'Drenagem 10 sessões', u: '4 de 10', bar: 'b40', pg: '2 de 3 parcelas', pgCls: 'pill ok', val: 'até 10/03/2027', a: false },
+      { n: 'Renata Campos', p: 'Limpeza 5 sessões', u: '4 de 5', bar: 'b80', pg: 'Parcela atrasada', pgCls: 'pill bad', val: 'até 20/01/2027', a: true },
+      { n: 'Mariana Alves', p: 'Limpeza 5 sessões', u: '5 de 5', bar: 'b100', pg: 'Quitado', pgCls: 'pill ok', val: 'acabou', a: true },
+      { n: 'Lívia Martins', p: 'Peeling 4 sessões', u: '1 de 4', bar: 'b25', pg: 'Quitado', pgCls: 'pill ok', val: 'até 15/04/2027', a: false },
+      { n: 'Thiago Vieira', p: 'Massagem 8 sessões', u: '7 de 8', bar: 'b85', pg: 'Quitado', pgCls: 'pill ok', val: 'até 28/02/2027', a: true },
+    ];
+    return {
+      abas: ['Serviços (6)', 'Pacotes (3)'].map((t, i) => ({ t, cls: 'tab' + (s.aba === i ? ' on' : ''), pick: () => set({ aba: i }) })),
+      abaServ: s.aba === 0, abaPac: s.aba === 1, novoTxt: s.aba === 0 ? 'Novo serviço' : 'Novo pacote',
+      servicos: S.map((x, i) => ({ ...x, info: x.dur + ' · ' + s.prof[i].map((j) => pf[j]).join(', '), cls: 'opt' + (s.sel === i ? ' on' : ''), pick: () => set({ sel: i, salvo: false }) })),
+      sel, salvo: s.salvo,
+      profs: pf.map((n, j) => ({ n, cls: 'chip' + (quem.includes(j) ? ' on' : ''), pick: () => set({ prof: { ...s.prof, [s.sel]: quem.includes(j) ? quem.filter((x) => x !== j) : [...quem, j] }, salvo: false }) })),
+      sw1: sw(0), sw2: sw(1), sw3: sw(2), t1: tg(0), t2: tg(1), t3: tg(2),
+      salvar: () => set({ salvo: true }),
+      pacotes: [
+        { n: 'Drenagem 10 sessões', d: 'Validade 4 meses · até 3× no cartão ou Pix parcelado', v: 'R$ 1.200,00', eco: 'Sai R$ 120,00 a sessão (economia de R$ 300,00)', ativos: '8 clientes ativas' },
+        { n: 'Limpeza de pele 5 sessões', d: 'Validade 6 meses', v: 'R$ 780,00', eco: 'Sai R$ 156,00 a sessão', ativos: '14 clientes ativas' },
+        { n: 'Peeling 4 sessões', d: 'Validade 5 meses · intervalo mínimo 21 dias', v: 'R$ 1.190,00', eco: 'Sai R$ 297,50 a sessão', ativos: '5 clientes ativas' },
+      ],
+      clientes: cli.filter((c) => !s.acab || c.a).map((c) => ({ ...c, renovar: c.a })),
+      fTodos: 'chip' + (!s.acab ? ' on' : ''), fAcab: 'chip' + (s.acab ? ' on' : ''),
+      verTodos: () => set({ acab: false }), verAcab: () => set({ acab: true }),
+    };
+  }
+}

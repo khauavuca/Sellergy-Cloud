@@ -92,16 +92,21 @@ function conteudoCertificadoProibido(body) {
 // Antes de emitir DE VERDADE, exige a identidade do emitente, o certificado (ref)
 // e a credencial. Para NF-e real, cada item precisa de NCM e CFOP. Devolve a
 // lista do que falta (vazia = pronto). Em fixture isto não é chamado.
-function validarProntidaoProducao(config, itens = []) {
+// `tipo` (opcional): 'NFCE' exige inscrição estadual; 'NFSE' exige a
+// municipal. Sem tipo, mantém a regra antiga (estadual).
+function validarProntidaoProducao(config, itens = [], { tipo } = {}) {
   const falta = [];
   const c = config || {};
   if (!c.razaoSocial) falta.push('razão social do emitente');
   if (!validarCnpj(c.cnpj)) falta.push('CNPJ do emitente válido');
-  if (!c.inscricao) falta.push('inscrição estadual');
+  if (tipo === 'NFSE') {
+    if (!c.inscricaoMunicipal) falta.push('inscrição municipal');
+  } else if (!c.inscricao) falta.push('inscrição estadual');
   if (!c.logradouro || !c.municipio || !validarUf(c.uf) || !validarCep(c.cep)) {
     falta.push('endereço do emitente (logradouro, município, UF, CEP)');
   }
   if (!c.certificadoRef) falta.push('certificado digital configurado no provedor');
+  else if (String(c.certificadoRef).startsWith('simulado:')) falta.push('reenviar o certificado digital (o atual foi registrado em modo simulado e não está no emissor)');
   if (!c.credencialId) falta.push('credencial do provedor');
   itens.forEach((it, i) => {
     if (!temNDigitos(it?.ncm, 8)) falta.push(`NCM do item ${i + 1}`);
@@ -110,7 +115,75 @@ function validarProntidaoProducao(config, itens = []) {
   return falta;
 }
 
+// ---------- Dados tributários (ConfiguracaoFiscal.tributacao, JSON) ----------
+// Tudo opcional. Normaliza e valida cada chave conhecida; ignora o resto.
+// Devolve { dados } ou { erro, campos }.
+//   codigoMunicipio            IBGE do município do emitente (7 dígitos)
+//   naturezaOperacao           NFC-e (padrão "Venda ao consumidor")
+//   ncmPadrao / cfopPadrao     usados só em item sem NCM/CFOP próprio
+//   icmsSituacao               CSOSN (Simples) ou CST do ICMS (regime normal)
+//   icmsAliquota               % (regime normal, CST 00)
+//   pisCofinsSituacao          CST de PIS/COFINS (padrão 49 no Simples)
+//   itemListaServico           NFS-e: item da LC 116 (ex. "06.01")
+//   codigoTributacaoNacional   NFS-e nacional: cTribNac (6 dígitos)
+//   codigoTributarioMunicipio  NFS-e: código do serviço na prefeitura
+//   aliquotaIss                NFS-e: % do ISS
+//   issRetido                  NFS-e: ISS retido pelo tomador
+//   ibsCbs { incluir, cst, cClassTrib }  reforma tributária (ver adapters/fiscal/corpoNota)
+function normalizarTributacao(entrada) {
+  if (entrada === null || entrada === undefined) return { dados: null };
+  if (typeof entrada !== 'object' || Array.isArray(entrada)) return { erro: 'Dados tributários inválidos.', campos: ['tributacao'] };
+  const campos = [];
+  const d = {};
+  const txt = (v, max) => String(v ?? '').trim().slice(0, max);
+  const digitos = (chave, n) => {
+    if (ehVazio(entrada[chave])) return;
+    const v = soDigitos(entrada[chave]);
+    if (v.length !== n) campos.push(`tributacao.${chave}`); else d[chave] = v;
+  };
+  const percentual = (chave) => {
+    if (ehVazio(entrada[chave])) return;
+    const n = Number(String(entrada[chave]).replace(',', '.'));
+    if (!Number.isFinite(n) || n < 0 || n > 100) campos.push(`tributacao.${chave}`); else d[chave] = Math.round(n * 10000) / 10000;
+  };
+  digitos('codigoMunicipio', 7);
+  digitos('ncmPadrao', 8);
+  digitos('cfopPadrao', 4);
+  digitos('codigoTributacaoNacional', 6);
+  if (!ehVazio(entrada.naturezaOperacao)) d.naturezaOperacao = txt(entrada.naturezaOperacao, 60);
+  if (!ehVazio(entrada.icmsSituacao)) {
+    const v = soDigitos(entrada.icmsSituacao);
+    if (v.length < 2 || v.length > 3) campos.push('tributacao.icmsSituacao'); else d.icmsSituacao = v;
+  }
+  percentual('icmsAliquota');
+  if (!ehVazio(entrada.pisCofinsSituacao)) {
+    const v = soDigitos(entrada.pisCofinsSituacao);
+    if (v.length !== 2) campos.push('tributacao.pisCofinsSituacao'); else d.pisCofinsSituacao = v;
+  }
+  if (!ehVazio(entrada.itemListaServico)) {
+    const v = txt(entrada.itemListaServico, 10);
+    if (!/^\d{1,2}\.?\d{2}$/.test(v)) campos.push('tributacao.itemListaServico'); else d.itemListaServico = v;
+  }
+  if (!ehVazio(entrada.codigoTributarioMunicipio)) d.codigoTributarioMunicipio = txt(entrada.codigoTributarioMunicipio, 20);
+  percentual('aliquotaIss');
+  if (entrada.issRetido !== undefined) d.issRetido = entrada.issRetido === true;
+  if (entrada.ibsCbs !== undefined && entrada.ibsCbs !== null) {
+    const ib = entrada.ibsCbs;
+    if (typeof ib !== 'object') campos.push('tributacao.ibsCbs');
+    else {
+      const o = {};
+      if (ib.incluir !== undefined) o.incluir = ib.incluir === true;
+      if (!ehVazio(ib.cst)) { const v = soDigitos(ib.cst); if (v.length !== 3) campos.push('tributacao.ibsCbs.cst'); else o.cst = v; }
+      if (!ehVazio(ib.cClassTrib)) { const v = soDigitos(ib.cClassTrib); if (v.length !== 6) campos.push('tributacao.ibsCbs.cClassTrib'); else o.cClassTrib = v; }
+      d.ibsCbs = o;
+    }
+  }
+  if (campos.length) return { erro: 'Confira os dados tributários destacados.', campos };
+  return { dados: d };
+}
+
 module.exports = {
+  normalizarTributacao,
   soDigitos,
   validarCnpj,
   validarCpf,

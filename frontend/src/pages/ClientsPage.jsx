@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Plus, Edit2, Trash2, MoreHorizontal, Mail, Phone,
-  ShieldCheck, CheckCircle2, XCircle, Pause, Plug
+  ShieldCheck, CheckCircle2, XCircle, Pause, Plug, Sparkles
 } from 'lucide-react';
 import api from '../services/api';
 import {
@@ -11,6 +11,7 @@ import {
 } from '../components/ui';
 import Modal from '../components/Modal';
 import ModalIntegracoes from '../components/admin/ModalIntegracoes';
+import ModalIABot from '../components/admin/ModalIABot';
 import { formatarTelefoneBR } from '../utils/formatTelefone';
 import { MODULOS_TENANT, modulosDoSegmento } from '../constants/permissoes';
 
@@ -36,17 +37,19 @@ export default function ClientsPage() {
   const [modal, setModal] = useState({ open: false, data: null });
   const [drawer, setDrawer] = useState({ open: false, cliente: null });
   const [integracoes, setIntegracoes] = useState({ open: false, cliente: null });
+  const [iaBot, setIaBot] = useState({ open: false, cliente: null });
 
-  useEffect(() => { carregar(); }, []);
+  // Busca sem setState sincrono (o estado ja nasce carregando); o "carregar"
+  // das acoes liga o carregando antes de buscar de novo.
+  const buscarClientes = useCallback(() => api.get('/clientes')
+    .then((r) => { setClientes(r.data || []); })
+    .finally(() => { setCarregando(false); }), []);
 
-  const carregar = async () => {
+  useEffect(() => { buscarClientes(); }, [buscarClientes]);
+
+  const carregar = () => {
     setCarregando(true);
-    try {
-      const r = await api.get('/clientes');
-      setClientes(r.data || []);
-    } finally {
-      setCarregando(false);
-    }
+    return buscarClientes();
   };
 
   const filtrados = useMemo(() => {
@@ -176,6 +179,7 @@ export default function ClientsPage() {
                       <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel="Acoes" />}>
                         <DropdownItem icon={Edit2} onClick={() => setModal({ open: true, data: c })}>Editar</DropdownItem>
                         <DropdownItem icon={Plug} onClick={() => setIntegracoes({ open: true, cliente: c })}>Integrações</DropdownItem>
+                        <DropdownItem icon={Sparkles} onClick={() => setIaBot({ open: true, cliente: c })}>IA do bot</DropdownItem>
                         <DropdownDivider />
                         {c.status !== 'ACTIVE' && <DropdownItem icon={CheckCircle2} onClick={() => handleStatus(c, 'ACTIVE')}>Ativar</DropdownItem>}
                         {c.status !== 'SUSPENDED' && <DropdownItem icon={Pause} onClick={() => handleStatus(c, 'SUSPENDED')}>Suspender</DropdownItem>}
@@ -193,6 +197,7 @@ export default function ClientsPage() {
       )}
 
       <ModalCliente
+        key={modal.open ? `cliente-${modal.data?.id ?? 'novo'}` : 'cliente-fechado'}
         isOpen={modal.open}
         onClose={() => setModal({ open: false, data: null })}
         cliente={modal.data}
@@ -207,12 +212,19 @@ export default function ClientsPage() {
         onExcluir={() => handleExcluir(drawer.cliente)}
         onStatus={(s) => { handleStatus(drawer.cliente, s); setDrawer({ open: false, cliente: null }); }}
         onIntegracoes={() => { setIntegracoes({ open: true, cliente: drawer.cliente }); setDrawer({ open: false, cliente: null }); }}
+        onIABot={() => { setIaBot({ open: true, cliente: drawer.cliente }); setDrawer({ open: false, cliente: null }); }}
       />
 
       <ModalIntegracoes
         isOpen={integracoes.open}
         onClose={() => setIntegracoes({ open: false, cliente: null })}
         cliente={integracoes.cliente}
+      />
+
+      <ModalIABot
+        isOpen={iaBot.open}
+        onClose={() => setIaBot({ open: false, cliente: null })}
+        cliente={iaBot.cliente}
       />
     </div>
   );
@@ -232,18 +244,16 @@ function KpiCard({ label, valor, variant }) {
 }
 
 function ModalCliente({ isOpen, onClose, cliente, onSalvar }) {
-  const [form, setForm] = useState({ nome: '', email: '', telefone: '', segmento: '', plano: 'BASIC', mensalidade: 0 });
-
-  useEffect(() => {
-    if (cliente) setForm({
+  // O pai troca a `key` a cada abertura, entao o form nasce do cliente atual.
+  const [form, setForm] = useState(() => (cliente
+    ? {
       ...cliente,
       email: cliente.email || '',
       telefone: cliente.telefone || '',
       segmento: cliente.segmento || '',
       mensalidade: cliente.mensalidade || 0,
-    });
-    else setForm({ nome: '', email: '', telefone: '', segmento: '', plano: 'BASIC', mensalidade: 0 });
-  }, [cliente, isOpen]);
+    }
+    : { nome: '', email: '', telefone: '', segmento: '', plano: 'BASIC', mensalidade: 0 }));
 
   // Preview dos modulos que o backend vai auto-ativar pelo segmento (so na
   // criacao). Da transparencia ao admin antes de salvar; ele ajusta em Permissoes.
@@ -315,7 +325,7 @@ function ModalCliente({ isOpen, onClose, cliente, onSalvar }) {
   );
 }
 
-function DrawerCliente({ isOpen, onClose, cliente, onEditar, onExcluir, onStatus, onIntegracoes }) {
+function DrawerCliente({ isOpen, onClose, cliente, onEditar, onExcluir, onStatus, onIntegracoes, onIABot }) {
   if (!cliente) return null;
   const status = STATUS_LABELS[cliente.status] || { label: cliente.status, variant: 'neutral' };
 
@@ -381,6 +391,9 @@ function DrawerCliente({ isOpen, onClose, cliente, onEditar, onExcluir, onStatus
         <div>
           <div className="text-xs font-semibold tracking-wide text-[var(--text-secondary)] mb-2">Integracoes</div>
           <Button variant="secondary" size="sm" icon={Plug} onClick={onIntegracoes} fullWidth>Gerenciar integracoes</Button>
+          <div className="mt-2">
+            <Button variant="secondary" size="sm" icon={Sparkles} onClick={onIABot} fullWidth>IA do bot</Button>
+          </div>
         </div>
 
         <div>

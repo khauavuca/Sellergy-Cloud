@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Sellergy — importar planilha</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#136F4D}a:hover{color:#0C4F37}
+.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.nav{display:flex;align-items:center;gap:12px;padding:0 12px;min-height:42px;border-radius:9px;color:#3D434B;text-decoration:none;font-weight:500;font-size:14px}
+.nav:hover{background:#F1F2EF;color:#15171A}
+.nav.on{background:#E3F1EA;color:#0E5C34;font-weight:600}
+.bp,.bs,.bg{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:10px;font-weight:600;font-size:14px;text-decoration:none;cursor:pointer;font-family:inherit;box-sizing:border-box;white-space:nowrap}
+.bp{background:#136F4D;color:#fff;border:1px solid #136F4D}.bp:hover{background:#0F5C40;color:#fff}
+.bs{background:#fff;color:#15171A;border:1px solid #D5D8DC}.bs:hover{background:#F1F2EF;color:#15171A}
+.bg{background:transparent;color:#3D434B;border:1px solid transparent}.bg:hover{background:#F1F2EF}
+.card{background:#fff;border:1px solid #E3E5E8;border-radius:16px}
+td,th{padding:11px 18px;border-top:1px solid #EEF0EC;text-align:left;font-size:14px}
+th{font-size:13px;color:#5B616B;font-weight:600}
+.campo{display:flex;flex-direction:column;gap:6px}
+.campo label{font-size:14px;font-weight:600}
+.campo input{font:inherit;font-size:18px;font-weight:600;min-height:50px;padding:0 14px;border:1px solid #CDD1D6;border-radius:10px;background:#fff;box-sizing:border-box;width:100%;font-variant-numeric:tabular-nums}
+
+.t1{margin:0;font-family:'Space Grotesk',sans-serif;font-size:28px;letter-spacing:-0.02em}
+.t2{margin:0;font-size:16px}
+.mut{color:#5B616B}.sm{font-size:13px}.n{font-variant-numeric:tabular-nums}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.grow{flex:1}
+.k{padding:16px}.kl{margin:0;font-size:13px;color:#5B616B}.kv{margin:6px 0 0;font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}.kx{margin:4px 0 0;font-size:12px;color:#5B616B}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;white-space:nowrap}
+.ok{background:#E3F4EA;color:#0E5C34}.wait{background:#FDF0D9;color:#7A4A00}.bad{background:#FBE4E1;color:#8F1D12}.neu{background:#E8EAED;color:#3D434B}.info{background:#E4EEF9;color:#1D4F86}
+.chip{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 14px;border-radius:999px;border:1px solid #D5D8DC;background:#fff;font:inherit;font-size:14px;font-weight:500;cursor:pointer;color:#3D434B}
+.chip.on{background:#15171A;border-color:#15171A;color:#fff}
+.f{display:flex;flex-direction:column;gap:6px;min-width:0}
+.f label,.f .lb{font-size:13px;font-weight:600;color:#3D434B}
+.f input,.f select,.f textarea{font:inherit;font-size:15px;min-height:44px;padding:0 12px;border:1px solid #CDD1D6;border-radius:10px;background:#fff;box-sizing:border-box;width:100%}
+.f textarea{padding:10px 12px;min-height:96px;resize:vertical;line-height:1.5}
+.ajuda{font-size:12px;color:#5B616B}
+.steps{display:flex;gap:6px;flex-wrap:wrap}
+.st{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#8A9099;padding:6px 10px 6px 6px;border-radius:999px;border:1px solid transparent}
+.st b{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:#E8EAED;color:#5B616B;font-size:12px}
+.st.on{color:#15171A;background:#fff;border-color:#E3E5E8}.st.on b{background:#136F4D;color:#fff}
+.st.done{color:#0E5C34}.st.done b{background:#E3F4EA;color:#0E5C34}
+.sw{width:46px;height:28px;border-radius:999px;background:#CDD1D6;position:relative;border:0;cursor:pointer;flex-shrink:0;padding:0}
+.sw::after{content:'';position:absolute;top:4px;left:4px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left .15s}
+.sw.on{background:#136F4D}.sw.on::after{left:22px}
+.ov{position:absolute;inset:0;background:rgba(21,23,26,.42);display:flex;align-items:flex-start;justify-content:center;padding:70px 16px;z-index:5}
+.modal{background:#fff;border-radius:18px;width:min(560px,100%);padding:24px;box-sizing:border-box;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.li{display:flex;gap:12px;align-items:center;padding:12px 18px;border-top:1px solid #EEF0EC;font-size:14px}
+.av{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:12px;flex-shrink:0;background:#E3F1EA;color:#0E5C34}
+.tabs{display:flex;gap:4px;border-bottom:1px solid #E3E5E8;flex-wrap:wrap}
+.tab{min-height:44px;padding:0 14px;border:0;background:none;font:inherit;font-size:14px;font-weight:600;color:#5B616B;cursor:pointer;border-bottom:2px solid transparent}
+.tab.on{color:#136F4D;border-bottom-color:#136F4D}
+.opt{display:flex;gap:12px;align-items:flex-start;text-align:left;padding:14px;border:1px solid #D5D8DC;border-radius:12px;background:#fff;font:inherit;cursor:pointer;width:100%;box-sizing:border-box;color:#15171A}
+.opt.on{border-color:#136F4D;box-shadow:0 0 0 1px #136F4D inset;background:#F3FAF6}
+.bars{display:flex;align-items:flex-end;gap:10px;height:170px;padding:0 4px}
+.bars div{flex:1;background:#BFE0CF;border-radius:6px 6px 0 0;min-width:10px}
+.bars div.hi{background:#136F4D}
+.b5{height:5%}.b10{height:10%}.b15{height:15%}.b20{height:20%}.b25{height:25%}.b30{height:30%}.b35{height:35%}.b40{height:40%}.b45{height:45%}.b50{height:50%}.b55{height:55%}.b60{height:60%}.b65{height:65%}.b70{height:70%}.b75{height:75%}.b80{height:80%}.b85{height:85%}.b90{height:90%}.b95{height:95%}.b100{height:100%}
+.drop{border:2px dashed #CDD1D6;border-radius:14px;padding:28px;text-align:center;background:#FAFBF9}
+.ok-ic{width:64px;height:64px;border-radius:50%;background:#E3F4EA;color:#136F4D;display:inline-grid;place-items:center}
+
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #15171A; background: #F6F7F5; min-height: 1040px; display: flex; flex-wrap: wrap; position: relative">
+
+<aside style="flex: 1 1 232px; background: #fff; border-right: 1px solid #E3E5E8; padding: 18px 14px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px">
+<a href="Main.dc.html" style="display: flex; align-items: center; gap: 10px; text-decoration: none; color: #15171A; padding: 4px 8px"><span style="width: 30px; height: 30px; border-radius: 9px; background: #136F4D; color: #fff; display: grid; place-items: center; font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 17px">S</span><span style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 19px">Sellergy</span></a>
+<nav aria-label="Menu principal" style="display: flex; flex-direction: column; gap: 2px">
+<a href="Inicio.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"></path></svg>Início</a>
+<a href="Agenda.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2"></rect><path d="M3 9.5h18M8 2.5v4M16 2.5v4"></path></svg>Agenda</a>
+<a href="PDV.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14l-1 13H6z"></path><path d="M9 8V6a3 3 0 0 1 6 0v2"></path></svg>Vendas</a>
+<a href="Pedidos.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8v3H8z"></path><path d="M16 5.5h2.5V21h-13V5.5H8"></path><path d="M9 12h6M9 16h4"></path></svg>Pedidos</a>
+<a href="Clientes.dc.html" class="nav on" aria-current="page"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"></circle><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"></path><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.8c1.9.7 3.1 2.4 3.5 5.2"></path></svg>Clientes</a>
+<a href="Estoque.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"></path><path d="M3 7.5 12 12l9-4.5M12 12v9"></path></svg>Estoque</a>
+<a href="Caixa.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2"></rect><circle cx="12" cy="12" r="2.5"></circle></svg>Caixa</a>
+<a href="WhatsApp.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"></path></svg>WhatsApp</a>
+<a href="NotasFiscais.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"></path><path d="M9 8h6M9 12h6"></path></svg>Notas fiscais</a>
+<a href="Financeiro.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h15a3 3 0 0 1 3 3v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="M3 7l12-3v3M16 13.5h2"></path></svg>Financeiro</a>
+<a href="Relatorios.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"></path></svg>Relatórios</a>
+</nav>
+<div style="margin-top: auto; display: flex; flex-direction: column; gap: 10px">
+<a href="Configuracoes.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>Configurações</a>
+<div style="display: flex; gap: 10px; align-items: center; padding: 12px; border-radius: 12px; background: #F6F7F5"><span style="width: 34px; height: 34px; border-radius: 50%; background: #F2C46B; display: grid; place-items: center; font-weight: 700; font-size: 13px; color: #4A3000">ML</span><span style="font-size: 13px; line-height: 1.3; min-width: 0"><span style="display: block; font-weight: 600">Clínica Lumi Estética</span><span style="color: #5B616B">Marina · dona</span></span></div>
+</div>
+</aside>
+
+<main style="flex: 999 1 560px; min-width: 0; padding: 24px 28px 40px; box-sizing: border-box; display: flex; flex-direction: column; gap: 18px">
+<div class="row">
+<a href="Clientes.dc.html" class="bg"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"></path></svg>Clientes</a>
+<h1 class="t1 grow">Importar planilha</h1>
+<div class="row" style="gap: 6px"><sc-for list="{{tipos}}" as="t" hint-placeholder-count="3"><button type="button" class="{{t.cls}}" onClick="{{t.pick}}">{{t.t}}</button></sc-for></div>
+</div>
+<div class="steps"><sc-for list="{{passos}}" as="p" hint-placeholder-count="4"><span class="{{p.cls}}"><b>{{p.n}}</b>{{p.t}}</span></sc-for></div>
+
+<section class="card" style="padding: 22px">
+<sc-if value="{{e1}}" hint-placeholder-val="{{ true }}">
+<div class="drop">
+<svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width: 32px; height: 32px; color: #5B616B"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"></path></svg>
+<p style="margin: 10px 0 0; font-weight: 600; font-size: 16px">Arraste a planilha de {{tipoNome}} aqui</p>
+<p class="sm mut" style="margin: 4px 0 14px">Excel, CSV ou Google Planilhas. Pode vir do sistema antigo, do caderno passado a limpo ou dos contatos do celular.</p>
+<div class="row" style="justify-content: center"><button type="button" class="bp" onClick="{{enviar}}">Escolher arquivo</button><button type="button" class="bs">Baixar modelo</button></div>
+</div>
+<div class="row" style="margin-top: 16px; padding: 14px; border-radius: 12px; background: #F6F7F5"><span class="grow sm"><strong>Vem de outro sistema?</strong> Trellis, Avec, Belasis, Simples Agenda: exporte os clientes lá e jogue aqui, a gente reconhece as colunas.</span></div>
+</sc-if>
+
+<sc-if value="{{e2}}" hint-placeholder-val="{{ false }}">
+<div class="row"><h2 class="t2 grow">clientes_lumi.xlsx · 418 linhas</h2><span class="pill ok">Reconhecemos 5 de 6 colunas</span></div>
+<div style="overflow-x: auto; margin-top: 14px"><table style="width: 100%; border-collapse: collapse; min-width: 640px">
+<thead><tr><th>Coluna da planilha</th><th>Exemplo</th><th>Vai para</th></tr></thead>
+<tbody><sc-for list="{{colunas}}" as="c" hint-placeholder-count="6"><tr><td style="font-weight: 600">{{c.col}}</td><td class="mut">{{c.ex}}</td><td><div class="f" style="max-width: 260px"><select aria-label="Campo de destino"><option>{{c.dest}}</option></select></div></td></tr></sc-for></tbody>
+</table></div>
+<p class="ajuda" style="margin: 10px 0 0">"Obs" não tem par certo. Mandamos pra Anotações da ficha.</p>
+</sc-if>
+
+<sc-if value="{{e3}}" hint-placeholder-val="{{ false }}">
+<div class="grid">
+<div class="card k" style="background: #E3F1EA; border-color: #BFE0CF"><p class="kl" style="color: #0E5C34">Prontos pra entrar</p><p class="kv" style="color: #0E5C34">{{prontos}}</p></div>
+<div class="card k"><p class="kl">Já existem (vamos juntar)</p><p class="kv">6</p></div>
+<div class="card k"><p class="kl">Precisam de atenção</p><p class="kv">{{problemas}}</p></div>
+</div>
+<h2 class="t2" style="margin-top: 18px">Precisam de atenção</h2>
+<div style="margin-top: 10px; border: 1px solid #E3E5E8; border-radius: 12px; overflow: hidden">
+<sc-for list="{{erros}}" as="r" hint-placeholder-count="3"><div class="row" style="padding: 12px 14px; border-top: 1px solid #EEF0EC; font-size: 14px"><span class="mut n" style="width: 70px">linha {{r.l}}</span><strong style="min-width: 160px">{{r.n}}</strong><span class="grow mut">{{r.p}}</span><sc-if value="{{r.aberto}}" hint-placeholder-val="{{ true }}"><button type="button" class="bs" onClick="{{r.fix}}">{{r.acao}}</button><button type="button" class="bg" onClick="{{r.pular}}">Pular</button></sc-if><sc-if value="{{r.feito}}" hint-placeholder-val="{{ false }}"><span class="{{r.cls}}">{{r.st}}</span></sc-if></div></sc-for>
+</div>
+<div class="row" style="margin-top: 14px"><span class="grow sm"><strong>Mandar mensagem de boas-vindas no WhatsApp</strong><span class="ajuda" style="display: block">Só pra quem já autorizou receber mensagens. Desligado é mais seguro na primeira importação.</span></span><button type="button" class="sw" aria-label="Boas-vindas"></button></div>
+</sc-if>
+
+<sc-if value="{{e4}}" hint-placeholder-val="{{ false }}">
+<div style="text-align: center; padding: 24px 10px">
+<span class="ok-ic"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width: 30px; height: 30px; stroke-width: 2.2"><path d="m5 12.5 4.5 4.5L19 7.5"></path></svg></span>
+<h2 style="margin: 16px 0 0; font-family: 'Space Grotesk', sans-serif; font-size: 24px">{{prontosFim}} clientes importados</h2>
+<p class="mut" style="margin: 8px auto 0; max-width: 520px; line-height: 1.5">6 juntados com fichas que já existiam. Encontramos 38 que não vêm há mais de 60 dias e 12 que fazem aniversário em dezembro.</p>
+<div class="row" style="justify-content: center; margin-top: 18px"><a href="Clientes.dc.html" class="bp">Ver clientes</a><a href="NovaCampanha.dc.html" class="bs">Chamar os sumidos</a><button type="button" class="bg">Desfazer importação</button></div>
+</div>
+</sc-if>
+
+<sc-if value="{{navegando}}" hint-placeholder-val="{{ false }}">
+<div class="row" style="margin-top: 22px; padding-top: 16px; border-top: 1px solid #EEF0EC"><button type="button" class="bg" onClick="{{voltar}}">Voltar</button><span class="grow"></span><button type="button" class="bp" onClick="{{avancar}}">{{avancarTxt}}</button></div>
+</sc-if>
+</section>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1040}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { e: 1, tipo: 0, r: {} }; }
+  renderVals() {
+    const s = this.state; const set = (o) => this.setState(o);
+    const nomes = ['Arquivo', 'Colunas', 'Revisão', 'Pronto'];
+    const E = [
+      { l: 37, n: 'Cláudia Reis', p: 'Celular com 8 dígitos: 9812-4410', acao: 'Pôr 11 e 9 na frente' },
+      { l: 112, n: 'Fernanda C.', p: 'Mesmo celular que Fernanda Castro', acao: 'Juntar as duas' },
+      { l: 290, n: '(sem nome)', p: 'Linha sem nome, só celular', acao: 'Usar "Cliente 290"' },
+    ];
+    const res = (i) => s.r[i];
+    const resolvidos = E.filter((e, i) => res(i) === 'fix').length;
+    return {
+      tipos: ['Clientes', 'Produtos', 'Serviços'].map((t, i) => ({ t, cls: 'chip' + (s.tipo === i ? ' on' : ''), pick: () => set({ tipo: i }) })),
+      tipoNome: ['clientes', 'produtos', 'serviços'][s.tipo],
+      passos: nomes.map((t, i) => ({ t, n: i + 1 < s.e ? '✓' : i + 1, cls: 'st' + (i + 1 === s.e ? ' on' : i + 1 < s.e ? ' done' : '') })),
+      e1: s.e === 1, e2: s.e === 2, e3: s.e === 3, e4: s.e === 4, navegando: s.e === 2 || s.e === 3,
+      enviar: () => set({ e: 2 }),
+      colunas: [
+        { col: 'Nome', ex: 'Paula Rocha', dest: 'Nome' },
+        { col: 'Cel', ex: '11998124410', dest: 'Celular (WhatsApp)' },
+        { col: 'Nasc', ex: '22/04/1990', dest: 'Aniversário' },
+        { col: 'Ult. visita', ex: '10/11/2026', dest: 'Última visita' },
+        { col: 'E-mail', ex: 'paula@gmail.com', dest: 'E-mail' },
+        { col: 'Obs', ex: 'pele sensível', dest: 'Anotações' },
+      ],
+      prontos: 409 + resolvidos, problemas: E.filter((e, i) => !res(i)).length,
+      erros: E.map((e, i) => ({ ...e, aberto: !res(i), feito: !!res(i), st: res(i) === 'fix' ? 'Resolvido' : 'Pulado', cls: 'pill ' + (res(i) === 'fix' ? 'ok' : 'neu'),
+        fix: () => set({ r: { ...s.r, [i]: 'fix' } }), pular: () => set({ r: { ...s.r, [i]: 'skip' } }) })),
+      prontosFim: 409 + resolvidos,
+      avancarTxt: s.e === 3 ? 'Importar ' + (409 + resolvidos) + ' clientes' : 'Continuar',
+      avancar: () => set({ e: s.e + 1 }), voltar: () => set({ e: Math.max(1, s.e - 1) }),
+    };
+  }
+}
+</script>
+</body>
+</html>

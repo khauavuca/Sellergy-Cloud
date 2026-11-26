@@ -1,6 +1,8 @@
 // Adapter Asaas — implementa ProvedorPagamento.
 // Auth: header `access_token: <apiKey>`. Base prod: https://api.asaas.com/v3
-// (sandbox: https://sandbox.asaas.com/api/v3).
+// (sandbox: https://api-sandbox.asaas.com/v3).
+// Toda cobranca do Asaas precisa de um customer: com `pagador.cpfCnpj` o
+// adapter cria o customer antes.
 // Fluxo Pix: POST /payments (billingType PIX) → GET /payments/{id}/pixQrCode.
 // Webhook: { event:'PAYMENT_RECEIVED'|..., payment:{...} } + token próprio no
 // header `asaas-access-token` (definido ao cadastrar o webhook).
@@ -9,32 +11,54 @@ const crypto = require('crypto');
 const { ProvedorPagamento, STATUS } = require('./ProvedorPagamento');
 
 const BASE_PROD = 'https://api.asaas.com/v3';
-const BASE_SANDBOX = 'https://sandbox.asaas.com/api/v3';
+const BASE_SANDBOX = 'https://api-sandbox.asaas.com/v3';
 
+// Status do payment no Asaas -> status normalizado. Regras:
+// - estorno pedido/em andamento continua PAGO ate o Asaas confirmar REFUNDED
+//   (o estorno pode falhar e o dinheiro ainda esta na conta);
+// - chargeback (pedido, em disputa, aguardando reversao) vira ESTORNADO: o
+//   valor fica bloqueado e nao deve contar como recebido;
+// - negativacao (DUNNING): pedida = EXPIRADO (venceu e nao pagou); recebida =
+//   PAGO (pagou pela recuperacao).
 function normalizarStatus(s) {
   switch (s) {
     case 'RECEIVED':
     case 'CONFIRMED':
-    case 'RECEIVED_IN_CASH': return STATUS.PAGO;
+    case 'RECEIVED_IN_CASH':
+    case 'DUNNING_RECEIVED':
+    case 'REFUND_REQUESTED':
+    case 'REFUND_IN_PROGRESS': return STATUS.PAGO;
     case 'PENDING':
     case 'AWAITING_RISK_ANALYSIS': return STATUS.PENDENTE;
-    case 'OVERDUE': return STATUS.EXPIRADO;
+    case 'OVERDUE':
+    case 'DUNNING_REQUESTED': return STATUS.EXPIRADO;
     case 'REFUNDED':
-    case 'REFUND_REQUESTED':
-    case 'CHARGEBACK_REQUESTED': return STATUS.ESTORNADO;
+    case 'CHARGEBACK_REQUESTED':
+    case 'CHARGEBACK_DISPUTE':
+    case 'AWAITING_CHARGEBACK_REVERSAL': return STATUS.ESTORNADO;
     case 'DELETED':
     case 'CANCELED': return STATUS.CANCELADO;
     default: return STATUS.PENDENTE;
   }
 }
 
-// event do webhook Asaas → status normalizado
+// event do webhook Asaas -> status normalizado (so informativo: o webhook
+// sempre consulta o status real antes de aplicar).
+const STATUS_POR_EVENTO = {
+  PAYMENT_RECEIVED: 'RECEIVED',
+  PAYMENT_CONFIRMED: 'CONFIRMED',
+  PAYMENT_OVERDUE: 'OVERDUE',
+  PAYMENT_DELETED: 'DELETED',
+  PAYMENT_REFUNDED: 'REFUNDED',
+  PAYMENT_REFUND_IN_PROGRESS: 'REFUND_IN_PROGRESS',
+  PAYMENT_CHARGEBACK_REQUESTED: 'CHARGEBACK_REQUESTED',
+  PAYMENT_CHARGEBACK_DISPUTE: 'CHARGEBACK_DISPUTE',
+  PAYMENT_AWAITING_CHARGEBACK_REVERSAL: 'AWAITING_CHARGEBACK_REVERSAL',
+  PAYMENT_DUNNING_REQUESTED: 'DUNNING_REQUESTED',
+  PAYMENT_DUNNING_RECEIVED: 'DUNNING_RECEIVED',
+};
 function statusDoEvento(ev) {
-  if (ev === 'PAYMENT_RECEIVED' || ev === 'PAYMENT_CONFIRMED') return STATUS.PAGO;
-  if (ev === 'PAYMENT_REFUNDED') return STATUS.ESTORNADO;
-  if (ev === 'PAYMENT_OVERDUE') return STATUS.EXPIRADO;
-  if (ev === 'PAYMENT_DELETED') return STATUS.CANCELADO;
-  return STATUS.PENDENTE;
+  return normalizarStatus(STATUS_POR_EVENTO[ev] || 'PENDING');
 }
 
 class AsaasAdapter extends ProvedorPagamento {
@@ -46,13 +70,46 @@ class AsaasAdapter extends ProvedorPagamento {
 
   _vencimentoPadrao() { return new Date(Date.now() + 86_400_000).toISOString().slice(0, 10); }
 
+  /**
+   * Resolve o customer do Asaas de quem paga. Aceita um id pronto
+   * (`pagador.clienteExternoId`, ou o legado `pagador.documento` com cara de
+   * "cus_..."); com CPF/CNPJ, cria o customer. Sem nada disso, em modo live o
+   * Asaas recusaria a cobranca — falha antes, com mensagem clara.
+   */
+  async _customer(pagador, refExterna) {
+    const idPronto = pagador?.clienteExternoId
+      || (typeof pagador?.documento === 'string' && pagador.documento.startsWith('cus_') ? pagador.documento : null);
+    if (idPronto) return idPronto;
+    const doc = String(pagador?.cpfCnpj || '').replace(/\D/g, '');
+    if (doc.length !== 11 && doc.length !== 14) {
+      if (this.modo === 'fixture') return 'cus_fixture';
+      throw Object.assign(new Error('O Asaas pede o CPF de quem vai pagar.'), { status: 422, codigo: 'PAGADOR_SEM_CPF' });
+    }
+    const req = {
+      url: `${this._base}/customers`,
+      metodo: 'POST',
+      headers: this._headers(),
+      corpo: {
+        name: String(pagador?.nome || 'Cliente').slice(0, 100),
+        cpfCnpj: doc,
+        mobilePhone: String(pagador?.telefone || '').replace(/\D/g, '').slice(-11) || undefined,
+        email: pagador?.email || undefined,
+        externalReference: refExterna,
+        notificationDisabled: true, // o aviso sai pelo WhatsApp do negocio
+      },
+    };
+    const c = await this._executar(req, () => ({ id: `cus_${doc}` }));
+    return String(c.id);
+  }
+
   async criarCobrancaPix({ valor, descricao, refExterna, vencimento, pagador }) {
+    const customer = await this._customer(pagador, refExterna);
     const reqPg = {
       url: `${this._base}/payments`,
       metodo: 'POST',
       headers: this._headers(),
       corpo: {
-        customer: pagador?.documento || undefined, // id do customer Asaas, quando houver
+        customer,
         billingType: 'PIX',
         value: Number(valor),
         dueDate: (vencimento || '').slice(0, 10) || this._vencimentoPadrao(),
@@ -85,12 +142,14 @@ class AsaasAdapter extends ProvedorPagamento {
     };
   }
 
-  async criarLink({ valor, descricao, refExterna, vencimento }) {
+  async criarLink({ valor, descricao, refExterna, vencimento, pagador }) {
+    const customer = await this._customer(pagador, refExterna);
     const req = {
       url: `${this._base}/payments`,
       metodo: 'POST',
       headers: this._headers(),
       corpo: {
+        customer,
         billingType: 'UNDEFINED', // deixa o pagador escolher (Pix/boleto/cartão)
         value: Number(valor),
         dueDate: (vencimento || '').slice(0, 10) || this._vencimentoPadrao(),
@@ -113,10 +172,14 @@ class AsaasAdapter extends ProvedorPagamento {
     };
   }
 
-  async consultarStatus(provedorCobrancaId) {
-    const req = { url: `${this._base}/payments/${provedorCobrancaId}`, headers: this._headers() };
-    const raw = await this._executar(req, () => ({ id: provedorCobrancaId, status: 'RECEIVED', paymentDate: new Date().toISOString().slice(0, 10) }));
-    return { status: normalizarStatus(raw.status), pagoEm: raw.paymentDate || undefined };
+  async consultarStatus(provedorCobrancaId, { refExterna } = {}) {
+    const req = { url: `${this._base}/payments/${encodeURIComponent(provedorCobrancaId)}`, headers: this._headers() };
+    const raw = await this._executar(req, () => ({ id: provedorCobrancaId, status: 'RECEIVED', paymentDate: new Date().toISOString().slice(0, 10), externalReference: refExterna }));
+    return {
+      status: normalizarStatus(raw.status),
+      pagoEm: raw.paymentDate || raw.clientPaymentDate || undefined,
+      refExterna: raw.externalReference ? String(raw.externalReference) : undefined,
+    };
   }
 
   async estornar(provedorCobrancaId) {
@@ -140,6 +203,7 @@ class AsaasAdapter extends ProvedorPagamento {
     const p = body.payment;
     return {
       provedorCobrancaId: String(p.id),
+      refExterna: p.externalReference ? String(p.externalReference) : undefined,
       status: statusDoEvento(body.event),
       pagoEm: p.paymentDate || p.confirmedDate || undefined,
       evento: body.event,
@@ -148,3 +212,5 @@ class AsaasAdapter extends ProvedorPagamento {
 }
 
 module.exports = AsaasAdapter;
+module.exports.normalizarStatus = normalizarStatus;
+module.exports.statusDoEvento = statusDoEvento;

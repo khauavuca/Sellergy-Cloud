@@ -1,6 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
+// Os testes conferem o padrao de producao: o modulo le o ambiente ao carregar,
+// entao um .env de desenvolvimento (ex.: COOKIE_SAMESITE=lax) nao pode vazar.
+delete process.env.COOKIE_SAMESITE;
+delete process.env.COOKIE_SECURE;
+delete process.env.COOKIE_DOMINIO;
+
 const {
   NOME_SESSAO,
   NOME_CSRF,
@@ -110,5 +116,33 @@ test('limparSessao apaga os dois cookies com os mesmos atributos', () => {
     assert.strictEqual(apagado.opcoes.path, '/');
     assert.strictEqual(apagado.opcoes.sameSite, 'none');
     assert.strictEqual(apagado.opcoes.secure, true);
+  }
+});
+
+test('painel (crm.) e site usam cookies separados; localhost usa o comum', () => {
+  const { nomeSessao, nomeCsrf } = require('./sessaoCookie');
+  const antes = process.env.ADMIN_ORIGENS;
+  process.env.ADMIN_ORIGENS = 'https://crm.sellergycloud.com,http://localhost:5173';
+  try {
+    const r = (origin) => ({ headers: origin ? { origin } : {} });
+    assert.strictEqual(nomeSessao(r('https://crm.sellergycloud.com')), 'sellergy_sessao_painel');
+    assert.strictEqual(nomeCsrf(r('https://crm.sellergycloud.com/')), 'sellergy_csrf_painel');
+    assert.strictEqual(nomeSessao(r('https://sellergycloud.com')), 'sellergy_sessao');
+    assert.strictEqual(nomeSessao(r('http://localhost:5173')), 'sellergy_sessao');
+    assert.strictEqual(nomeSessao(r()), 'sellergy_sessao');
+  } finally {
+    process.env.ADMIN_ORIGENS = antes;
+  }
+});
+
+test('na API do painel (API_PAINEL_HOSTS) o cookie e do painel mesmo sem Origin', () => {
+  const { nomeSessao } = require('./sessaoCookie');
+  const antes = process.env.API_PAINEL_HOSTS;
+  process.env.API_PAINEL_HOSTS = 'api-crm.sellergycloud.com';
+  try {
+    assert.strictEqual(nomeSessao({ hostname: 'api-crm.sellergycloud.com', headers: {} }), 'sellergy_sessao_painel');
+    assert.strictEqual(nomeSessao({ hostname: 'api.sellergycloud.com', headers: {} }), 'sellergy_sessao');
+  } finally {
+    if (antes === undefined) delete process.env.API_PAINEL_HOSTS; else process.env.API_PAINEL_HOSTS = antes;
   }
 });

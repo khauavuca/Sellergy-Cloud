@@ -16,12 +16,26 @@ const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 // Producer e Worker exigem opcoes de connection diferentes:
 //  - Producer: aceita defaults
 //  - Worker  : exige `maxRetriesPerRequest: null` (BullMQ usa BLOCKING commands)
+//
+// Toda conexao sai com listener de 'error': sem ele, uma queda do Redis vira
+// excecao nao tratada e derruba o processo (API ou worker). O ioredis segue
+// reconectando sozinho; o log e limitado a 1 a cada 30 s por processo.
+let ultimoErroRedis = 0;
+function logarErroRedis(err) {
+  const agora = Date.now();
+  if (agora - ultimoErroRedis < 30_000) return;
+  ultimoErroRedis = agora;
+  console.error('[redis] conexao com problema (reconectando):', err?.message || err);
+}
+
 function criarConexaoRedis({ paraWorker = false } = {}) {
-  return new IORedis(REDIS_URL, {
+  const conexao = new IORedis(REDIS_URL, {
     maxRetriesPerRequest: paraWorker ? null : 3,
     enableReadyCheck: !paraWorker,
     lazyConnect: false,
   });
+  conexao.on('error', logarErroRedis);
+  return conexao;
 }
 
 // ==========================================
@@ -43,6 +57,7 @@ function obterFilaCampanhaDisparo() {
         removeOnFail: 1000,
       },
     });
+    filaCampanhaDisparo.on('error', logarErroRedis);
   }
   return filaCampanhaDisparo;
 }
@@ -58,15 +73,12 @@ async function enfileirarEnvioCampanha(campanhaEnvioId) {
 // espacamento MUITO mais conservador entre envios do que a Meta precisa.
 // BullMQ so aceita 1 limiter por Worker, entao "usar a mesma fila com uma
 // regra diferente" nao existe — precisa ser uma fila separada mesmo.
-// O espacamento real vem do `delay` calculado POR JOB (nao so um limiter
-// estourando em rajada) — intervalo-base + jitter aleatorio, pra parecer
-// mais humano. Risco de banimento do numero em disparo de massa por canal
-// nao oficial e real (o proprio usuario reconheceu), entao aqui a prioridade
-// e ir devagar, nao rapido.
+// O espacamento NAO e decidido aqui: cada job, na hora de rodar, pede a vez
+// ao "envio humano" (services/baileys/envioHumano.js), que aplica cota
+// diaria com aquecimento do numero, horario comercial e intervalo aleatorio
+// entre mensagens. Se nao e a vez, o job volta pra fila com o atraso certo.
 // ==========================================
 const NOME_FILA_CAMPANHA_BAILEYS = 'campanha-disparo-baileys';
-const BAILEYS_INTERVALO_BASE_MS = 30_000; // ~30s entre envios
-const BAILEYS_JITTER_MS = 10_000; // + ate 10s de variacao aleatoria
 
 let filaCampanhaDisparoBaileys = null;
 function obterFilaCampanhaDisparoBaileys() {
@@ -74,25 +86,42 @@ function obterFilaCampanhaDisparoBaileys() {
     filaCampanhaDisparoBaileys = new Queue(NOME_FILA_CAMPANHA_BAILEYS, {
       connection: criarConexaoRedis(),
       defaultJobOptions: {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5000 },
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 60_000 },
         removeOnComplete: 500,
         removeOnFail: 1000,
       },
     });
+    filaCampanhaDisparoBaileys.on('error', logarErroRedis);
   }
   return filaCampanhaDisparoBaileys;
 }
 
-/**
- * @param {string} campanhaEnvioId
- * @param {number} indiceNoLote  posicao do lead dentro deste disparo (0, 1, 2...)
- *   — cada indice espera mais que o anterior, nao todos ao mesmo tempo.
- */
-async function enfileirarEnvioCampanhaBaileys(campanhaEnvioId, indiceNoLote) {
-  const jitter = Math.floor(Math.random() * BAILEYS_JITTER_MS);
-  const delay = indiceNoLote * BAILEYS_INTERVALO_BASE_MS + jitter;
-  await obterFilaCampanhaDisparoBaileys().add('enviar', { campanhaEnvioId }, { jobId: campanhaEnvioId, delay });
+async function enfileirarEnvioCampanhaBaileys(campanhaEnvioId) {
+  await obterFilaCampanhaDisparoBaileys().add('enviar', { campanhaEnvioId }, { jobId: campanhaEnvioId });
+}
+
+// ==========================================
+// AVISO-PLATAFORMA — WhatsApp do proprio Sellergy pros clientes (fatura,
+// pagamento confirmado, teste acabando). Quem gera o aviso pode ser a API
+// (webhook do Asaas), mas o socket do QR Code so existe no worker.
+// ==========================================
+const NOME_FILA_AVISO_PLATAFORMA = 'aviso-plataforma';
+
+let filaAvisoPlataforma = null;
+function obterFilaAvisoPlataforma() {
+  if (!filaAvisoPlataforma) {
+    filaAvisoPlataforma = new Queue(NOME_FILA_AVISO_PLATAFORMA, {
+      connection: criarConexaoRedis(),
+      defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 30_000 }, removeOnComplete: 200, removeOnFail: 200 },
+    });
+    filaAvisoPlataforma.on('error', logarErroRedis);
+  }
+  return filaAvisoPlataforma;
+}
+
+async function enfileirarAvisoPlataforma(clienteId, texto) {
+  await obterFilaAvisoPlataforma().add('avisar', { clienteId, texto });
 }
 
 // ==========================================
@@ -121,6 +150,7 @@ function obterFilaBaileysComando() {
       connection: criarConexaoRedis(),
       defaultJobOptions: { attempts: 1, removeOnComplete: 20, removeOnFail: 20 },
     });
+    filaBaileysComando.on('error', logarErroRedis);
   }
   return filaBaileysComando;
 }
@@ -129,11 +159,35 @@ async function enfileirarComandoBaileys(acao, botId) {
   await obterFilaBaileysComando().add(acao, { acao, botId });
 }
 
+// ==========================================
+// WHATSAPP-TENANT — mensagem do numero do NEGOCIO pro cliente final, gerada
+// na API (oferta de encaixe, Pix do pedido, convite...). Envio no worker.
+// ==========================================
+const NOME_FILA_WHATSAPP_TENANT = 'whatsapp-tenant';
+
+let filaWhatsappTenant = null;
+function obterFilaWhatsappTenant() {
+  if (!filaWhatsappTenant) {
+    filaWhatsappTenant = new Queue(NOME_FILA_WHATSAPP_TENANT, {
+      connection: criarConexaoRedis(),
+      defaultJobOptions: { attempts: 4, backoff: { type: 'exponential', delay: 20_000 }, removeOnComplete: 500, removeOnFail: 500 },
+    });
+    filaWhatsappTenant.on('error', logarErroRedis);
+  }
+  return filaWhatsappTenant;
+}
+
+async function enfileirarMensagemTenant(msg) {
+  await obterFilaWhatsappTenant().add('enviar', msg);
+}
+
 // Fecha as filas/conexões no shutdown.
 async function fecharFilas() {
   if (filaCampanhaDisparo) await filaCampanhaDisparo.close();
   if (filaCampanhaDisparoBaileys) await filaCampanhaDisparoBaileys.close();
   if (filaBaileysComando) await filaBaileysComando.close();
+  if (filaAvisoPlataforma) await filaAvisoPlataforma.close();
+  if (filaWhatsappTenant) await filaWhatsappTenant.close();
 }
 
 module.exports = {
@@ -142,6 +196,10 @@ module.exports = {
   enfileirarEnvioCampanha,
   enfileirarEnvioCampanhaBaileys,
   enfileirarComandoBaileys,
+  enfileirarAvisoPlataforma,
+  enfileirarMensagemTenant,
+  NOME_FILA_WHATSAPP_TENANT,
+  NOME_FILA_AVISO_PLATAFORMA,
   NOME_FILA_CAMPANHA,
   NOME_FILA_CAMPANHA_BAILEYS,
   NOME_FILA_BAILEYS_COMANDO,

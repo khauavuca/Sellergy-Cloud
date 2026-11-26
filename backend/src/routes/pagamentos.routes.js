@@ -20,6 +20,7 @@ const {
 } = require('../adapters/pagamento');
 const { aplicarStatusCobranca, CAMPOS_COBRANCA } = require('../services/cobrancaPagamento');
 const { provedorDoTenant, criarCobranca } = require('../services/pagamentoService');
+const { exigeCpfCnpj } = require('../services/pagadorCobranca');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -38,7 +39,8 @@ roteador.get('/config', async (req, res) => {
       where: { clienteId: req.usuario.clienteId },
       select: { provedor: true, credencialId: true, ativo: true, atualizadoEm: true },
     });
-    res.json(config || null);
+    // exigeCpfCnpj: a tela de Nova cobranca mostra o campo CPF/CNPJ (Asaas).
+    res.json(config ? { ...config, exigeCpfCnpj: exigeCpfCnpj(config.provedor) } : null);
   } catch (e) {
     console.error('[pagamentos/config get]', e);
     res.status(500).json({ erro: 'Erro ao carregar configuracao de pagamento.' });
@@ -106,7 +108,7 @@ roteador.get('/cobrancas', async (req, res) => {
 roteador.post('/cobrancas', async (req, res) => {
   try {
     const clienteId = req.usuario.clienteId;
-    const { origem, refId, valor, metodo, descricao, vencimento, pagador } = req.body || {};
+    const { origem, refId, valor, metodo, descricao, vencimento, pagador, leadId } = req.body || {};
 
     const valorNum = Number(valor);
     if (!Number.isFinite(valorNum) || valorNum <= 0) {
@@ -124,7 +126,10 @@ roteador.post('/cobrancas', async (req, res) => {
     // Nucleo (cria PENDENTE, chama o PSP, atualiza com o resultado) vive em
     // services/pagamentoService.js — reusado tambem pela ferramenta do bot.
     const resultado = await criarCobranca({
-      clienteId, origem: org, refId: refId || null, valor: valorNum, metodo: met, descricao, vencimento, pagador,
+      clienteId, origem: org, refId: refId || null, valor: valorNum, metodo: met, descricao, vencimento,
+      pagador: pagador && typeof pagador === 'object' ? pagador : undefined,
+      // Lead (cliente final) opcional: completa nome/telefone/CPF do pagador.
+      leadId: typeof leadId === 'string' && leadId ? leadId : null,
     });
     // Filtra de volta pro mesmo contrato de sempre (o service devolve o
     // registro completo + qrCodeBase64; a rota HTTP nunca expos clienteId
@@ -134,7 +139,7 @@ roteador.post('/cobrancas', async (req, res) => {
     );
     res.status(201).json(camposFiltrados);
   } catch (e) {
-    if (e.status) return res.status(e.status).json({ erro: e.message });
+    if (e.status) return res.status(e.status).json({ erro: e.message, codigo: e.codigo, campos: e.campos });
     console.error('[pagamentos/cobrancas create]', e);
     res.status(500).json({ erro: 'Erro ao criar cobranca.' });
   }

@@ -5,25 +5,33 @@
 // do JWT (ou do query.clienteId quando o solicitante e ADMIN).
 
 const prisma = require('../prisma');
+const R = require('../financeiro/regras');
 
 // =====================================================================
 // Helpers de periodo
 // =====================================================================
 // O front passa `?inicio=ISO&fim=ISO` (ou um dos presets).
 // Default: ultimos 30 dias (incluindo hoje), exclusive de fim+1d.
+// "YYYY-MM-DD" vira inicio/fim do dia em Brasilia; ISO completo e usado
+// como veio. Data invalida ou inicio depois do fim -> 422 (comPeriodoValido).
 function resolverPeriodo(query) {
-  const fim = query.fim ? new Date(query.fim) : new Date();
-  const inicio = query.inicio ? new Date(query.inicio) : (() => {
-    const d = new Date(fim);
-    d.setDate(d.getDate() - 29); // 30 dias inclusivos
-    d.setHours(0, 0, 0, 0);
-    return d;
-  })();
-  // fim sempre vai ate fim do dia
-  const fimDia = new Date(fim);
-  fimDia.setHours(23, 59, 59, 999);
-  return { inicio, fim: fimDia };
+  const p = R.lerPeriodo({ inicio: query.inicio, fim: query.fim }, { padraoDias: 30 });
+  if (!p.ok) throw Object.assign(new Error(p.erro), { status: 422 });
+  return { inicio: p.inicio, fim: p.fim };
 }
+
+// Valida o periodo antes de entrar no relatorio (que trata erro como 500).
+function comPeriodoValido(fn) {
+  return (req, res) => {
+    const p = R.lerPeriodo({ inicio: req.query.inicio, fim: req.query.fim }, { padraoDias: 30 });
+    if (!p.ok) return res.status(422).json({ erro: p.erro });
+    return fn(req, res);
+  };
+}
+
+// Movimentacao de VENDA so conta se a venda esta concluida (cancelada ou
+// estornada sai do CMV e dos rankings; saida manual sem venda tambem).
+const VENDA_CONCLUIDA = { venda: { is: { status: 'COMPLETED' } } };
 
 // Calcula periodo anterior do mesmo tamanho (pra comparar "vs anterior").
 function periodoAnterior({ inicio, fim }) {
@@ -97,6 +105,7 @@ async function visaoExecutiva(req, res) {
           tipo: 'VENDA',
           data: { gte: periodo.inicio, lte: periodo.fim },
           variacao: { produto: { clienteId } },
+          ...VENDA_CONCLUIDA,
         },
         select: {
           quantidade: true,
@@ -131,6 +140,7 @@ async function visaoExecutiva(req, res) {
           tipo: 'VENDA',
           data: { gte: periodo.inicio, lte: periodo.fim },
           variacao: { produto: { clienteId } },
+          ...VENDA_CONCLUIDA,
         },
         select: {
           quantidade: true,
@@ -622,20 +632,23 @@ async function relatorioFinanceiro(req, res) {
 
       // Indice de eficacia (mesma logica do dashboard financeiro)
       (async () => {
-        const seteDiasAtras = new Date(hoje.getTime() - 7 * 24 * 60 * 60 * 1000);
+        // Das receitas que venceram nos ultimos 7 dias (nao canceladas),
+        // quantas ja foram pagas. Nunca passa de 100%.
+        const hojeBRT = R.lerLimite(R.diaBRT(hoje), 'inicio', 'Hoje').data;
+        const seteDiasAtras = new Date(hojeBRT.getTime() - 7 * R.DIA_MS);
         const [recuperados, totalVencidosSemana, saldoEmRiscoAg] = await Promise.all([
           prisma.lancamentoFinanceiro.count({
-            where: { clienteId, status: 'PAGO', atualizadoEm: { gte: seteDiasAtras }, dataVencimento: { lt: hoje } },
+            where: { clienteId, tipo: 'RECEITA', status: 'PAGO', dataVencimento: { gte: seteDiasAtras, lt: hojeBRT } },
           }),
           prisma.lancamentoFinanceiro.count({
-            where: { clienteId, tipo: 'RECEITA', dataVencimento: { gte: seteDiasAtras, lt: hoje } },
+            where: { clienteId, tipo: 'RECEITA', status: { not: 'CANCELADO' }, dataVencimento: { gte: seteDiasAtras, lt: hojeBRT } },
           }),
           prisma.lancamentoFinanceiro.aggregate({
             where: { clienteId, tipo: 'RECEITA', status: 'PENDENTE', dataVencimento: { lt: hoje } },
             _sum: { valor: true }, _count: true,
           }),
         ]);
-        const indiceEficacia = totalVencidosSemana > 0 ? (recuperados / totalVencidosSemana) * 100 : 0;
+        const indiceEficacia = R.indiceEficacia(recuperados, totalVencidosSemana);
         const saldoEmRisco = saldoEmRiscoAg._sum.valor || 0;
         return {
           saldoEmRisco,
@@ -828,12 +841,13 @@ async function relatorioVendas(req, res) {
           vendaId: { not: null },
           data: { gte: periodo.inicio, lte: periodo.fim },
           variacao: { produto: { clienteId } },
-          ...(filtroOrigem || filtroMetodo
-            ? { venda: {
-                ...(filtroMetodo ? { metodoPagamento: filtroMetodo } : {}),
-                ...filtroLead,
-              } }
-            : {}),
+          venda: {
+            is: {
+              status: 'COMPLETED',
+              ...(filtroMetodo ? { metodoPagamento: filtroMetodo } : {}),
+              ...filtroLead,
+            },
+          },
         },
         include: {
           variacao: {
@@ -930,11 +944,28 @@ async function relatorioVendas(req, res) {
     }
 
     // ============== POR CATEGORIA ==============
+    // Valor = o que foi VENDIDO (Venda.valor, com desconto), repartido entre
+    // os itens da venda proporcional a qtd x preco de tabela. Antes usava o
+    // preco atual do produto e somava vendas canceladas.
+    const vendaPorId = new Map(vendas.map((v) => [v.id, v]));
+    const movsPorVenda = new Map();
+    for (const m of movimentacoesVenda) {
+      if (!vendaPorId.has(m.vendaId)) continue;
+      if (!movsPorVenda.has(m.vendaId)) movsPorVenda.set(m.vendaId, []);
+      movsPorVenda.get(m.vendaId).push(m);
+    }
+    const valorVendidoPorMov = new Map();
+    for (const [vendaId, movs] of movsPorVenda) {
+      const pesos = movs.map((m) => Math.abs(m.quantidade || 0) * Number(m.variacao?.preco || 0));
+      const partes = R.repartirPorPeso(Number(vendaPorId.get(vendaId).valor || 0), pesos);
+      movs.forEach((m, i) => valorVendidoPorMov.set(m.id, partes[i]));
+    }
     const catMap = new Map();
     for (const m of movimentacoesVenda) {
+      if (!valorVendidoPorMov.has(m.id)) continue;
       const cat = m.variacao?.produto?.categoria?.nome || 'Sem categoria';
       const qtd = Math.abs(m.quantidade || 0);
-      const valor = qtd * Number(m.variacao?.preco || 0);
+      const valor = valorVendidoPorMov.get(m.id);
       // Custo congelado da venda (snapshot); fallback pro custo atual em vendas antigas.
       const custo = qtd * Number(m.custoUnitario ?? m.variacao?.precoCusto ?? 0);
       if (!catMap.has(cat)) {
@@ -1069,6 +1100,7 @@ async function relatorioEstoque(req, res) {
         },
         select: {
           tipo: true, quantidade: true, data: true, vendaId: true,
+          venda: { select: { status: true } },
           variacao: {
             select: {
               id: true, nome: true, preco: true, precoCusto: true, imagemUrl: true,
@@ -1135,6 +1167,7 @@ async function relatorioEstoque(req, res) {
     const vendaPorVariacao = new Map();
     for (const m of movimentacoesPeriodo) {
       if (m.tipo !== 'VENDA') continue;
+      if (m.venda && m.venda.status !== 'COMPLETED') continue;
       const v = m.variacao;
       if (!v) continue;
       const qtd = Math.abs(m.quantidade || 0);
@@ -1440,10 +1473,11 @@ async function relatorioCaixa(req, res) {
 }
 
 module.exports = {
-  visaoExecutiva,
-  relatorioCRM,
-  relatorioFinanceiro,
-  relatorioVendas,
-  relatorioEstoque,
-  relatorioCaixa,
+  visaoExecutiva: comPeriodoValido(visaoExecutiva),
+  relatorioCRM: comPeriodoValido(relatorioCRM),
+  relatorioFinanceiro: comPeriodoValido(relatorioFinanceiro),
+  relatorioVendas: comPeriodoValido(relatorioVendas),
+  relatorioEstoque: comPeriodoValido(relatorioEstoque),
+  relatorioCaixa: comPeriodoValido(relatorioCaixa),
+  resolverPeriodo,
 };

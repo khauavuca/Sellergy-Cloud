@@ -9,6 +9,9 @@ WORKDIR /app
 # "puppeteer-core" (sem download proprio) apontado pro binario do sistema.
 RUN apk add --no-cache openssl python3 make g++ linux-headers chromium
 
+# Fuso do negocio: a agenda calcula horarios livres e lembretes no horario
+# local do processo. Sem isso o container roda em UTC e 08:00 vira 05:00.
+ENV TZ=America/Sao_Paulo
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 

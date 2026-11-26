@@ -1,4 +1,4 @@
-import { forwardRef } from 'react';
+import { forwardRef, useId } from 'react';
 import clsx from 'clsx';
 
 const Textarea = forwardRef(function Textarea({
@@ -11,6 +11,9 @@ const Textarea = forwardRef(function Textarea({
   className,
   ...props
 }, ref) {
+  // Liga o rótulo ao campo (leitor de tela e clique no rótulo).
+  const idGerado = useId();
+  const idCampo = props.id || idGerado;
   const ehLg = size === 'lg';
   const labelCls = ehLg
     ? 'block text-sm font-semibold tracking-wide text-[var(--text-secondary)] mb-2'
@@ -21,11 +24,12 @@ const Textarea = forwardRef(function Textarea({
   return (
     <div className={clsx(fullWidth && 'w-full')}>
       {label && (
-        <label className={labelCls}>
+        <label htmlFor={idCampo} className={labelCls}>
           {label}
         </label>
       )}
       <textarea
+        id={idCampo}
         ref={ref}
         rows={rows}
         className={clsx(

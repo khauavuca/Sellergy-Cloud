@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Save, CheckCircle2, AlertCircle, Info, Users } from 'lucide-react';
 import api from '../services/api';
@@ -23,15 +23,15 @@ export default function AdminPermissoesClientePage() {
   const [selecionadoId, setSelecionadoId] = useState(clienteParam);
   const [edicao, setEdicao] = useState({});
   const [salvando, setSalvando] = useState(false);
+  // A carga roda uma vez, com o cliente da URL na montagem (como antes).
+  const [clienteInicial] = useState(clienteParam);
 
-  useEffect(() => { carregar(); }, []);
-
-  const carregar = async () => {
-    setCarregando(true);
-    try {
-      const r = await api.get('/clientes');
+  // Carga inicial: o estado ja nasce carregando, entao nao ha setState
+  // sincrono aqui (so dentro do .then/.catch/.finally).
+  const carregar = useCallback(() => api.get('/clientes')
+    .then((r) => {
       setClientes(r.data || []);
-      const idInicial = clienteParam || r.data?.[0]?.id;
+      const idInicial = clienteInicial || r.data?.[0]?.id;
       if (idInicial) {
         const cli = r.data.find((c) => c.id === idInicial);
         if (cli) {
@@ -39,12 +39,15 @@ export default function AdminPermissoesClientePage() {
           setEdicao(cli.modulosLiberados || {});
         }
       }
-    } catch {
+    })
+    .catch(() => {
       toast.error('Erro ao carregar clientes');
-    } finally {
+    })
+    .finally(() => {
       setCarregando(false);
-    }
-  };
+    }), [clienteInicial, toast]);
+
+  useEffect(() => { carregar(); }, [carregar]);
 
   const selecionar = (cliente) => {
     setSelecionadoId(cliente.id);

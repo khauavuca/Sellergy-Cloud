@@ -27,14 +27,14 @@
   --text-main:        #0A0A0A;   /* near-black, titulos */
   --text-secondary:   #525252;   /* corpo de texto */
   --text-muted:       #8A8A85;   /* labels, helpers */
-  --text-on-primary:  #FFFFFF;   /* texto sobre primario preto */
+  --text-on-primary:  #FFFFFF;   /* texto sobre o verde da marca */
   --text-on-accent:   #FFFFFF;   /* texto sobre accent terracota */
 
-  /* ── Primary (acoes principais) ──────────────────────────── */
-  --primary:         #0A0A0A;
-  --primary-hover:   #1F1F1F;
-  --primary-active:  #2A2A2A;
-  --primary-soft:    #F0F0EC;
+  /* ── Primary (acoes principais): verde da marca, igual ao prototipo ── */
+  --primary:         #136F4D;
+  --primary-hover:   #0F5C40;
+  --primary-active:  #0B4A33;
+  --primary-soft:    #E3F1EA;
 
   /* ── Accent (terracota) ──────────────────────────────────── */
   --accent:          #C4704A;
@@ -75,6 +75,15 @@
   --radius-xl:    12px;
   --radius-2xl:   14px;
   --radius-full:  9999px;
+
+  /* ── Menu lateral escuro (igual nos dois temas) ─────────── */
+  --sb-bg:        #0F1A15;
+  --sb-borda:     rgba(255, 255, 255, 0.08);
+  --sb-texto:     #B7C4BD;
+  --sb-titulo:    #8FA399;
+  --sb-hover:     rgba(255, 255, 255, 0.06);
+  --sb-ativo:     #1E8A60;
+  --sb-sub-ativo: rgba(255, 255, 255, 0.10);
 }
 
 /* ===========================================================
@@ -95,13 +104,13 @@
   --text-main:        #FAFAF7;
   --text-secondary:   #B4B4B0;
   --text-muted:       #707070;
-  --text-on-primary:  #0A0A0A;
+  --text-on-primary:  #04140D;   /* verde claro pede texto escuro */
   --text-on-accent:   #FFFFFF;
 
-  --primary:         #FAFAF7;
-  --primary-hover:   #E8E8E5;
-  --primary-active:  #D4D4D0;
-  --primary-soft:    #1C1C1C;
+  --primary:         #3DBE8B;
+  --primary-hover:   #55CB9B;
+  --primary-active:  #2FA97A;
+  --primary-soft:    #14281F;
 
   --accent:          #D4845C;
   --accent-hover:    #C4704A;
@@ -131,6 +140,9 @@
   --shadow-md:  0 8px 24px rgba(0, 0, 0, 0.5);
   --shadow-lg:  0 20px 48px rgba(0, 0, 0, 0.6);
   --shadow-focus: 0 0 0 3px rgba(212, 132, 92, 0.2);
+
+  --sb-bg:        #0B120F;
+  --sb-borda:     rgba(255, 255, 255, 0.07);
 }
 
 /* ===========================================================
@@ -224,30 +236,10 @@ a:focus-visible {
   outline-offset: 3px;
 }
 
-/* ===========================================================
-   COMPATIBILIDADE COM PAGINAS LEGADAS
-   (componentes antigos com classes hardcoded estilo dark)
-   Vamos remover esses overrides quando reescrevermos cada pagina.
-   =========================================================== */
-
-:not(.dark) .text-white {
-  color: var(--text-main) !important;
-}
-:not(.dark) .text-gray-200,
-:not(.dark) .text-gray-300 { color: var(--text-secondary) !important; }
-:not(.dark) .text-gray-400,
-:not(.dark) .text-gray-500,
-:not(.dark) .text-gray-600 { color: var(--text-muted) !important; }
-
-:not(.dark) [class*="bg-white\/"] {
-  background-color: var(--bg-subtle) !important;
-}
-:not(.dark) [class*="bg-black\/"] {
-  background-color: var(--bg-subtle) !important;
-}
-:not(.dark) [class*="border-white\/"] {
-  border-color: var(--border-main) !important;
-}
+/* Placeholder legivel no tema claro. (Os overrides antigos de text-white,
+   text-gray-* e bg-white/ das paginas legadas foram removidos em 24/11/2026:
+   nenhuma pagina usava mais, e eles escureciam texto branco em fundo
+   escuro na landing, em botoes de perigo e nos avisos.) */
 
 :not(.dark) input::placeholder,
 :not(.dark) textarea::placeholder {

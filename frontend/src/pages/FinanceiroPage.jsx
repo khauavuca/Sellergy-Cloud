@@ -1,22 +1,60 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
-  DollarSign, TrendingUp, TrendingDown, AlertCircle, Plus, MoreHorizontal,
-  Edit2, Trash2, CheckCircle2, XCircle, Tag, Filter, ArrowDownToLine, ArrowUpFromLine,
-  Lock, ShoppingCart, MessageCircle, CalendarClock, ExternalLink, Wallet, Pencil,
-  History, ArrowRight
+  DollarSign, AlertCircle, Plus, MoreHorizontal,
+  Edit2, Trash2, CheckCircle2, XCircle, Tag, ArrowDownToLine, ArrowUpFromLine,
+  Lock, ShoppingCart, MessageCircle, CalendarClock, ExternalLink, Wallet, History,
 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import api from '../services/api';
 import contaPagarService from '../services/contaPagarService';
 import { usePermissao } from '../hooks/usePermissao';
 import {
-  Card, CardHeader, CardTitle, Button, IconButton, Input, Textarea, Select, Badge,
+  Button, IconButton, Input, Textarea, Select, Badge,
   EmptyState, SearchBar, Drawer, Dropdown, DropdownItem, DropdownDivider, useToast,
-  Tabs, TabsList, TabsTrigger, TabsContent, Combobox, KpiCard,
+  Combobox, Pagina, ColunasPagina, Painel, LinhaInfo, BarraFerramentas, AbasPilula,
 } from '../components/ui';
+import CaixaTela from '../components/financeiro/CaixaTela';
+import {
+  FaixaFinanceiro, GraficoEntrouSaiu, PainelProximos7, PainelResultadoMes, PainelAtalhos,
+} from '../components/financeiro/VisaoFinanceiro';
+import {
+  buscarTodosLancamentos, intervaloMesAtual, semanasDoMes, despesasPorCategoria, diasAte,
+} from '../components/financeiro/dadosFinanceiro';
 import Modal from '../components/Modal';
 
 const fmtBRL = (v) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// Datas de vencimento/pagamento sao dias de calendario de Brasilia (o
+// backend grava 12:00 UTC). Formata sempre no fuso de Brasilia.
+const fmtDia = (v) => (v ? new Date(v).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '—');
+const msgErro = (e, padrao) => e?.response?.data?.erro || e?.response?.data?.error || padrao;
+// Diferenca de caixa acima disso exige observacao (mesma regra do backend).
+const LIMITE_DIFERENCA_CAIXA = 10;
+
+// Trava de envio: o botao fica "carregando" e um 2o clique (ou Enter) e
+// ignorado enquanto a 1a requisicao nao termina.
+function useEnvio() {
+  const travado = useRef(false);
+  const [enviando, setEnviando] = useState(false);
+  const enviar = async (fn) => {
+    if (travado.current) return;
+    travado.current = true;
+    setEnviando(true);
+    try {
+      await fn();
+    } finally {
+      travado.current = false;
+      setEnviando(false);
+    }
+  };
+  return [enviando, enviar];
+}
+
+function novaChave() {
+  try {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  } catch { /* sem crypto */ }
+  return `k${Date.now()}${Math.random().toString(36).slice(2, 12)}`;
+}
 const STATUS_LABELS = {
   PENDENTE: { label: 'Pendente', variant: 'warning' },
   PAGO: { label: 'Pago', variant: 'success' },
@@ -31,6 +69,26 @@ const SLUG_TAB = {
   categorias: 'categorias',
   caixa: 'caixa',
   'contas-pagar': 'contas-pagar',
+};
+
+// Atalhos de filtro dos lançamentos (combinações de tipo + situação).
+const PILULAS_LANC = [
+  { valor: 'todos', rotulo: 'Todos', tipo: '', status: '' },
+  { valor: 'pagar', rotulo: 'A pagar', tipo: 'DESPESA', status: 'PENDENTE' },
+  { valor: 'receber', rotulo: 'A receber', tipo: 'RECEITA', status: 'PENDENTE' },
+  { valor: 'atrasados', rotulo: 'Atrasados', tipo: '', status: 'ATRASADO' },
+  { valor: 'pagos', rotulo: 'Pagos', tipo: '', status: 'PAGO' },
+];
+
+// Classes padrão das tabelas do layout.
+const TH = 'text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap';
+const TD = 'px-4 py-2.5 border-b border-[var(--border-subtle)]';
+
+const USO_CURTO = {
+  SERVICO: 'Serviços',
+  PRODUTO: 'Produtos e estoque',
+  CAIXA: 'Caixa',
+  DESPESA: 'Despesas e contas a pagar',
 };
 
 export default function FinanceiroPage() {
@@ -86,10 +144,72 @@ export default function FinanceiroPage() {
   // Modal "Pagar conta": valor editavel + opcao de tirar do caixa.
   const [modalPagarConta, setModalPagarConta] = useState({ open: false, conta: null });
 
+  // Visão do mês (gráfico, faixa de números e lateral): lançamentos do mês
+  // atual e despesas em aberto (atrasadas + até o fim do mês).
+  const [lancMes, setLancMes] = useState([]);
+  const [despesasPendentes, setDespesasPendentes] = useState([]);
+
+  const buscarVisaoMes = useCallback(() => {
+    const { inicio, fim } = intervaloMesAtual();
+    return Promise.all([
+      buscarTodosLancamentos({ inicio, fim }).catch(() => []),
+      buscarTodosLancamentos({ tipo: 'DESPESA', status: 'ATRASADO' }).catch(() => []),
+      buscarTodosLancamentos({ tipo: 'DESPESA', status: 'PENDENTE', fim }).catch(() => []),
+    ]).then(([mes, atrasadas, pendentes]) => {
+      setLancMes(mes);
+      setDespesasPendentes([...atrasadas, ...pendentes]);
+    });
+  }, []);
+
   useEffect(() => {
-    carregar();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    buscarVisaoMes();
+  }, [buscarVisaoMes]);
+
+  // Busca sem setState sincrono (o estado ja nasce carregando); o "carregar"
+  // das acoes liga o carregando antes de buscar de novo.
+  const buscarDados = useCallback(() => {
+    const params = new URLSearchParams();
+    if (filtroTipo) params.set('tipo', filtroTipo);
+    if (filtroStatus) params.set('status', filtroStatus);
+    if (busca) params.set('buscar', busca);
+    params.set('limite', '100');
+
+    return Promise.all([
+      api.get('/financeiro/resumo').catch(() => ({ data: null })),
+      api.get(`/financeiro/lancamentos?${params}`).catch(() => ({ data: { dados: [] } })),
+      api.get('/financeiro/categorias').catch(() => ({ data: [] })),
+      api.get('/financeiro/caixa/atual').catch(() => ({ data: { sessao: null } })),
+      contaPagarService.listar().catch(() => []),
+    ]).then(([r, l, c, caixaResp, cp]) => {
+      setResumo(r.data);
+      setLancamentos(l.data?.dados || l.data || []);
+      setCategorias(c.data || []);
+      setSessaoCaixa(caixaResp.data?.sessao ?? null);
+      setContasPagar(cp || []);
+    }).finally(() => {
+      setCarregando(false);
+    });
   }, [filtroTipo, filtroStatus, busca]);
+
+  const carregar = () => {
+    setCarregando(true);
+    buscarVisaoMes();
+    return buscarDados();
+  };
+
+  // Filtro mudou: liga o carregando e limpa a selecao ja no render (guardando
+  // a chave dos filtros) em vez de setState sincrono em efeito.
+  const chaveFiltros = `${filtroTipo}|${filtroStatus}|${busca}`;
+  const [chaveFiltrosAnterior, setChaveFiltrosAnterior] = useState(chaveFiltros);
+  if (chaveFiltrosAnterior !== chaveFiltros) {
+    setChaveFiltrosAnterior(chaveFiltros);
+    setCarregando(true);
+    setSelecionados(new Set());
+  }
+
+  useEffect(() => {
+    buscarDados();
+  }, [buscarDados]);
 
   // Carrega catalogo so 1x (independente dos filtros de lancamento) e achata
   // produto+variacoes em uma lista plana pro Combobox do modal.
@@ -103,45 +223,20 @@ export default function FinanceiroPage() {
     }).catch(() => setCatalogo([]));
   }, []);
 
-  const carregar = async () => {
-    setCarregando(true);
-    try {
-      const params = new URLSearchParams();
-      if (filtroTipo) params.set('tipo', filtroTipo);
-      if (filtroStatus) params.set('status', filtroStatus);
-      if (busca) params.set('buscar', busca);
-      params.set('limite', '100');
-
-      const [r, l, c, caixaResp, cp] = await Promise.all([
-        api.get('/financeiro/resumo').catch(() => ({ data: null })),
-        api.get(`/financeiro/lancamentos?${params}`).catch(() => ({ data: { dados: [] } })),
-        api.get('/financeiro/categorias').catch(() => ({ data: [] })),
-        api.get('/financeiro/caixa/atual').catch(() => ({ data: { sessao: null } })),
-        contaPagarService.listar().catch(() => []),
-      ]);
-      setResumo(r.data);
-      setLancamentos(l.data?.dados || l.data || []);
-      setCategorias(c.data || []);
-      setSessaoCaixa(caixaResp.data?.sessao ?? null);
-      setContasPagar(cp || []);
-    } finally {
-      setCarregando(false);
-    }
-  };
-
   const handleSalvarLanc = async (dados) => {
     try {
       if (dados.id) {
         await api.put(`/financeiro/lancamentos/${dados.id}`, dados);
-        toast.success('Lancamento atualizado');
+        toast.success('Lançamento atualizado');
       } else {
-        await api.post('/financeiro/lancamentos', dados);
-        toast.success('Lancamento criado');
+        const { chaveRepeticao, ...corpo } = dados;
+        await api.post('/financeiro/lancamentos', corpo, chaveRepeticao ? { headers: { 'Idempotency-Key': chaveRepeticao } } : undefined);
+        toast.success('Lançamento criado');
       }
       setModalLanc({ open: false, data: null });
       carregar();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao salvar');
+      toast.error(msgErro(e, 'Erro ao salvar'));
     }
   };
 
@@ -160,11 +255,11 @@ export default function FinanceiroPage() {
   const handleStatus = async (l, status) => {
     try {
       await api.patch(`/financeiro/lancamentos/${l.id}/status`, { status });
-      toast.success('Status atualizado');
+      toast.success('Situação atualizada');
       setDrawer({ open: false, lanc: null });
       carregar();
-    } catch {
-      toast.error('Erro ao mudar status');
+    } catch (e) {
+      toast.error(msgErro(e, 'Erro ao mudar a situação'));
     }
   };
 
@@ -195,9 +290,6 @@ export default function FinanceiroPage() {
     toast.success('Abrindo WhatsApp...');
     setModalCobranca({ open: false, dados: null });
   };
-
-  // Limpa selecao sempre que muda a lista (filtros ou recarga).
-  useEffect(() => { setSelecionados(new Set()); }, [filtroTipo, filtroStatus, busca]);
 
   // Carrega historico de sessoes fechadas quando entra na aba 'caixa'.
   useEffect(() => {
@@ -294,6 +386,8 @@ export default function FinanceiroPage() {
   };
 
   const handleFecharCaixa = async ({ saldoFinalReal, observacao }) => {
+    // (Nada aqui usa a area de transferencia: o relato de "Fechar caixa
+    // copiou algo" nao se reproduz no codigo — ver relatorio de correcoes.)
     try {
       const r = await api.post('/financeiro/caixa/fechar', { saldoFinalReal, observacao });
       const dif = r.data?.sessao?.diferenca ?? 0;
@@ -308,23 +402,31 @@ export default function FinanceiroPage() {
     }
   };
 
-  const handleMovimentacaoCaixa = async ({ tipo, valor, motivo }) => {
+  const handleMovimentacaoCaixa = async ({ tipo, valor, motivo }, confirmarSaldoNegativo = false) => {
     try {
       const url = tipo === 'SANGRIA' ? '/financeiro/caixa/sangria' : '/financeiro/caixa/suprimento';
-      await api.post(url, { valor, motivo });
+      await api.post(url, { valor, motivo, ...(confirmarSaldoNegativo ? { confirmarSaldoNegativo: true } : {}) });
       toast.success(tipo === 'SANGRIA' ? 'Retirada registrada' : 'Entrada registrada');
       setModalMovCaixa({ open: false, tipo: null });
       carregar();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao registrar movimentação');
+      // Retirada maior que o saldo: so passa com confirmacao explicita.
+      if (e.response?.data?.codigo === 'SALDO_INSUFICIENTE' && !confirmarSaldoNegativo) {
+        if (confirm(`${msgErro(e, '')}\n\nO caixa vai ficar negativo. Registrar mesmo assim?`)) {
+          return handleMovimentacaoCaixa({ tipo, valor, motivo }, true);
+        }
+        return undefined;
+      }
+      toast.error(msgErro(e, 'Erro ao registrar movimentação'));
     }
+    return undefined;
   };
 
   // Adia o vencimento em N dias. Backend default e 3 — passamos explicito.
   const handleAdiar = async (l, dias) => {
     try {
       const r = await api.post(`/financeiro/lancamentos/${l.id}/pausa`, { dias });
-      const novoVenc = new Date(r.data?.novoVencimento || Date.now()).toLocaleDateString('pt-BR');
+      const novoVenc = fmtDia(r.data?.novoVencimento || Date.now());
       toast.success(`Vencimento adiado pra ${novoVenc}`);
       setDrawer({ open: false, lanc: null });
       carregar();
@@ -344,19 +446,27 @@ export default function FinanceiroPage() {
       }
       setModalCat({ open: false, data: null });
       carregar();
-    } catch {
-      toast.error('Erro ao salvar categoria');
+    } catch (e) {
+      toast.error(msgErro(e, 'Erro ao salvar categoria'));
     }
   };
 
-  const handleExcluirCat = async (c) => {
-    if (!confirm(`Excluir categoria "${c.nome}"?`)) return;
+  // Categoria em uso nao some calada: o backend responde 409 e aqui a pessoa
+  // escolhe outra categoria do mesmo tipo pra ficar no lugar.
+  const [modalSubstCat, setModalSubstCat] = useState({ open: false, cat: null, mensagem: '' });
+  const handleExcluirCat = async (c, substituirPor = null) => {
+    if (!substituirPor && !confirm(`Excluir categoria "${c.nome}"?`)) return;
     try {
-      await api.delete(`/financeiro/categorias/${c.id}`);
-      toast.success('Categoria excluida');
+      await api.delete(`/financeiro/categorias/${c.id}`, substituirPor ? { data: { substituirPor } } : undefined);
+      toast.success('Categoria excluída');
+      setModalSubstCat({ open: false, cat: null, mensagem: '' });
       carregar();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao excluir');
+      if (e.response?.data?.codigo === 'CATEGORIA_EM_USO') {
+        setModalSubstCat({ open: true, cat: c, mensagem: msgErro(e, '') });
+        return;
+      }
+      toast.error(msgErro(e, 'Erro ao excluir'));
     }
   };
 
@@ -373,7 +483,7 @@ export default function FinanceiroPage() {
       setModalContaPagar({ open: false, data: null });
       carregar();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao salvar conta a pagar');
+      toast.error(msgErro(e, 'Erro ao salvar conta a pagar'));
     }
   };
 
@@ -407,7 +517,7 @@ export default function FinanceiroPage() {
     }
   };
 
-  const handlePagarConta = async ({ conta, valor, motivo, tirarDoCaixa }) => {
+  const handlePagarConta = async ({ conta, valor, motivo, tirarDoCaixa }, confirmarSaldoNegativo = false) => {
     // A conta pode vir de dois lugares:
     //   1. Pré-selecionada na lista de contas (modalPagarConta.conta != null)
     //   2. Escolhida no combobox do modal quando aberto pelo header do caixa
@@ -418,391 +528,391 @@ export default function FinanceiroPage() {
       return;
     }
     try {
-      await contaPagarService.pagar(contaAlvo.id, { valor, motivo, tirarDoCaixa });
+      await contaPagarService.pagar(contaAlvo.id, { valor, motivo, tirarDoCaixa, ...(confirmarSaldoNegativo ? { confirmarSaldoNegativo: true } : {}) });
       toast.success('Pagamento registrado');
       setModalPagarConta({ open: false, conta: null });
       carregar();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Erro ao pagar conta');
+      if (e.response?.data?.codigo === 'SALDO_INSUFICIENTE' && !confirmarSaldoNegativo) {
+        if (confirm(`${msgErro(e, '')}\n\nO caixa vai ficar negativo. Pagar mesmo assim?`)) {
+          return handlePagarConta({ conta: contaAlvo, valor, motivo, tirarDoCaixa }, true);
+        }
+        return undefined;
+      }
+      toast.error(msgErro(e, 'Erro ao pagar conta'));
     }
+    return undefined;
   };
 
+  // Pagar despesa pelo caixa: abre o seletor se houver contas ativas.
+  const abrirPagarDespesa = () => {
+    const ativas = (contasPagar || []).filter((c) => c.ativa);
+    if (ativas.length === 0) {
+      toast.info('Cadastre uma conta a pagar primeiro.');
+      return;
+    }
+    // Abre modal sem conta pré-selecionada — ModalPagarConta tem combobox.
+    setModalPagarConta({ open: true, conta: null });
+  };
+
+  // Atalhos de filtro (pílulas) em cima dos filtros completos de tipo/status.
+  const pilulaAtual = PILULAS_LANC.find((p) => p.tipo === filtroTipo && p.status === filtroStatus)?.valor ?? null;
+  const escolherPilula = (valor) => {
+    const p = PILULAS_LANC.find((x) => x.valor === valor);
+    if (!p) return;
+    setFiltroTipo(p.tipo);
+    setFiltroStatus(p.status);
+  };
+
+  const semanas = semanasDoMes(lancMes, intervaloMesAtual().diasNoMes);
+  const categoriasDespesa = despesasPorCategoria(lancMes);
+
+  const lateralMes = (atual) => (
+    <>
+      <PainelProximos7 pendentes={despesasPendentes} />
+      <PainelResultadoMes resumo={resumo} categoriasDespesa={categoriasDespesa} />
+      <PainelAtalhos atual={atual} />
+    </>
+  );
+
   return (
-    <div className="space-y-5">
-      {/* KPIs — Caixa atual saiu daqui (vira aba dedicada). Sao 4 cards focados
-          em fluxo do mes; o saldo de caixa real fica em /financeiro/caixa. */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard
-          icon={ArrowDownToLine}
-          color="success"
-          label="Receitas (pago)"
-          valor={fmtBRL(resumo?.totalReceitas || 0)}
-        />
-        <KpiCard
-          icon={ArrowUpFromLine}
-          color="danger"
-          label="Despesas (pago)"
-          valor={fmtBRL(resumo?.totalDespesas || 0)}
-        />
-        <KpiCard
-          icon={DollarSign}
-          color="neutral"
-          label="Saldo do mês"
-          valor={fmtBRL((resumo?.totalReceitas || 0) - (resumo?.totalDespesas || 0))}
-        />
-        <KpiCard
-          icon={AlertCircle}
-          color="warning"
-          label="A receber pendente"
-          valor={fmtBRL(resumo?.aReceber || 0)}
-        />
-      </div>
+    <Pagina>
+      {tab !== 'caixa' && (
+        <FaixaFinanceiro resumo={resumo} despesasPendentes={despesasPendentes} carregando={resumo === null && carregando} />
+      )}
 
-      {/* Header so com botoes condicionais por aba — Tabs internos sao
-          invisiveis porque a navegacao vem do sidebar/URL. */}
-      <div className="flex flex-wrap items-center justify-end gap-3">
-        {tab === 'lancamentos' && (
-          <Button variant="primary" icon={Plus} onClick={() => setModalLanc({ open: true, data: null })}>
-            Novo lançamento
-          </Button>
-        )}
-        {tab === 'categorias' && (
-          <Button variant="primary" icon={Plus} onClick={() => setModalCat({ open: true, data: null })}>
-            Nova categoria
-          </Button>
-        )}
-        {/* Botoes do caixa mudam conforme o estado: aberto/fechado.
-            - Fechado: 'Abrir caixa' (acao primaria)
-            - Aberto: Retirada + Entrada + Pagar despesa + Fechar caixa */}
-        {tab === 'caixa' && !sessaoCaixa && podeCriarFinanceiro && (
-          <Button variant="primary" icon={Wallet} onClick={() => setModalAbrirCaixa(true)}>
-            Abrir caixa
-          </Button>
-        )}
-        {tab === 'caixa' && sessaoCaixa && podeEditarFinanceiro && (
-          <>
-            <Button
-              variant="secondary"
-              icon={ArrowUpFromLine}
-              title="Tirar dinheiro do caixa (ex.: depositar no banco)"
-              onClick={() => setModalMovCaixa({ open: true, tipo: 'SANGRIA' })}
-            >
-              Retirada
-            </Button>
-            <Button
-              variant="secondary"
-              icon={ArrowDownToLine}
-              title="Colocar dinheiro no caixa (ex.: troco extra)"
-              onClick={() => setModalMovCaixa({ open: true, tipo: 'SUPRIMENTO' })}
-            >
-              Entrada
-            </Button>
-            <Button
-              variant="secondary"
-              icon={DollarSign}
-              title="Pagar uma despesa cadastrada (cria lançamento + retirada do caixa)"
-              onClick={() => {
-                // Se houver contas ativas, abre seletor. Se não, alerta + leva pra cadastro.
-                const ativas = (contasPagar || []).filter((c) => c.ativa);
-                if (ativas.length === 0) {
-                  toast.info('Cadastre uma conta a pagar primeiro.');
-                  return;
-                }
-                // Abre modal sem conta pré-selecionada — ModalPagarConta tem combobox.
-                setModalPagarConta({ open: true, conta: null });
-              }}
-            >
-              Pagar despesa
-            </Button>
-            <Button variant="primary" icon={Lock} onClick={() => setModalFecharCaixa(true)}>
-              Fechar caixa
-            </Button>
-          </>
-        )}
-        {tab === 'contas-pagar' && podeCriarFinanceiro && (
-          <Button variant="primary" icon={Plus} onClick={() => setModalContaPagar({ open: true, data: null })}>
-            Nova conta a pagar
-          </Button>
-        )}
-      </div>
+      {tab === 'lancamentos' && (
+        <ColunasPagina lateral={lateralMes('/app/financeiro/lancamentos')}>
+          <GraficoEntrouSaiu semanas={semanas} />
 
-      <Tabs value={tab}>
+          <section aria-label="Lançamentos" className="rounded-[10px] border border-[var(--border-main)] bg-[var(--bg-card)] min-w-0">
+            <BarraFerramentas>
+              <AbasPilula
+                rotulo="Filtro rápido de lançamentos"
+                abas={PILULAS_LANC.map((p) => ({ valor: p.valor, rotulo: p.rotulo }))}
+                valor={pilulaAtual}
+                onChange={escolherPilula}
+              />
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <Link
+                  to="/app/financeiro/categorias"
+                  className="h-8 px-3 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-card)] text-xs font-semibold text-[var(--text-main)] inline-flex items-center gap-1.5 hover:bg-[var(--bg-subtle)]"
+                >
+                  <Tag size={14} aria-hidden="true" /> Categorias
+                </Link>
+                <Button variant="primary" size="sm" icon={Plus} onClick={() => setModalLanc({ open: true, data: null })}>
+                  Novo lançamento
+                </Button>
+              </div>
+            </BarraFerramentas>
 
-        <TabsContent value="lancamentos" className="mt-4">
-          {/* Filtros */}
-          <div className="flex flex-wrap items-center gap-3 mb-4">
-            <div className="flex-1 min-w-[240px] max-w-md">
-              <SearchBar value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por descricao..." />
-            </div>
-            <Select
-              value={filtroTipo}
-              onChange={(e) => setFiltroTipo(e.target.value)}
-              placeholder="Todos tipos"
-              options={[
-                { value: 'RECEITA', label: 'Receita' },
-                { value: 'DESPESA', label: 'Despesa' },
-              ]}
-              fullWidth={false}
-              className="w-40"
-            />
-            <Select
-              value={filtroStatus}
-              onChange={(e) => setFiltroStatus(e.target.value)}
-              placeholder="Todos status"
-              options={Object.entries(STATUS_LABELS).map(([k, v]) => ({ value: k, label: v.label }))}
-              fullWidth={false}
-              className="w-40"
-            />
-          </div>
+            {/* Filtros completos */}
+            <BarraFerramentas>
+              <div className="flex-1 min-w-[220px] max-w-md">
+                <SearchBar value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por descrição..." />
+              </div>
+              <Select
+                value={filtroTipo}
+                onChange={(e) => setFiltroTipo(e.target.value)}
+                placeholder="Todos tipos"
+                aria-label="Filtrar por tipo"
+                options={[
+                  { value: 'RECEITA', label: 'Receita' },
+                  { value: 'DESPESA', label: 'Despesa' },
+                ]}
+                fullWidth={false}
+                className="w-40"
+              />
+              <Select
+                value={filtroStatus}
+                onChange={(e) => setFiltroStatus(e.target.value)}
+                placeholder="Todos status"
+                aria-label="Filtrar por situação"
+                options={Object.entries(STATUS_LABELS).map(([k, v]) => ({ value: k, label: v.label }))}
+                fullWidth={false}
+                className="w-40"
+              />
+              <span className="ml-auto text-xs font-medium text-[var(--text-muted)] tabular-nums">
+                {!carregando && `${lancamentos.length} ${lancamentos.length === 1 ? 'lançamento' : 'lançamentos'}`}
+              </span>
+            </BarraFerramentas>
 
-          {/* Barra de acoes em lote — aparece quando >=1 selecionado.
-              Permite marcar varios como pagos numa tacada so. */}
-          {selecionados.size > 0 && (
-            <div className="flex items-center justify-between gap-3 px-4 py-3 mb-3 rounded-xl bg-[var(--bg-subtle)] text-[var(--text-main)] border border-[var(--border-main)]">
-              <div className="flex items-center gap-3">
-                <CheckCircle2 size={18} strokeWidth={2} className="text-[var(--accent)]" />
-                <span className="text-sm font-semibold tabular-nums">
+            {/* Barra de ações em lote — aparece quando >=1 selecionado. */}
+            {selecionados.size > 0 && (
+              <BarraFerramentas className="bg-[var(--bg-subtle)]">
+                <CheckCircle2 size={16} strokeWidth={2} className="text-[var(--accent)]" aria-hidden="true" />
+                <span className="text-[13px] font-semibold tabular-nums text-[var(--text-main)]">
                   {selecionados.size} {selecionados.size === 1 ? 'lançamento selecionado' : 'lançamentos selecionados'}
                 </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setSelecionados(new Set())}>
-                  Limpar
-                </Button>
-                <Button variant="primary" size="sm" icon={CheckCircle2} onClick={() => handleAcaoLote('PAGO')}>
-                  Marcar como pagos
-                </Button>
-              </div>
-            </div>
-          )}
+                <div className="ml-auto flex items-center gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => setSelecionados(new Set())}>
+                    Limpar
+                  </Button>
+                  <Button variant="primary" size="sm" icon={CheckCircle2} onClick={() => handleAcaoLote('PAGO')}>
+                    Marcar como pagos
+                  </Button>
+                </div>
+              </BarraFerramentas>
+            )}
 
-          {carregando ? (
-            <Card padding="lg"><div className="text-center py-12 text-[var(--text-muted)] text-sm">Carregando...</div></Card>
-          ) : lancamentos.length === 0 ? (
-            <Card padding="lg">
+            {carregando ? (
+              <p className="m-0 px-4 py-12 text-center text-[13px] text-[var(--text-muted)]">Carregando...</p>
+            ) : lancamentos.length === 0 ? (
               <EmptyState
                 icon={DollarSign}
-                title="Nenhum lancamento"
+                title="Nenhum lançamento"
                 description="Cadastre receitas e despesas pra acompanhar o financeiro."
-                action={<Button variant="primary" icon={Plus} onClick={() => setModalLanc({ open: true, data: null })}>Novo lancamento</Button>}
+                action={<Button variant="primary" icon={Plus} onClick={() => setModalLanc({ open: true, data: null })}>Novo lançamento</Button>}
               />
-            </Card>
-          ) : (
-            <Card padding="none">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-[var(--border-main)]">
-                    {/* Checkbox 'selecionar todos elegiveis' (nao-venda, nao-pago, nao-cancelado).
-                        Indeterminate quando alguns mas nao todos. */}
-                    <th className="w-12 px-5 py-3">
-                      <input
-                        type="checkbox"
-                        checked={todosSelecionados}
-                        ref={(el) => { if (el) el.indeterminate = algunsSelecionados; }}
-                        onChange={toggleSelecaoTodos}
-                        disabled={lancamentosElegiveis.length === 0}
-                        className="w-4 h-4 rounded border-[var(--border-main)] text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                        aria-label="Selecionar todos"
-                      />
-                    </th>
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Descrição</th>
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Categoria</th>
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Vencimento</th>
-                    <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Valor</th>
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Status</th>
-                    <th className="w-12"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lancamentos.map((l) => {
-                    // Usa statusEfetivo quando disponivel (ATRASADO derivado pelo backend).
-                    const statusReal = l.statusEfetivo || l.status;
-                    const status = STATUS_LABELS[statusReal] || { label: statusReal, variant: 'neutral' };
-                    // Elegivel pra acao em lote = nao venda, nao pago, nao cancelado, nao imutavel.
-                    const ehElegivel = !l.vendaId && l.status !== 'PAGO' && l.status !== 'CANCELADO' && !l.imutavel;
-                    const estaSelecionado = selecionados.has(l.id);
-                    return (
-                      <tr
-                        key={l.id}
-                        onClick={() => setDrawer({ open: true, lanc: l })}
-                        className={`border-b border-[var(--border-subtle)] cursor-pointer transition-colors ${
-                          estaSelecionado
-                            ? 'bg-[var(--bg-subtle)] hover:bg-[var(--bg-subtle)]'
-                            : 'hover:bg-[var(--bg-subtle)]/50'
-                        }`}
-                      >
-                        {/* Checkbox por linha — bloqueado pra lancamentos de venda
-                            ou ja resolvidos (pago/cancelado). stopPropagation pra
-                            nao abrir o drawer ao clicar. */}
-                        <td onClick={(e) => e.stopPropagation()} className="px-5 py-3">
-                          <input
-                            type="checkbox"
-                            checked={estaSelecionado}
-                            onChange={() => toggleSelecao(l.id)}
-                            disabled={!ehElegivel}
-                            className="w-4 h-4 rounded border-[var(--border-main)] text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                            aria-label={`Selecionar ${l.descricao}`}
-                            title={
-                              l.vendaId ? 'Lançamento de venda — gerenciado em Vendas' :
-                              l.imutavel ? 'Mês fechado — não pode mais ser alterado' :
-                              l.status === 'PAGO' ? 'Já está pago' :
-                              l.status === 'CANCELADO' ? 'Está cancelado' :
-                              'Selecionar'
-                            }
-                          />
-                        </td>
-                        {/* Cancelado: cinza + tachado em descricao e valor.
-                            Sinal +/- some pra nao parecer movimento ativo. */}
-                        <td className="py-3 px-5">
-                          <div className={`flex items-center gap-2 ${l.status === 'CANCELADO' ? 'opacity-60' : ''}`}>
-                            <div className={`w-1.5 h-8 rounded-full ${
-                              l.status === 'CANCELADO' ? 'bg-[var(--text-muted)]' :
-                              l.tipo === 'RECEITA' ? 'bg-[var(--success)]' : 'bg-[var(--danger)]'
-                            }`} />
-                            <div>
-                              <div className={`text-sm font-semibold tracking-tight ${
-                                l.status === 'CANCELADO' ? 'line-through text-[var(--text-muted)]' : 'text-[var(--text-main)]'
-                              }`}>
-                                {l.descricao}
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr>
+                      {/* Checkbox 'selecionar todos elegíveis' (não-venda, não-pago, não-cancelado). */}
+                      <th className={`${TH} w-10`}>
+                        <input
+                          type="checkbox"
+                          checked={todosSelecionados}
+                          ref={(el) => { if (el) el.indeterminate = algunsSelecionados; }}
+                          onChange={toggleSelecaoTodos}
+                          disabled={lancamentosElegiveis.length === 0}
+                          className="w-4 h-4 rounded border-[var(--border-main)] text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                          aria-label="Selecionar todos"
+                        />
+                      </th>
+                      <th className={TH}>Vencimento</th>
+                      <th className={TH}>Descrição</th>
+                      <th className={TH}>Categoria</th>
+                      <th className={`${TH} text-right`}>Valor</th>
+                      <th className={TH}>Situação</th>
+                      <th className={TH}><span className="sr-only">Ações</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lancamentos.map((l) => {
+                      // Usa statusEfetivo quando disponível (ATRASADO derivado pelo backend).
+                      const statusReal = l.statusEfetivo || l.status;
+                      const status = STATUS_LABELS[statusReal] || { label: statusReal, variant: 'neutral' };
+                      // Elegível pra ação em lote = não venda, não pago, não cancelado, não imutável.
+                      const ehElegivel = !l.vendaId && l.status !== 'PAGO' && l.status !== 'CANCELADO' && !l.imutavel;
+                      const estaSelecionado = selecionados.has(l.id);
+                      const cancelado = l.status === 'CANCELADO';
+                      return (
+                        <tr
+                          key={l.id}
+                          onClick={() => setDrawer({ open: true, lanc: l })}
+                          className={`cursor-pointer transition-colors ${estaSelecionado ? 'bg-[var(--bg-subtle)]' : 'hover:bg-[var(--bg-subtle)]'}`}
+                        >
+                          {/* stopPropagation pra não abrir o drawer ao clicar. */}
+                          <td onClick={(e) => e.stopPropagation()} className={TD}>
+                            <input
+                              type="checkbox"
+                              checked={estaSelecionado}
+                              onChange={() => toggleSelecao(l.id)}
+                              disabled={!ehElegivel}
+                              className="w-4 h-4 rounded border-[var(--border-main)] text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                              aria-label={`Selecionar ${l.descricao}`}
+                              title={
+                                l.vendaId ? 'Lançamento de venda — gerenciado em Vendas' :
+                                l.imutavel ? 'Mês fechado — não pode mais ser alterado' :
+                                l.status === 'PAGO' ? 'Já está pago' :
+                                l.status === 'CANCELADO' ? 'Está cancelado' :
+                                'Selecionar'
+                              }
+                            />
+                          </td>
+                          <td className={`${TD} whitespace-nowrap tabular-nums ${l.status === 'PENDENTE' && diasAte(l.dataVencimento) < 0 ? 'text-[var(--danger-text)] font-semibold' : 'text-[var(--text-secondary)]'}`}>
+                            {fmtDia(l.dataVencimento)}
+                          </td>
+                          {/* Cancelado: cinza + tachado em descrição e valor. */}
+                          <td className={TD}>
+                            <div className={`flex items-center gap-2 ${cancelado ? 'opacity-60' : ''}`}>
+                              <span
+                                aria-hidden="true"
+                                className={`w-1 h-7 rounded-full flex-shrink-0 ${
+                                  cancelado ? 'bg-[var(--text-muted)]' :
+                                  l.tipo === 'RECEITA' ? 'bg-[var(--success)]' : 'bg-[var(--danger)]'
+                                }`}
+                              />
+                              <div className="min-w-0">
+                                <div className={`font-semibold ${cancelado ? 'line-through text-[var(--text-muted)]' : 'text-[var(--text-main)]'}`}>
+                                  {l.descricao}
+                                </div>
+                                <div className="text-xs text-[var(--text-muted)]">{l.tipo === 'RECEITA' ? 'Receita' : 'Despesa'}</div>
                               </div>
-                              <div className="text-[11px] text-[var(--text-muted)]">{l.tipo === 'RECEITA' ? 'Receita' : 'Despesa'}</div>
                             </div>
-                          </div>
-                        </td>
-                        <td className="py-3 px-5 text-xs text-[var(--text-secondary)]">
-                          {l.categoria?.nome || '—'}
-                        </td>
-                        <td className="py-3 px-5 text-xs text-[var(--text-muted)]">
-                          {new Date(l.dataVencimento).toLocaleDateString('pt-BR')}
-                        </td>
-                        <td className={`py-3 px-5 text-right text-sm font-semibold tabular-nums ${
-                          l.status === 'CANCELADO' ? 'text-[var(--text-muted)] line-through' :
-                          l.tipo === 'RECEITA' ? 'text-[var(--success)]' : 'text-[var(--danger)]'
-                        }`}>
-                          {l.status === 'CANCELADO'
-                            ? fmtBRL(l.valor)
-                            : `${l.tipo === 'RECEITA' ? '+' : '-'} ${fmtBRL(l.valor)}`}
-                        </td>
-                        <td className="py-3 px-5">
-                          <Badge variant={status.variant} size="sm">{status.label}</Badge>
-                        </td>
-                        <td onClick={(e) => e.stopPropagation()} className="py-3 px-3">
-                          <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel="Ações" />}>
-                            {/* Imutavel (mes fechado): so visualizar */}
-                            {l.imutavel && (
-                              <DropdownItem icon={Lock} disabled>Mês fechado</DropdownItem>
-                            )}
-                            {!l.imutavel && (
-                              <>
-                                <DropdownItem icon={Edit2} onClick={() => setModalLanc({ open: true, data: l })}>Editar</DropdownItem>
-                                {l.status !== 'PAGO' && (
-                                  <DropdownItem icon={CheckCircle2} onClick={() => handleStatus(l, 'PAGO')}>Marcar como pago</DropdownItem>
+                          </td>
+                          <td className={`${TD} text-[var(--text-secondary)]`}>{l.categoria?.nome || '—'}</td>
+                          <td className={`${TD} text-right font-semibold tabular-nums whitespace-nowrap ${
+                            cancelado ? 'text-[var(--text-muted)] line-through' :
+                            l.tipo === 'RECEITA' ? 'text-[var(--success-text)]' : 'text-[var(--danger-text)]'
+                          }`}>
+                            {cancelado ? fmtBRL(l.valor) : `${l.tipo === 'RECEITA' ? '+' : '−'} ${fmtBRL(l.valor)}`}
+                          </td>
+                          <td className={TD}>
+                            <Badge variant={status.variant} size="sm">{status.label}</Badge>
+                          </td>
+                          <td onClick={(e) => e.stopPropagation()} className={`${TD} text-right`}>
+                            <div className="flex items-center justify-end gap-1">
+                              {ehElegivel && (
+                                <Button variant="primary" size="sm" onClick={() => handleStatus(l, 'PAGO')}>
+                                  {l.tipo === 'RECEITA' ? 'Recebi' : 'Paguei'}
+                                </Button>
+                              )}
+                              <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel={`Ações de ${l.descricao}`} />}>
+                                {/* Imutável (mês fechado): só visualizar */}
+                                {l.imutavel && (
+                                  <DropdownItem icon={Lock} disabled>Mês fechado</DropdownItem>
                                 )}
-                                {/* Cobrar via WhatsApp — so quando faz sentido (receita em aberto com telefone) */}
-                                {l.tipo === 'RECEITA' && l.status !== 'PAGO' && l.lead?.telefone && (
-                                  <DropdownItem icon={MessageCircle} onClick={() => handleCobrar(l)}>
-                                    Cobrar via WhatsApp
-                                  </DropdownItem>
+                                {!l.imutavel && (
+                                  <>
+                                    <DropdownItem icon={Edit2} onClick={() => setModalLanc({ open: true, data: l })}>Editar</DropdownItem>
+                                    {l.status !== 'PAGO' && (
+                                      <DropdownItem icon={CheckCircle2} onClick={() => handleStatus(l, 'PAGO')}>Marcar como pago</DropdownItem>
+                                    )}
+                                    {/* Cobrar via WhatsApp — só quando faz sentido (receita em aberto com telefone) */}
+                                    {l.tipo === 'RECEITA' && l.status !== 'PAGO' && l.lead?.telefone && (
+                                      <DropdownItem icon={MessageCircle} onClick={() => handleCobrar(l)}>
+                                        Cobrar via WhatsApp
+                                      </DropdownItem>
+                                    )}
+                                    {/* Atalho de adiar 7 dias — outros prazos no drawer */}
+                                    {l.status !== 'PAGO' && l.status !== 'CANCELADO' && !l.vendaId && (
+                                      <DropdownItem icon={CalendarClock} onClick={() => handleAdiar(l, 7)}>
+                                        Adiar 7 dias
+                                      </DropdownItem>
+                                    )}
+                                    {/* Cancelar abre modal pedindo motivo — preserva auditoria */}
+                                    {l.status !== 'CANCELADO' && !l.vendaId && (
+                                      <DropdownItem icon={XCircle} onClick={() => setModalCancelar({ open: true, lanc: l })}>
+                                        Cancelar com motivo
+                                      </DropdownItem>
+                                    )}
+                                    {/* Excluir grupo de parcelas — só quando faz parte de um agrupamento */}
+                                    {l.idAgrupamento && (
+                                      <DropdownItem icon={Trash2} variant="danger" onClick={() => handleExcluirGrupo(l)}>
+                                        Excluir todas parcelas
+                                      </DropdownItem>
+                                    )}
+                                    <DropdownDivider />
+                                    <DropdownItem icon={Trash2} variant="danger" onClick={() => handleExcluir(l)}>Excluir</DropdownItem>
+                                  </>
                                 )}
-                                {/* Atalho de adiar 7 dias direto — pra adiar com outros prazos, abre o drawer */}
-                                {l.status !== 'PAGO' && l.status !== 'CANCELADO' && !l.vendaId && (
-                                  <DropdownItem icon={CalendarClock} onClick={() => handleAdiar(l, 7)}>
-                                    Adiar 7 dias
-                                  </DropdownItem>
-                                )}
-                                {/* Cancelar agora abre modal pedindo motivo — preserva auditoria */}
-                                {l.status !== 'CANCELADO' && !l.vendaId && (
-                                  <DropdownItem icon={XCircle} onClick={() => setModalCancelar({ open: true, lanc: l })}>
-                                    Cancelar com motivo
-                                  </DropdownItem>
-                                )}
-                                {/* Excluir grupo de parcelas — so quando o lancamento e parte de um agrupamento */}
-                                {l.idAgrupamento && (
-                                  <DropdownItem icon={Trash2} variant="danger" onClick={() => handleExcluirGrupo(l)}>
-                                    Excluir todas parcelas
-                                  </DropdownItem>
-                                )}
-                                <DropdownDivider />
-                                <DropdownItem icon={Trash2} variant="danger" onClick={() => handleExcluir(l)}>Excluir</DropdownItem>
-                              </>
-                            )}
-                          </Dropdown>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </Card>
-          )}
-        </TabsContent>
+                              </Dropdown>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </ColunasPagina>
+      )}
 
-        <TabsContent value="categorias" className="mt-4">
-          {categorias.length === 0 ? (
-            <Card padding="lg">
+      {tab === 'categorias' && (
+        <ColunasPagina
+          lateral={
+            <>
+              <ResumoCategorias categorias={categorias} />
+              <PainelAtalhos atual="/app/financeiro/categorias" />
+            </>
+          }
+        >
+          <Painel
+            titulo="Categorias"
+            subtitulo="Organizam receitas e despesas nos relatórios"
+            acoes={
+              <Button variant="primary" size="sm" icon={Plus} onClick={() => setModalCat({ open: true, data: null })}>
+                Nova categoria
+              </Button>
+            }
+            semPadding
+          >
+            {categorias.length === 0 ? (
               <EmptyState
                 icon={Tag}
                 title="Nenhuma categoria"
-                description="Categorias organizam receitas e despesas (ex: Alimentacao, Salarios, Vendas online)."
+                description="Categorias organizam receitas e despesas (ex.: Alimentação, Salários, Vendas online)."
                 action={<Button variant="primary" icon={Plus} onClick={() => setModalCat({ open: true, data: null })}>Nova categoria</Button>}
               />
-            </Card>
-          ) : (
-            <Card padding="none">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-[var(--border-main)]">
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Nome</th>
-                    <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Tipo</th>
-                    <th className="w-12"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {categorias.map((c) => (
-                    <tr key={c.id} className="border-b border-[var(--border-subtle)] hover:bg-[var(--bg-subtle)]/50 transition-colors">
-                      <td className="py-3 px-5 text-sm font-semibold text-[var(--text-main)] tracking-tight">{c.nome}</td>
-                      <td className="py-3 px-5">
-                        <div className="flex items-center gap-2">
-                          <Badge variant={c.tipo === 'RECEITA' ? 'success' : 'danger'} size="sm">
-                            {c.tipo === 'RECEITA' ? 'Receita' : 'Despesa'}
-                          </Badge>
-                          {c.tipo === 'DESPESA' && c.subTipo && (
-                            <Badge variant="neutral" size="sm">
-                              {c.subTipo === 'FIXA' ? 'Fixa' : 'Variável'}
-                            </Badge>
-                          )}
-                          {c.tipo === 'DESPESA' && !c.subTipo && (
-                            <span className="text-[10px] text-[var(--text-muted)] italic">Sem classificação</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-3 px-3">
-                        <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel="Acoes" />}>
-                          <DropdownItem icon={Edit2} onClick={() => setModalCat({ open: true, data: c })}>Editar</DropdownItem>
-                          <DropdownDivider />
-                          <DropdownItem icon={Trash2} variant="danger" onClick={() => handleExcluirCat(c)}>Excluir</DropdownItem>
-                        </Dropdown>
-                      </td>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr>
+                      <th className={TH}>Nome</th>
+                      <th className={TH}>Tipo</th>
+                      <th className={TH}>Onde aparece</th>
+                      <th className={TH}><span className="sr-only">Ações</span></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
-          )}
-        </TabsContent>
+                  </thead>
+                  <tbody>
+                    {categorias.map((c) => (
+                      <tr key={c.id} className="hover:bg-[var(--bg-subtle)] transition-colors">
+                        <td className={`${TD} font-semibold text-[var(--text-main)]`}>{c.nome}</td>
+                        <td className={TD}>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Badge variant={c.tipo === 'RECEITA' ? 'success' : 'danger'} size="sm">
+                              {c.tipo === 'RECEITA' ? 'Receita' : 'Despesa'}
+                            </Badge>
+                            {c.tipo === 'DESPESA' && c.subTipo && (
+                              <Badge variant="neutral" size="sm">
+                                {c.subTipo === 'FIXA' ? 'Fixa' : 'Variável'}
+                              </Badge>
+                            )}
+                            {c.tipo === 'DESPESA' && !c.subTipo && (
+                              <span className="text-xs text-[var(--text-muted)] italic">Sem classificação</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className={`${TD} text-[var(--text-secondary)]`}>{USO_CURTO[c.uso] || '—'}</td>
+                        <td className={`${TD} text-right`}>
+                          <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel={`Ações de ${c.nome}`} />}>
+                            <DropdownItem icon={Edit2} onClick={() => setModalCat({ open: true, data: c })}>Editar</DropdownItem>
+                            <DropdownDivider />
+                            <DropdownItem icon={Trash2} variant="danger" onClick={() => handleExcluirCat(c)}>Excluir</DropdownItem>
+                          </Dropdown>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Painel>
+        </ColunasPagina>
+      )}
 
-        {/* Aba Caixa: sessao aberta (se houver) com saldo + acoes; senao tela
-            de abertura. Historico de sessoes fechadas como cards separados. */}
-        <TabsContent value="caixa" className="mt-4">
-          <CaixaTela
-            sessao={sessaoCaixa}
-            sessoesFechadas={sessoesCaixa}
-            onAbrir={() => setModalAbrirCaixa(true)}
-          />
-        </TabsContent>
+      {/* Aba Caixa: sessão aberta (se houver) com saldo + ações; senão abertura. */}
+      {tab === 'caixa' && (
+        <CaixaTela
+          sessao={sessaoCaixa}
+          sessoesFechadas={sessoesCaixa}
+          podeCriar={podeCriarFinanceiro}
+          podeEditar={podeEditarFinanceiro}
+          onAbrir={() => setModalAbrirCaixa(true)}
+          onRetirada={() => setModalMovCaixa({ open: true, tipo: 'SANGRIA' })}
+          onEntrada={() => setModalMovCaixa({ open: true, tipo: 'SUPRIMENTO' })}
+          onPagarDespesa={abrirPagarDespesa}
+          onFechar={() => setModalFecharCaixa(true)}
+        />
+      )}
 
-        {/* Aba Contas a pagar: cadastro de despesas recorrentes/pontuais. */}
-        <TabsContent value="contas-pagar" className="mt-4">
+      {/* Aba Contas a pagar: cadastro de despesas recorrentes/pontuais. */}
+      {tab === 'contas-pagar' && (
+        <ColunasPagina
+          lateral={
+            <>
+              <PainelProximos7 pendentes={despesasPendentes} />
+              <ResumoContasPagar contas={contasPagar} />
+              <PainelAtalhos atual="/app/financeiro/contas-pagar" />
+            </>
+          }
+        >
           <ListaContasPagar
             contas={contasPagar}
             carregando={carregando}
@@ -815,10 +925,11 @@ export default function FinanceiroPage() {
             onAtivar={handleAtivarContaPagar}
             onPagar={(c) => setModalPagarConta({ open: true, conta: c })}
           />
-        </TabsContent>
-      </Tabs>
+        </ColunasPagina>
+      )}
 
       <ModalLancamento
+        key={modalLanc.open ? `lanc-${modalLanc.data?.id ?? 'novo'}` : 'lanc-fechado'}
         isOpen={modalLanc.open}
         onClose={() => setModalLanc({ open: false, data: null })}
         lanc={modalLanc.data}
@@ -827,7 +938,17 @@ export default function FinanceiroPage() {
         onSalvar={handleSalvarLanc}
       />
 
+      <ModalSubstituirCategoria
+        key={modalSubstCat.open ? `subst-${modalSubstCat.cat?.id}` : 'subst-fechado'}
+        isOpen={modalSubstCat.open}
+        cat={modalSubstCat.cat}
+        mensagem={modalSubstCat.mensagem}
+        categorias={categorias}
+        onClose={() => setModalSubstCat({ open: false, cat: null, mensagem: '' })}
+        onConfirmar={(novaId) => handleExcluirCat(modalSubstCat.cat, novaId)}
+      />
       <ModalCategoria
+        key={modalCat.open ? `cat-${modalCat.data?.id ?? 'nova'}` : 'cat-fechada'}
         isOpen={modalCat.open}
         onClose={() => setModalCat({ open: false, data: null })}
         cat={modalCat.data}
@@ -835,6 +956,7 @@ export default function FinanceiroPage() {
       />
 
       <DrawerLancamento
+        key={drawer.open ? `drawer-${drawer.lanc?.id ?? ''}` : 'drawer-fechado'}
         isOpen={drawer.open}
         onClose={() => setDrawer({ open: false, lanc: null })}
         lanc={drawer.lanc}
@@ -852,17 +974,20 @@ export default function FinanceiroPage() {
 
       {/* Modais do caixa */}
       <ModalAbrirCaixa
+        key={modalAbrirCaixa ? 'abrir-caixa-aberto' : 'abrir-caixa-fechado'}
         isOpen={modalAbrirCaixa}
         onClose={() => setModalAbrirCaixa(false)}
         onConfirmar={handleAbrirCaixa}
       />
       <ModalFecharCaixa
+        key={modalFecharCaixa ? `fechar-caixa-${sessaoCaixa?.saldoEsperado ?? ''}` : 'fechar-caixa-fechado'}
         isOpen={modalFecharCaixa}
         onClose={() => setModalFecharCaixa(false)}
         sessao={sessaoCaixa}
         onConfirmar={handleFecharCaixa}
       />
       <ModalMovimentacaoCaixa
+        key={modalMovCaixa.open ? `mov-caixa-${modalMovCaixa.tipo}` : 'mov-caixa-fechado'}
         isOpen={modalMovCaixa.open}
         tipo={modalMovCaixa.tipo}
         onClose={() => setModalMovCaixa({ open: false, tipo: null })}
@@ -870,6 +995,7 @@ export default function FinanceiroPage() {
       />
 
       <ModalContaPagar
+        key={modalContaPagar.open ? `conta-${modalContaPagar.data?.id ?? 'nova'}` : 'conta-fechada'}
         isOpen={modalContaPagar.open}
         onClose={() => setModalContaPagar({ open: false, data: null })}
         conta={modalContaPagar.data}
@@ -878,6 +1004,7 @@ export default function FinanceiroPage() {
       />
 
       <ModalPagarConta
+        key={modalPagarConta.open ? `pagar-${modalPagarConta.conta?.id ?? 'escolher'}` : 'pagar-fechado'}
         isOpen={modalPagarConta.open}
         onClose={() => setModalPagarConta({ open: false, conta: null })}
         contaSelecionada={modalPagarConta.conta}
@@ -887,6 +1014,7 @@ export default function FinanceiroPage() {
       />
 
       <ModalCancelar
+        key={modalCancelar.open ? `cancelar-${modalCancelar.lanc?.id ?? ''}` : 'cancelar-fechado'}
         isOpen={modalCancelar.open}
         onClose={() => setModalCancelar({ open: false, lanc: null })}
         lanc={modalCancelar.lanc}
@@ -894,20 +1022,15 @@ export default function FinanceiroPage() {
       />
 
       <ModalCobranca
+        key={modalCobranca.open ? `cobranca-${modalCobranca.dados?.lanc?.id ?? ''}` : 'cobranca-fechada'}
         isOpen={modalCobranca.open}
         onClose={() => setModalCobranca({ open: false, dados: null })}
         dados={modalCobranca.dados}
         onEnviar={handleConfirmarCobranca}
       />
-    </div>
+    </Pagina>
   );
 }
-
-// KPI compacto — mesmo padrao do Estoque/Visao geral (layout horizontal:
-// icone + label + valor em linha, padding md em vez de lg).
-// Aceita `acao` opcional (botao ou link logo abaixo do valor) pra cards
-// interativos (ex: "Caixa atual" tem botao "Ajustar").
-// Kpi local removido — usa KpiCard compartilhado do ui/.
 
 const METODOS_PAGAMENTO = [
   { value: 'PIX', label: 'PIX' },
@@ -925,17 +1048,10 @@ function precoEfetivoVar(v) {
 }
 
 function ModalLancamento({ isOpen, onClose, lanc, categorias, catalogo = [], onSalvar }) {
-  const [form, setForm] = useState({
-    descricao: '', valor: 0, tipo: 'RECEITA', dataVencimento: '',
-    dataPagamento: '', categoriaId: '', status: 'PENDENTE', parcelas: 1,
-    produto: '', metodoPagamento: '',
-    // variacaoId nao vai pro backend — guardamos so pra o Combobox manter
-    // selecao visual e pra auto-preenchimento de descricao/valor.
-    variacaoId: '',
-  });
-
-  useEffect(() => {
-    if (lanc) setForm({
+  // O pai troca a `key` a cada abertura, entao o form nasce do lancamento
+  // atual (em vez de um efeito que resetava ao abrir).
+  const [form, setForm] = useState(() => (lanc
+    ? {
       ...lanc,
       dataVencimento: lanc.dataVencimento?.split('T')[0] || '',
       dataPagamento: lanc.dataPagamento?.split('T')[0] || '',
@@ -944,34 +1060,64 @@ function ModalLancamento({ isOpen, onClose, lanc, categorias, catalogo = [], onS
       metodoPagamento: lanc.metodoPagamento || '',
       // Edicao nao vincula variacao retroativamente — produto fica como texto.
       variacaoId: '',
-    });
-    else {
-      setForm({
-        descricao: '', valor: 0, tipo: 'RECEITA',
-        dataVencimento: new Date().toISOString().split('T')[0],
-        dataPagamento: '', categoriaId: '', status: 'PENDENTE', parcelas: 1,
-        produto: '', metodoPagamento: '',
-        variacaoId: '',
-      });
     }
-  }, [lanc, isOpen]);
+    : {
+      descricao: '', valor: 0, tipo: 'RECEITA',
+      dataVencimento: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }),
+      dataPagamento: '', categoriaId: '', status: 'PENDENTE', parcelas: 1,
+      produto: '', metodoPagamento: '',
+      // variacaoId nao vai pro backend — guardamos so pra o Combobox manter
+      // selecao visual e pra auto-preenchimento de descricao/valor.
+      variacaoId: '',
+    }));
+
+  const [enviando, enviar] = useEnvio();
+  // Uma chave por abertura do modal: 2 cliques (ou rede lenta + reenvio)
+  // devolvem o mesmo lancamento em vez de criar outro.
+  const [chaveRepeticao] = useState(novaChave);
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    const valorNumber = parseFloat(form.valor);
-    if (isNaN(valorNumber) || valorNumber <= 0) {
+    const valorNumber = Number(String(form.valor).replace(',', '.'));
+    if (!Number.isFinite(valorNumber) || valorNumber <= 0) {
       alert('O valor deve ser maior que zero');
       return;
     }
-    const dados = { ...form, valor: valorNumber };
+    // So os campos que o backend aceita (nada de id/clienteId/lead/venda...).
+    const dados = {
+      id: form.id,
+      descricao: form.descricao,
+      valor: valorNumber,
+      tipo: form.tipo,
+      dataVencimento: form.dataVencimento,
+      dataPagamento: form.dataPagamento,
+      categoriaId: form.categoriaId,
+      produto: form.produto,
+      metodoPagamento: form.metodoPagamento,
+      status: form.status,
+      variacaoId: form.variacaoId,
+    };
+    if (lanc) {
+      delete dados.status;
+      delete dados.dataPagamento;
+    } else {
+      delete dados.id;
+      dados.chaveRepeticao = chaveRepeticao;
+    }
     // variacaoId so existe no front pra UX do Combobox — backend nao usa.
     delete dados.variacaoId;
     if (!form.dataPagamento) delete dados.dataPagamento;
     if (!form.categoriaId) delete dados.categoriaId;
     if (!form.produto) delete dados.produto;
     if (!form.metodoPagamento) delete dados.metodoPagamento;
-    if (!lanc) dados.parcelas = parseInt(form.parcelas) || 1;
-    onSalvar(dados);
+    if (!lanc) dados.parcelas = Number(form.parcelas) || 1;
+    if (lanc) {
+      // Na edicao, campo vazio = limpar.
+      dados.categoriaId = form.categoriaId || null;
+      dados.produto = form.produto || null;
+      dados.metodoPagamento = form.metodoPagamento || null;
+    }
+    enviar(() => onSalvar(dados));
   };
 
   // Selecionou item do catalogo: preenche nome do produto + valor (se ainda
@@ -1099,8 +1245,10 @@ function ModalLancamento({ isOpen, onClose, lanc, categorias, catalogo = [], onS
             label="Situação"
             value={form.status}
             onChange={(e) => setForm({ ...form, status: e.target.value })}
-            options={Object.entries(STATUS_LABELS).map(([k, v]) => ({ value: k, label: v.label }))}
+            options={['PENDENTE', 'PAGO'].map((k) => ({ value: k, label: STATUS_LABELS[k].label }))}
             placeholder=""
+            disabled={!!lanc}
+            hint={lanc ? 'Mude a situação pelo painel do lançamento.' : null}
           />
           <Select
             size="lg"
@@ -1190,7 +1338,7 @@ function ModalLancamento({ isOpen, onClose, lanc, categorias, catalogo = [], onS
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={onClose} type="button">Cancelar</Button>
-          <Button variant="primary" type="submit">{lanc ? 'Salvar' : 'Criar lançamento'}</Button>
+          <Button variant="primary" type="submit" loading={enviando}>{lanc ? 'Salvar' : 'Criar lançamento'}</Button>
         </div>
       </form>
     </Modal>
@@ -1205,17 +1353,20 @@ const USOS_CATEGORIA = [
 ];
 
 function ModalCategoria({ isOpen, onClose, cat, onSalvar }) {
-  const [form, setForm] = useState({ nome: '', tipo: 'RECEITA', subTipo: '', uso: '' });
+  // O pai troca a `key` a cada abertura, entao o form nasce da categoria atual.
+  const [form, setForm] = useState(() => (cat
+    ? { nome: cat.nome, tipo: cat.tipo, subTipo: cat.subTipo || '', uso: cat.uso || '' }
+    : { nome: '', tipo: 'RECEITA', subTipo: '', uso: '' }));
 
-  useEffect(() => {
-    if (cat) setForm({ nome: cat.nome, tipo: cat.tipo, subTipo: cat.subTipo || '', uso: cat.uso || '' });
-    else setForm({ nome: '', tipo: 'RECEITA', subTipo: '', uso: '' });
-  }, [cat, isOpen]);
-
+  const [enviando, enviar] = useEnvio();
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!form.uso) {
       alert('Escolha onde esta categoria será usada.');
+      return;
+    }
+    if (form.nome.trim().length < 2) {
+      alert('O nome precisa ter pelo menos 2 letras.');
       return;
     }
     // Limpa subTipo se voltar pra RECEITA (consistência com o backend).
@@ -1225,13 +1376,14 @@ function ModalCategoria({ isOpen, onClose, cat, onSalvar }) {
       uso: form.uso,
       subTipo: form.tipo === 'DESPESA' && form.subTipo ? form.subTipo : null,
     };
-    onSalvar(payload);
+    if (cat?.id) payload.id = cat.id;
+    enviar(() => onSalvar(payload));
   };
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={cat ? 'Editar categoria' : 'Nova categoria'} size="sm">
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Input label="Nome" value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} required autoFocus />
+        <Input label="Nome" value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} required autoFocus maxLength={80} />
         <Select
           label="Onde esta categoria aparece"
           value={form.uso}
@@ -1266,7 +1418,7 @@ function ModalCategoria({ isOpen, onClose, cat, onSalvar }) {
         )}
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={onClose} type="button">Cancelar</Button>
-          <Button variant="primary" type="submit">{cat ? 'Salvar' : 'Criar'}</Button>
+          <Button variant="primary" type="submit" loading={enviando}>{cat ? 'Salvar' : 'Criar'}</Button>
         </div>
       </form>
     </Modal>
@@ -1274,16 +1426,14 @@ function ModalCategoria({ isOpen, onClose, cat, onSalvar }) {
 }
 
 function DrawerLancamento({ isOpen, onClose, lanc, onEditar, onExcluir, onStatus, onCobrar, onAdiar, onCancelarComMotivo, onExcluirGrupo }) {
+  // O pai troca a `key` a cada abertura/lancamento, entao o historico nasce
+  // vazio e ja carregando quando ha o que buscar.
   const [historico, setHistorico] = useState([]);
-  const [carregandoHist, setCarregandoHist] = useState(false);
+  const [carregandoHist, setCarregandoHist] = useState(() => !!(isOpen && lanc?.id));
 
   // Carrega historico de mudancas do lancamento ao abrir.
   useEffect(() => {
-    if (!isOpen || !lanc?.id) {
-      setHistorico([]);
-      return;
-    }
-    setCarregandoHist(true);
+    if (!isOpen || !lanc?.id) return;
     api.get(`/financeiro/lancamentos/${lanc.id}/historico`)
       .then((r) => setHistorico(r.data?.itens || []))
       .catch(() => setHistorico([]))
@@ -1390,8 +1540,8 @@ function DrawerLancamento({ isOpen, onClose, lanc, onEditar, onExcluir, onStatus
         )}
 
         <div className="grid grid-cols-2 gap-3">
-          <InfoBox label="Vencimento" valor={new Date(lanc.dataVencimento).toLocaleDateString('pt-BR')} />
-          <InfoBox label="Pagamento" valor={lanc.dataPagamento ? new Date(lanc.dataPagamento).toLocaleDateString('pt-BR') : '—'} />
+          <InfoBox label="Vencimento" valor={fmtDia(lanc.dataVencimento)} />
+          <InfoBox label="Pagamento" valor={fmtDia(lanc.dataPagamento)} />
           <InfoBox label="Categoria" valor={lanc.categoria?.nome || '—'} />
           <InfoBox label="Método" valor={lanc.metodoPagamento || '—'} />
           {lanc.produto && <InfoBox label="Produto" valor={lanc.produto} />}
@@ -1483,7 +1633,7 @@ const CAMPOS_LANC_LABEL = {
 function fmtValorLanc(campo, v) {
   if (v == null || v === '') return '—';
   if (campo === 'valor') return Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-  if (campo === 'dataVencimento') return new Date(v).toLocaleDateString('pt-BR');
+  if (campo === 'dataVencimento') return fmtDia(v);
   if (campo === 'status') return STATUS_LABELS[v]?.label || v;
   return String(v);
 }
@@ -1584,152 +1734,24 @@ function InfoBox({ label, valor }) {
 }
 
 // =====================================================================
-// TELA DE CAIXA
-// =====================================================================
-// Mostra saldo atual em destaque + historico completo de ajustes manuais.
-// Cada ajuste registra o novo valor + motivo + data. O delta (variacao em
-// relacao ao ajuste anterior) e calculado aqui pra UX clara.
-// =====================================================================
-// TELA DO CAIXA
-// =====================================================================
-// 2 estados:
-//   1. Sem caixa aberto: empty state com botao "Abrir caixa"
-//   2. Com caixa aberto: hero com saldo esperado + info da sessao
-// Histórico de sessões fechadas sempre visivel embaixo.
-function CaixaTela({ sessao, sessoesFechadas, onAbrir }) {
-  return (
-    <div className="space-y-4">
-      {/* Estado: sem caixa aberto */}
-      {!sessao && (
-        <Card padding="lg">
-          <EmptyState
-            icon={Wallet}
-            title="Caixa fechado"
-            description="Abra o caixa pra começar a registrar vendas manuais. Informe o fundo de caixa (dinheiro inicial pra troco) e a abertura fica registrada com seu nome."
-            action={
-              <Button variant="primary" icon={Wallet} onClick={onAbrir}>
-                Abrir caixa
-              </Button>
-            }
-          />
-        </Card>
-      )}
-
-      {/* Estado: caixa aberto */}
-      {sessao && (
-        <>
-          {/* Hero compacto */}
-          <Card padding="md">
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-[var(--success-soft)] text-[var(--success)] flex items-center justify-center flex-shrink-0">
-                <Wallet size={18} strokeWidth={1.75} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-0.5">
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                    Saldo esperado no caixa
-                  </div>
-                  <Badge variant="success" size="sm">Aberto</Badge>
-                  {sessao.origem === 'AUTO_BOT' && (
-                    <Badge variant="neutral" size="sm">Auto-bot</Badge>
-                  )}
-                </div>
-                <div className="text-2xl font-semibold tracking-tight text-[var(--text-main)] tabular-nums">
-                  {fmtBRL(sessao.saldoEsperado ?? sessao.fundoCaixa ?? 0)}
-                </div>
-                <div className="text-[11px] text-[var(--text-muted)] mt-1">
-                  Aberto em <strong>{new Date(sessao.abertaEm).toLocaleString('pt-BR')}</strong>
-                  {sessao.usuarioAbriuNome && <> · por <strong>{sessao.usuarioAbriuNome}</strong></>}
-                  {' · fundo: '}{fmtBRL(sessao.fundoCaixa || 0)}
-                </div>
-              </div>
-            </div>
-          </Card>
-
-        </>
-      )}
-
-      {/* Historico de sessoes fechadas */}
-      <Card padding="none">
-        <div className="px-5 py-3 border-b border-[var(--border-subtle)]">
-          <div className="text-sm font-semibold text-[var(--text-main)]">Sessões anteriores</div>
-          <div className="text-[11px] text-[var(--text-muted)] mt-0.5">
-            {sessoesFechadas.length} {sessoesFechadas.length === 1 ? 'sessão fechada' : 'sessões fechadas'}
-          </div>
-        </div>
-        {sessoesFechadas.length === 0 ? (
-          <EmptyState
-            icon={History}
-            title="Nenhuma sessão fechada ainda"
-            description="O histórico aparece aqui quando você fechar a 1ª sessão."
-          />
-        ) : (
-          <div className="divide-y divide-[var(--border-subtle)]">
-            {sessoesFechadas.map((s) => {
-              const dif = s.diferenca ?? 0;
-              const corDif = dif === 0 ? 'text-[var(--text-muted)]' : dif > 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]';
-              return (
-                <div key={s.id} className="flex items-center gap-3 px-5 py-3 hover:bg-[var(--bg-subtle)]/50">
-                  <div className="w-8 h-8 rounded-lg bg-[var(--bg-subtle)] text-[var(--text-secondary)] flex items-center justify-center flex-shrink-0">
-                    <Lock size={12} strokeWidth={2} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-[var(--text-main)] tabular-nums">
-                        {fmtBRL(s.saldoFinalReal ?? 0)}
-                      </span>
-                      {s.origem === 'AUTO_BOT' && <Badge variant="neutral" size="sm">Auto</Badge>}
-                      <span className={`text-[11px] font-medium tabular-nums ${corDif}`}>
-                        {dif === 0 ? 'bateu' : `${dif > 0 ? '+' : ''}${fmtBRL(dif)}`}
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                      Fundo {fmtBRL(s.fundoCaixa || 0)} · Esperado {fmtBRL(s.saldoFinalEsperado ?? 0)}
-                      {s.usuarioFechouNome && <> · fechou {s.usuarioFechouNome}</>}
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-[var(--text-muted)] tabular-nums flex-shrink-0 text-right">
-                    <div>{new Date(s.abertaEm).toLocaleDateString('pt-BR')}</div>
-                    {s.fechadaEm && (
-                      <div className="opacity-70">
-                        → {new Date(s.fechadaEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>
-    </div>
-  );
-}
-
-// =====================================================================
 // MODAL DE ABRIR CAIXA
 // =====================================================================
 // Inicia uma sessao MANUAL. Fundo de caixa = dinheiro inicial pro troco.
 // Backend fecha automaticamente qualquer sessao AUTO_BOT que esteja aberta.
 function ModalAbrirCaixa({ isOpen, onClose, onConfirmar }) {
+  // O pai troca a `key` a cada abertura, entao os campos ja nascem limpos.
   const [fundoCaixa, setFundoCaixa] = useState('');
   const [observacao, setObservacao] = useState('');
 
-  useEffect(() => {
-    if (isOpen) {
-      setFundoCaixa('');
-      setObservacao('');
-    }
-  }, [isOpen]);
-
+  const [enviando, enviar] = useEnvio();
   const handleSubmit = (e) => {
     e.preventDefault();
-    const v = parseFloat(fundoCaixa);
-    if (Number.isNaN(v) || v < 0) {
+    const v = Number(String(fundoCaixa).replace(',', '.'));
+    if (!Number.isFinite(v) || v < 0) {
       alert('Fundo de caixa precisa ser um número ≥ 0.');
       return;
     }
-    onConfirmar({ fundoCaixa: v, observacao: observacao.trim() || null });
+    enviar(() => onConfirmar({ fundoCaixa: v, observacao: observacao.trim() || null }));
   };
 
   return (
@@ -1749,7 +1771,7 @@ function ModalAbrirCaixa({ isOpen, onClose, onConfirmar }) {
           min="0"
           value={fundoCaixa}
           onChange={(e) => setFundoCaixa(e.target.value)}
-          placeholder="Ex.: 100.00"
+          placeholder="Ex.: 100,00"
           autoFocus
           required
         />
@@ -1764,7 +1786,7 @@ function ModalAbrirCaixa({ isOpen, onClose, onConfirmar }) {
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" type="button" onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" type="submit" icon={Wallet}>Abrir caixa</Button>
+          <Button variant="primary" type="submit" icon={Wallet} loading={enviando}>Abrir caixa</Button>
         </div>
       </form>
     </Modal>
@@ -1777,30 +1799,31 @@ function ModalAbrirCaixa({ isOpen, onClose, onConfirmar }) {
 // Pede o saldo real contado fisicamente. Sistema calcula diferenca vs
 // esperado. Diferenca != 0 nao impede fechar — fica registrada.
 function ModalFecharCaixa({ isOpen, onClose, sessao, onConfirmar }) {
-  const [saldoReal, setSaldoReal] = useState('');
+  // O pai troca a `key` a cada abertura (e se o saldo esperado mudar), entao
+  // os campos nascem prontos. Pre-preenche com esperado pra facilitar quando
+  // bate certinho.
+  const [saldoReal, setSaldoReal] = useState(() => (
+    isOpen && sessao?.saldoEsperado != null ? String(sessao.saldoEsperado) : ''
+  ));
   const [observacao, setObservacao] = useState('');
-
-  useEffect(() => {
-    if (isOpen) {
-      // Pre-preenche com esperado pra facilitar quando bate certinho
-      setSaldoReal(sessao?.saldoEsperado != null ? String(sessao.saldoEsperado) : '');
-      setObservacao('');
-    }
-  }, [isOpen, sessao?.saldoEsperado]);
+  const [enviando, enviar] = useEnvio();
 
   if (!sessao) return null;
 
   const saldoEsperado = sessao.saldoEsperado ?? sessao.fundoCaixa ?? 0;
-  const saldoRealNum = parseFloat(saldoReal);
-  const diferenca = !Number.isNaN(saldoRealNum) ? Number((saldoRealNum - saldoEsperado).toFixed(2)) : null;
+  const saldoRealNum = saldoReal === '' ? NaN : Number(String(saldoReal).replace(',', '.'));
+  const diferenca = Number.isFinite(saldoRealNum) ? Number((saldoRealNum - saldoEsperado).toFixed(2)) : null;
+  const exigeObservacao = diferenca !== null && Math.abs(diferenca) > LIMITE_DIFERENCA_CAIXA;
+  const observacaoOk = !exigeObservacao || observacao.trim().length >= 3;
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (Number.isNaN(saldoRealNum)) {
+    if (!Number.isFinite(saldoRealNum) || saldoRealNum < 0) {
       alert('Informe o saldo real contado no caixa.');
       return;
     }
-    onConfirmar({ saldoFinalReal: saldoRealNum, observacao: observacao.trim() || null });
+    if (!observacaoOk) return;
+    enviar(() => onConfirmar({ saldoFinalReal: saldoRealNum, observacao: observacao.trim() || null }));
   };
 
   return (
@@ -1838,16 +1861,21 @@ function ModalFecharCaixa({ isOpen, onClose, sessao, onConfirmar }) {
         />
 
         <Textarea
-          label="Observação (opcional)"
+          label={exigeObservacao ? 'Observação (obrigatória)' : 'Observação (opcional)'}
           value={observacao}
           onChange={(e) => setObservacao(e.target.value)}
           rows={2}
+          maxLength={2000}
           placeholder="Anote algo se a diferença tiver explicação..."
+          required={exigeObservacao}
+          hint={exigeObservacao
+            ? `Diferença acima de ${fmtBRL(LIMITE_DIFERENCA_CAIXA)}: explique o motivo (mínimo 3 caracteres).`
+            : null}
         />
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" type="button" onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" type="submit" icon={Lock}>Fechar caixa</Button>
+          <Button variant="primary" type="submit" icon={Lock} loading={enviando} disabled={!observacaoOk}>Fechar caixa</Button>
         </div>
       </form>
     </Modal>
@@ -1857,13 +1885,24 @@ function ModalFecharCaixa({ isOpen, onClose, sessao, onConfirmar }) {
 // =====================================================================
 // LISTA DE CONTAS A PAGAR
 // =====================================================================
+const PERIODICIDADES = { PONTUAL: 'Pontual', MENSAL: 'Mensal', ANUAL: 'Anual' };
+
 function ListaContasPagar({ contas, carregando, podeCriar = true, podeEditar = true, podeExcluir = true, onNova, onEditar, onExcluir, onAtivar, onPagar }) {
-  if (carregando) {
-    return <Card padding="lg"><div className="text-center text-sm text-[var(--text-muted)] py-12">Carregando...</div></Card>;
-  }
-  if (!contas || contas.length === 0) {
-    return (
-      <Card padding="lg">
+  const [filtro, setFiltro] = useState('todas');
+  const lista = contas || [];
+  const ativas = lista.filter((c) => c.ativa).length;
+  const visiveis = lista.filter((c) => filtro === 'todas' || (filtro === 'ativas' ? c.ativa : !c.ativa));
+
+  return (
+    <Painel
+      titulo="Contas a pagar"
+      subtitulo="Despesas recorrentes ou pontuais, pagas com 1 clique (inclusive pelo caixa)"
+      acoes={podeCriar ? <Button variant="primary" size="sm" icon={Plus} onClick={onNova}>Nova conta a pagar</Button> : null}
+      semPadding
+    >
+      {carregando ? (
+        <p className="m-0 px-4 py-12 text-center text-[13px] text-[var(--text-muted)]">Carregando...</p>
+      ) : lista.length === 0 ? (
         <EmptyState
           icon={DollarSign}
           title="Nenhuma conta cadastrada"
@@ -1872,74 +1911,130 @@ function ListaContasPagar({ contas, carregando, podeCriar = true, podeEditar = t
             : 'Ainda não há contas cadastradas. Peça ao dono da conta ou administrador para cadastrar.'}
           action={podeCriar ? <Button variant="primary" icon={Plus} onClick={onNova}>Nova conta a pagar</Button> : null}
         />
-      </Card>
-    );
-  }
+      ) : (
+        <>
+          <BarraFerramentas>
+            <AbasPilula
+              rotulo="Filtrar contas"
+              abas={[
+                { valor: 'todas', rotulo: 'Todas', qtd: lista.length },
+                { valor: 'ativas', rotulo: 'Ativas', qtd: ativas },
+                { valor: 'inativas', rotulo: 'Inativas', qtd: lista.length - ativas },
+              ]}
+              valor={filtro}
+              onChange={setFiltro}
+            />
+          </BarraFerramentas>
+          {visiveis.length === 0 ? (
+            <p className="m-0 px-4 py-8 text-center text-[13px] text-[var(--text-muted)]">Nenhuma conta neste filtro.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr>
+                    <th className={TH}>Vencimento</th>
+                    <th className={TH}>Conta</th>
+                    <th className={TH}>Categoria</th>
+                    <th className={TH}>Periodicidade</th>
+                    <th className={`${TH} text-right`}>Valor padrão</th>
+                    <th className={TH}>Situação</th>
+                    <th className={TH}><span className="sr-only">Ações</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visiveis.map((c) => (
+                    <tr key={c.id} className={`hover:bg-[var(--bg-subtle)] transition-colors ${!c.ativa ? 'opacity-60' : ''}`}>
+                      <td className={`${TD} whitespace-nowrap text-[var(--text-secondary)] tabular-nums`}>
+                        {c.diaVencimento ? `Dia ${c.diaVencimento}${c.mesVencimento ? `/${String(c.mesVencimento).padStart(2, '0')}` : ''}` : '—'}
+                      </td>
+                      <td className={TD}>
+                        <div className="font-semibold text-[var(--text-main)]">{c.nome}</div>
+                        {c.observacoes && <div className="text-xs text-[var(--text-muted)] mt-0.5 truncate max-w-xs">{c.observacoes}</div>}
+                      </td>
+                      <td className={`${TD} text-[var(--text-secondary)]`}>{c.categoria?.nome || '—'}</td>
+                      <td className={TD}>
+                        <Badge variant="neutral" size="sm">{PERIODICIDADES[c.periodicidade] || c.periodicidade}</Badge>
+                      </td>
+                      <td className={`${TD} text-right font-semibold tabular-nums whitespace-nowrap text-[var(--text-main)]`}>
+                        {fmtBRL(c.valorPadrao || 0)}
+                      </td>
+                      <td className={TD}>
+                        <Badge variant={c.ativa ? 'success' : 'neutral'} size="sm">{c.ativa ? 'Ativa' : 'Inativa'}</Badge>
+                      </td>
+                      <td className={`${TD} text-right`}>
+                        <div className="flex items-center justify-end gap-1">
+                          {c.ativa && podeEditar && (
+                            <Button variant="primary" size="sm" onClick={() => onPagar(c)}>Paguei</Button>
+                          )}
+                          {(podeEditar || podeExcluir) && (
+                            <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel={`Ações de ${c.nome}`} />}>
+                              {c.ativa && podeEditar && (
+                                <DropdownItem icon={DollarSign} onClick={() => onPagar(c)}>Pagar agora</DropdownItem>
+                              )}
+                              {podeEditar && (
+                                <DropdownItem icon={Edit2} onClick={() => onEditar(c)}>Editar</DropdownItem>
+                              )}
+                              {podeEditar && (
+                                <DropdownItem icon={c.ativa ? Lock : Plus} onClick={() => onAtivar(c)}>
+                                  {c.ativa ? 'Desativar' : 'Reativar'}
+                                </DropdownItem>
+                              )}
+                              {podeExcluir && (
+                                <>
+                                  <DropdownDivider />
+                                  <DropdownItem icon={Trash2} variant="danger" onClick={() => onExcluir(c)}>Excluir</DropdownItem>
+                                </>
+                              )}
+                            </Dropdown>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </Painel>
+  );
+}
 
-  const PERIODICIDADES = { PONTUAL: 'Pontual', MENSAL: 'Mensal', ANUAL: 'Anual' };
-
+// Lateral da aba Contas a pagar: totais das contas cadastradas.
+function ResumoContasPagar({ contas }) {
+  const ativas = (contas || []).filter((c) => c.ativa);
+  const somar = (per) => ativas.filter((c) => c.periodicidade === per).reduce((s, c) => s + (Number(c.valorPadrao) || 0), 0);
+  const contar = (per) => ativas.filter((c) => c.periodicidade === per).length;
   return (
-    <Card padding="none">
-      <table className="w-full">
-        <thead>
-          <tr className="border-b border-[var(--border-main)]">
-            <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Nome</th>
-            <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Categoria</th>
-            <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Periodicidade</th>
-            <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Vencimento</th>
-            <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Valor padrão</th>
-            <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Status</th>
-            <th className="w-12"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {contas.map((c) => (
-            <tr key={c.id} className={`border-b border-[var(--border-subtle)] last:border-b-0 hover:bg-[var(--bg-subtle)]/30 transition-colors ${!c.ativa ? 'opacity-50' : ''}`}>
-              <td className="py-3 px-5">
-                <div className="text-sm font-semibold text-[var(--text-main)] tracking-tight">{c.nome}</div>
-                {c.observacoes && <div className="text-[11px] text-[var(--text-muted)] mt-0.5 truncate max-w-xs">{c.observacoes}</div>}
-              </td>
-              <td className="py-3 px-5 text-xs text-[var(--text-secondary)]">{c.categoria?.nome || '—'}</td>
-              <td className="py-3 px-5 text-xs">
-                <Badge variant="neutral" size="sm">{PERIODICIDADES[c.periodicidade] || c.periodicidade}</Badge>
-              </td>
-              <td className="py-3 px-5 text-xs text-[var(--text-secondary)]">
-                {c.diaVencimento ? `Dia ${c.diaVencimento}${c.mesVencimento ? `/${String(c.mesVencimento).padStart(2, '0')}` : ''}` : '—'}
-              </td>
-              <td className="py-3 px-5 text-right text-sm font-semibold tabular-nums text-[var(--text-main)]">
-                {Number(c.valorPadrao || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-              </td>
-              <td className="py-3 px-5 text-xs">
-                <Badge variant={c.ativa ? 'success' : 'neutral'} size="sm">{c.ativa ? 'Ativa' : 'Inativa'}</Badge>
-              </td>
-              <td className="py-3 px-2">
-                {(podeEditar || podeExcluir) && (
-                  <Dropdown trigger={<IconButton icon={MoreHorizontal} variant="ghost" size="sm" ariaLabel="Ações" />}>
-                    {c.ativa && podeEditar && (
-                      <DropdownItem icon={DollarSign} onClick={() => onPagar(c)}>Pagar agora</DropdownItem>
-                    )}
-                    {podeEditar && (
-                      <DropdownItem icon={Edit2} onClick={() => onEditar(c)}>Editar</DropdownItem>
-                    )}
-                    {podeEditar && (
-                      <DropdownItem icon={c.ativa ? Lock : Plus} onClick={() => onAtivar(c)}>
-                        {c.ativa ? 'Desativar' : 'Reativar'}
-                      </DropdownItem>
-                    )}
-                    {podeExcluir && (
-                      <>
-                        <DropdownDivider />
-                        <DropdownItem icon={Trash2} variant="danger" onClick={() => onExcluir(c)}>Excluir</DropdownItem>
-                      </>
-                    )}
-                  </Dropdown>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </Card>
+    <Painel titulo="Resumo das contas" semPadding>
+      <LinhaInfo rotulo="Contas ativas" valor={ativas.length} />
+      <LinhaInfo rotulo={`Mensais (${contar('MENSAL')})`} valor={`${fmtBRL(somar('MENSAL'))}/mês`} />
+      <LinhaInfo rotulo={`Anuais (${contar('ANUAL')})`} valor={`${fmtBRL(somar('ANUAL'))}/ano`} />
+      <LinhaInfo rotulo={`Pontuais (${contar('PONTUAL')})`} valor={fmtBRL(somar('PONTUAL'))} />
+    </Painel>
+  );
+}
+
+// Lateral da aba Categorias: quantas de cada tipo/uso.
+function ResumoCategorias({ categorias }) {
+  const receitas = categorias.filter((c) => c.tipo === 'RECEITA').length;
+  const despesas = categorias.filter((c) => c.tipo === 'DESPESA');
+  const semClassificacao = despesas.filter((c) => !c.subTipo).length;
+  return (
+    <Painel titulo="Resumo" semPadding>
+      <LinhaInfo rotulo="Categorias de receita" valor={receitas} />
+      <LinhaInfo rotulo="Categorias de despesa" valor={despesas.length} />
+      <LinhaInfo rotulo="Despesas fixas" valor={despesas.filter((c) => c.subTipo === 'FIXA').length} />
+      <LinhaInfo rotulo="Despesas variáveis" valor={despesas.filter((c) => c.subTipo === 'VARIAVEL').length} />
+      <LinhaInfo
+        rotulo="Despesas sem classificação"
+        valor={<span className={semClassificacao > 0 ? 'text-[var(--warning-text)]' : ''}>{semClassificacao}</span>}
+      />
+      {Object.entries(USO_CURTO).map(([uso, nome]) => (
+        <LinhaInfo key={uso} rotulo={`Aparece em: ${nome.toLowerCase()}`} valor={categorias.filter((c) => c.uso === uso).length} />
+      ))}
+    </Painel>
   );
 }
 
@@ -1948,35 +2043,33 @@ function ListaContasPagar({ contas, carregando, podeCriar = true, podeEditar = t
 // =====================================================================
 function ModalContaPagar({ isOpen, onClose, conta, categorias, onSalvar }) {
   const ehEdicao = !!conta?.id;
-  const [form, setForm] = useState({
-    nome: '',
-    valorPadrao: '',
-    categoriaId: '',
-    periodicidade: 'MENSAL',
-    diaVencimento: '',
-    mesVencimento: '',
-    observacoes: '',
-  });
+  // O pai troca a `key` a cada abertura, entao o form nasce da conta atual.
+  const [form, setForm] = useState(() => ({
+    nome: conta?.nome || '',
+    valorPadrao: conta?.valorPadrao ?? '',
+    categoriaId: conta?.categoriaId || '',
+    periodicidade: conta?.periodicidade || 'MENSAL',
+    diaVencimento: conta?.diaVencimento ?? '',
+    mesVencimento: conta?.mesVencimento ?? '',
+    observacoes: conta?.observacoes || '',
+  }));
 
-  useEffect(() => {
-    if (isOpen) {
-      setForm({
-        nome: conta?.nome || '',
-        valorPadrao: conta?.valorPadrao ?? '',
-        categoriaId: conta?.categoriaId || '',
-        periodicidade: conta?.periodicidade || 'MENSAL',
-        diaVencimento: conta?.diaVencimento ?? '',
-        mesVencimento: conta?.mesVencimento ?? '',
-        observacoes: conta?.observacoes || '',
-      });
-    }
-  }, [isOpen, conta]);
-
+  const [enviando, enviar] = useEnvio();
   const handleSubmit = (e) => {
     e.preventDefault();
-    const valor = parseFloat(form.valorPadrao);
-    if (!form.nome.trim() || Number.isNaN(valor) || valor < 0) {
+    const valor = Number(String(form.valorPadrao).replace(',', '.'));
+    if (!form.nome.trim() || !Number.isFinite(valor) || valor < 0) {
       alert('Preencha nome e valor padrão corretamente.');
+      return;
+    }
+    const dia = form.diaVencimento === '' ? null : Number(form.diaVencimento);
+    if (dia !== null && !(Number.isInteger(dia) && dia >= 1 && dia <= 31)) {
+      alert('Dia do vencimento deve ser de 1 a 31.');
+      return;
+    }
+    const mesNum = form.mesVencimento === '' ? null : Number(form.mesVencimento);
+    if (form.periodicidade === 'ANUAL' && mesNum !== null && !(Number.isInteger(mesNum) && mesNum >= 1 && mesNum <= 12)) {
+      alert('Mês do vencimento deve ser de 1 a 12.');
       return;
     }
     const dados = {
@@ -1984,13 +2077,12 @@ function ModalContaPagar({ isOpen, onClose, conta, categorias, onSalvar }) {
       valorPadrao: valor,
       categoriaId: form.categoriaId || null,
       periodicidade: form.periodicidade,
-      diaVencimento: form.diaVencimento ? parseInt(form.diaVencimento, 10) : null,
-      mesVencimento: form.periodicidade === 'ANUAL' && form.mesVencimento
-        ? parseInt(form.mesVencimento, 10) : null,
+      diaVencimento: dia,
+      mesVencimento: form.periodicidade === 'ANUAL' ? mesNum : null,
       observacoes: form.observacoes.trim() || null,
     };
     if (ehEdicao) dados.id = conta.id;
-    onSalvar(dados);
+    enviar(() => onSalvar(dados));
   };
 
   return (
@@ -2019,7 +2111,7 @@ function ModalContaPagar({ isOpen, onClose, conta, categorias, onSalvar }) {
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" type="button" onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" type="submit">{ehEdicao ? 'Salvar alterações' : 'Cadastrar'}</Button>
+          <Button variant="primary" type="submit" loading={enviando}>{ehEdicao ? 'Salvar alterações' : 'Cadastrar'}</Button>
         </div>
       </form>
     </Modal>
@@ -2032,45 +2124,36 @@ function ModalContaPagar({ isOpen, onClose, conta, categorias, onSalvar }) {
 // Aceita conta pre-selecionada (vindo da lista) ou abre combobox de contas
 // ativas (vindo do header do caixa). Valor herda do valorPadrao mas e editavel.
 function ModalPagarConta({ isOpen, onClose, contaSelecionada, contas, sessaoCaixaAberta, onConfirmar }) {
-  const [contaId, setContaId] = useState('');
-  const [valor, setValor] = useState('');
+  // O pai troca a `key` a cada abertura, entao os campos nascem da conta
+  // pre-selecionada (ou vazios quando a pessoa vai escolher no combobox).
+  const [contaId, setContaId] = useState(contaSelecionada?.id || '');
+  const [valor, setValor] = useState(contaSelecionada ? String(contaSelecionada.valorPadrao || '') : '');
   const [motivo, setMotivo] = useState('');
   const [tirarDoCaixa, setTirarDoCaixa] = useState(true);
 
   const conta = contaSelecionada || contas.find((c) => c.id === contaId);
 
-  useEffect(() => {
-    if (isOpen) {
-      if (contaSelecionada) {
-        setContaId(contaSelecionada.id);
-        setValor(String(contaSelecionada.valorPadrao || ''));
-      } else {
-        setContaId('');
-        setValor('');
-      }
-      setMotivo('');
-      setTirarDoCaixa(true);
-    }
-  }, [isOpen, contaSelecionada]);
-
-  // Quando troca a conta no combobox, preenche valor automaticamente.
-  useEffect(() => {
-    if (!contaSelecionada && contaId) {
-      const c = contas.find((x) => x.id === contaId);
+  // Quando troca a conta no combobox, preenche valor automaticamente
+  // (no proprio evento de troca, em vez de um efeito observando contaId).
+  const trocarConta = (novoId) => {
+    setContaId(novoId);
+    if (!contaSelecionada && novoId) {
+      const c = contas.find((x) => x.id === novoId);
       if (c) setValor(String(c.valorPadrao || ''));
     }
-  }, [contaId, contas, contaSelecionada]);
+  };
 
+  const [enviando, enviar] = useEnvio();
   const handleSubmit = (e) => {
     e.preventDefault();
-    const v = parseFloat(valor);
-    if (!conta || Number.isNaN(v) || v <= 0) {
+    const v = Number(String(valor).replace(',', '.'));
+    if (!conta || !Number.isFinite(v) || v <= 0) {
       alert('Selecione a conta e informe um valor > 0.');
       return;
     }
     // Passa a conta resolvida (pré-selecionada ou escolhida no combobox)
     // pra o handler do pai não precisar adivinhar.
-    onConfirmar({ conta, valor: v, motivo: motivo.trim() || undefined, tirarDoCaixa });
+    enviar(() => onConfirmar({ conta, valor: v, motivo: motivo.trim() || undefined, tirarDoCaixa }));
   };
 
   return (
@@ -2081,7 +2164,7 @@ function ModalPagarConta({ isOpen, onClose, contaSelecionada, contas, sessaoCaix
             size="lg"
             label="Qual conta está pagando?"
             value={contaId}
-            onChange={(e) => setContaId(e.target.value)}
+            onChange={(e) => trocarConta(e.target.value)}
             placeholder="Selecione a conta..."
             options={contas.map((c) => ({
               value: c.id,
@@ -2152,7 +2235,7 @@ function ModalPagarConta({ isOpen, onClose, contaSelecionada, contas, sessaoCaix
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" type="button" onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" type="submit" disabled={tirarDoCaixa && !sessaoCaixaAberta}>Confirmar pagamento</Button>
+          <Button variant="primary" type="submit" loading={enviando} disabled={tirarDoCaixa && !sessaoCaixaAberta}>Confirmar pagamento</Button>
         </div>
       </form>
     </Modal>
@@ -2165,15 +2248,10 @@ function ModalPagarConta({ isOpen, onClose, contaSelecionada, contas, sessaoCaix
 // 1 modal compartilhado com tipo dinamico. SANGRIA (backend) = retirada (UI);
 // SUPRIMENTO (backend) = entrada (UI). Motivo obrigatorio (>=3 chars).
 function ModalMovimentacaoCaixa({ isOpen, tipo, onClose, onConfirmar }) {
+  // O pai troca a `key` a cada abertura, entao os campos ja nascem limpos.
   const [valor, setValor] = useState('');
   const [motivo, setMotivo] = useState('');
-
-  useEffect(() => {
-    if (isOpen) {
-      setValor('');
-      setMotivo('');
-    }
-  }, [isOpen]);
+  const [enviando, enviar] = useEnvio();
 
   if (!tipo) return null;
 
@@ -2182,13 +2260,13 @@ function ModalMovimentacaoCaixa({ isOpen, tipo, onClose, onConfirmar }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    const v = parseFloat(valor);
-    if (Number.isNaN(v) || v <= 0) {
+    const v = Number(String(valor).replace(',', '.'));
+    if (!Number.isFinite(v) || v <= 0) {
       alert('Valor precisa ser > 0.');
       return;
     }
     if (!motivoValido) return;
-    onConfirmar({ valor: v, motivo: motivo.trim() });
+    enviar(() => onConfirmar({ valor: v, motivo: motivo.trim() }));
   };
 
   return (
@@ -2239,9 +2317,48 @@ function ModalMovimentacaoCaixa({ isOpen, tipo, onClose, onConfirmar }) {
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" type="button" onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" type="submit" disabled={!motivoValido}>
+          <Button variant="primary" type="submit" disabled={!motivoValido} loading={enviando}>
             Confirmar
           </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// =====================================================================
+// MODAL: excluir categoria em uso (escolher a substituta)
+// =====================================================================
+function ModalSubstituirCategoria({ isOpen, onClose, cat, mensagem, categorias, onConfirmar }) {
+  const [novaId, setNovaId] = useState('');
+  const [enviando, enviar] = useEnvio();
+  if (!cat) return null;
+  const opcoes = categorias.filter((c) => c.id !== cat.id && c.tipo === cat.tipo);
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!novaId) return;
+    enviar(() => onConfirmar(novaId));
+  };
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Categoria em uso" description={mensagem} size="md">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {opcoes.length === 0 ? (
+          <p className="m-0 text-sm text-[var(--text-secondary)]">
+            Não há outra categoria de {cat.tipo === 'RECEITA' ? 'receita' : 'despesa'} para ficar no lugar. Crie uma antes de excluir esta.
+          </p>
+        ) : (
+          <Select
+            label={`Trocar "${cat.nome}" por`}
+            value={novaId}
+            onChange={(e) => setNovaId(e.target.value)}
+            placeholder="Escolha a categoria..."
+            options={opcoes.map((c) => ({ value: c.id, label: c.nome }))}
+            hint="Lançamentos, produtos e contas a pagar passam para a categoria escolhida."
+          />
+        )}
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="secondary" type="button" onClick={onClose}>Voltar</Button>
+          <Button variant="danger" type="submit" icon={Trash2} disabled={!novaId} loading={enviando}>Trocar e excluir</Button>
         </div>
       </form>
     </Modal>
@@ -2256,21 +2373,19 @@ function ModalMovimentacaoCaixa({ isOpen, tipo, onClose, onConfirmar }) {
 // auditoria/historico. Pra reverter, basta abrir o lancamento e marcar
 // pendente de novo no drawer.
 function ModalCancelar({ isOpen, onClose, lanc, onConfirmar }) {
+  // O pai troca a `key` a cada abertura, entao o motivo ja nasce vazio.
   const [motivo, setMotivo] = useState('');
-
-  useEffect(() => {
-    if (isOpen) setMotivo('');
-  }, [isOpen]);
+  const [enviando, enviar] = useEnvio();
 
   if (!lanc) return null;
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!motivo.trim()) {
-      alert('Explique o motivo do cancelamento pra rastrear depois.');
+    if (motivo.trim().length < 3) {
+      alert('Explique o motivo do cancelamento (mínimo 3 caracteres).');
       return;
     }
-    onConfirmar(motivo.trim());
+    enviar(() => onConfirmar(motivo.trim()));
   };
 
   return (
@@ -2301,7 +2416,7 @@ function ModalCancelar({ isOpen, onClose, lanc, onConfirmar }) {
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" type="button" onClick={onClose}>Voltar</Button>
-          <Button variant="danger" type="submit" icon={XCircle}>Confirmar cancelamento</Button>
+          <Button variant="danger" type="submit" icon={XCircle} loading={enviando}>Confirmar cancelamento</Button>
         </div>
       </form>
     </Modal>
@@ -2315,13 +2430,8 @@ function ModalCancelar({ isOpen, onClose, lanc, onConfirmar }) {
 // template padrao com variaveis ja substituidas + lista de variaveis (caso
 // usuario queira reescrever do zero usando placeholders {nome}, {valor}, etc).
 function ModalCobranca({ isOpen, onClose, dados, onEnviar }) {
-  const [mensagem, setMensagem] = useState('');
-
-  useEffect(() => {
-    if (isOpen && dados?.mensagemPadrao) {
-      setMensagem(dados.mensagemPadrao);
-    }
-  }, [isOpen, dados]);
+  // O pai troca a `key` a cada abertura, entao a mensagem nasce do template.
+  const [mensagem, setMensagem] = useState(() => (isOpen && dados?.mensagemPadrao ? dados.mensagemPadrao : ''));
 
   if (!dados) return null;
 

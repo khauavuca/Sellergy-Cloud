@@ -5,9 +5,10 @@
 // (itensPendentes); quando o Pix for confirmado, cobrancaPagamento.js cria a
 // Venda de verdade (baixa de estoque + lancamento) — ver aplicarEfeitoConfirmacao.
 
+const porTelefone = require('../../clientesFinais/porTelefone');
 const prisma = require('../../prisma');
 const { resolverPrecoVenda } = require('../../produto');
-const { criarCobranca } = require('../pagamentoService');
+const { criarCobranca, leadPorTelefone } = require('../pagamentoService');
 
 const chave = 'COBRANCA_PIX';
 
@@ -15,7 +16,7 @@ const definicao = {
   type: 'function',
   function: {
     name: 'gerar_cobranca_pix',
-    description: 'Gera uma cobranca Pix pro cliente pagar os itens que ele decidiu comprar. So chame depois que o cliente confirmar exatamente o que quer e a quantidade — use consultar_estoque antes pra confirmar preco e disponibilidade.',
+    description: 'Gera uma cobranca Pix pro cliente pagar os itens que ele decidiu comprar. So chame depois que o cliente confirmar exatamente o que quer e a quantidade — use consultar_estoque antes pra confirmar preco e disponibilidade. Se a resposta pedir o CPF (precisaCpf), peca o CPF ou CNPJ ao cliente e chame de novo com cpf_cnpj. Nunca invente CPF.',
     parameters: {
       type: 'object',
       properties: {
@@ -31,17 +32,23 @@ const definicao = {
             required: ['produto', 'quantidade'],
           },
         },
+        cpf_cnpj: {
+          type: 'string',
+          description: 'CPF ou CNPJ de quem vai pagar, so os numeros, exatamente como o cliente informou. Mande so quando a ferramenta pedir (precisaCpf).',
+        },
       },
       required: ['itens'],
     },
   },
 };
 
+const INSTRUCAO_CPF = 'Peca ao cliente o CPF (ou CNPJ) de quem vai pagar e chame gerar_cobranca_pix de novo com os mesmos itens e cpf_cnpj. Nao invente nem complete numeros.';
+
 /**
- * @param {{itens:Array<{produto:string, quantidade:number}>}} argumentos
- * @param {{clienteId:string}} contexto
+ * @param {{itens:Array<{produto:string, quantidade:number}>, cpf_cnpj?:string}} argumentos
+ * @param {{clienteId:string, telefoneCliente?:string}} contexto
  */
-async function executar({ itens }, { clienteId }) {
+async function executar({ itens, cpf_cnpj: cpfCnpj }, { clienteId, telefoneCliente } = {}) {
   if (!Array.isArray(itens) || itens.length === 0) {
     return { erro: 'Informe pelo menos 1 item.' };
   }
@@ -87,8 +94,16 @@ async function executar({ itens }, { clienteId }) {
   const descricao = itensResolvidos.map((i) => `${i.nome} x${i.quantidade}`).join(', ');
 
   try {
+    // Asaas pede CPF/CNPJ de quem paga: usa o do lead (achado pelo telefone da
+    // conversa) ou o que o cliente informou; sem nenhum, devolve precisaCpf.
+    // Cliente da conversa (acha ou cria pela regra unica): a cobranca fica ligada a ele.
+    const lead = telefoneCliente
+      ? (await porTelefone.acharOuCriarLead({ clienteId, telefone: telefoneCliente, origem: 'WHATSAPP' }).catch(() => ({ lead: null }))).lead || await leadPorTelefone(clienteId, telefoneCliente)
+      : null;
     const cobranca = await criarCobranca({
       clienteId,
+      leadId: lead?.id || null,
+      pagador: typeof cpfCnpj === 'string' && cpfCnpj.trim() ? { cpfCnpj } : undefined,
       origem: 'VENDA',
       valor: valorTotal,
       metodo: 'PIX',
@@ -107,6 +122,12 @@ async function executar({ itens }, { clienteId }) {
     // status=400 do provedorDoTenant e um erro de configuracao do tenant (sem
     // PSP ativo) — mensagem segura de devolver a IA. Outros erros (rede, PSP
     // fora do ar) ficam genericos pra nao vazar detalhe interno pro cliente final.
+    if (erro.codigo === 'PAGADOR_SEM_CPF') {
+      return { erro: 'Para gerar o Pix e preciso o CPF ou CNPJ de quem vai pagar.', precisaCpf: true, instrucao: INSTRUCAO_CPF };
+    }
+    if (erro.codigo === 'CPF_CNPJ_INVALIDO') {
+      return { erro: 'O CPF ou CNPJ informado nao e valido.', precisaCpf: true, instrucao: 'Avise o cliente que o numero nao confere e peca de novo. ' + INSTRUCAO_CPF };
+    }
     if (erro.status === 400) return { erro: erro.message };
     console.error('[ferramenta:gerarCobrancaPix]', erro?.message || erro);
     return { erro: 'Nao foi possivel gerar a cobranca agora. Peca pro cliente tentar novamente em instantes.' };

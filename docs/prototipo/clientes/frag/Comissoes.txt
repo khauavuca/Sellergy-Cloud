@@ -1,0 +1,61 @@
+@@title Sellergy — comissões
+@@nav Financeiro.dc.html
+@@h 1040
+@@main
+<div class="row">
+<a href="Financeiro.dc.html" class="bg"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"></path></svg>Financeiro</a>
+<h1 class="t1 grow">Comissões de novembro</h1>
+<span class="sm mut">Fecha no dia 30 · pagamento até 05/12</span>
+</div>
+
+<div class="grid">
+<div class="card k"><p class="kl">Total de comissões</p><p class="kv">R$ 4.620,00</p><p class="kx">16% do faturamento de serviços</p></div>
+<div class="card k"><p class="kl">Já pago</p><p class="kv">{{pagoTot}}</p><p class="kx">{{pagoX}}</p></div>
+<div class="card k"><p class="kl">Falta pagar</p><p class="kv">{{faltaTot}}</p><p class="kx">Calculado sozinho em cada atendimento concluído</p></div>
+</div>
+
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section class="card" style="flex: 999 1 520px; min-width: 0; overflow: hidden">
+<sc-for list="{{profs}}" as="p" hint-placeholder-count="3">
+<button type="button" class="{{p.cls}}" onClick="{{p.pick}}" style="border-radius: 0; border: 0; border-top: 1px solid #EEF0EC; align-items: center"><span class="av">{{p.ini}}</span><span class="grow"><strong style="display: block">{{p.n}}</strong><span class="sm mut">{{p.regra}}</span></span><span class="n" style="font-weight: 700">{{p.v}}</span><span class="{{p.stCls}}">{{p.st}}</span></button>
+</sc-for>
+</section>
+<aside class="card" style="flex: 1 1 380px; padding: 20px; box-sizing: border-box">
+<div class="row"><span class="av">{{sel.ini}}</span><div class="grow"><h2 class="t2">{{sel.n}}</h2><span class="sm mut">{{sel.regra}}</span></div></div>
+<div style="margin-top: 14px; font-size: 14px">
+<sc-for list="{{sel.linhas}}" as="l" hint-placeholder-count="4"><div class="row" style="padding: 8px 0; border-bottom: 1px solid #EEF0EC"><span class="grow">{{l.t}}</span><span class="mut n">{{l.base}}</span><strong class="n" style="width: 100px; text-align: right">{{l.v}}</strong></div></sc-for>
+<div class="row mut" style="padding: 8px 0"><span class="grow">(−) Vale adiantado em 15/11</span><strong class="n">{{sel.vale}}</strong></div>
+<div class="row" style="padding: 8px 0; font-weight: 700; font-size: 16px"><span class="grow">A receber</span><span class="n">{{sel.v}}</span></div>
+</div>
+<sc-if value="{{sel.aberto}}" hint-placeholder-val="{{ true }}">
+<button type="button" class="bp" style="width: 100%; margin-top: 12px" onClick="{{pagar}}">Pagar por Pix e mandar recibo</button>
+<button type="button" class="bg" style="width: 100%; margin-top: 4px">Lançar vale</button>
+</sc-if>
+<sc-if value="{{sel.pago}}" hint-placeholder-val="{{ false }}">
+<p style="margin: 12px 0 0; padding: 12px; border-radius: 12px; background: #E3F4EA; color: #0E5C34; font-size: 14px; line-height: 1.5; font-weight: 600">Pago por Pix hoje. O recibo com o detalhe de cada atendimento foi pro WhatsApp de {{sel.primeiro}}.</p>
+</sc-if>
+<p class="ajuda" style="margin: 14px 0 0">A regra de cada pessoa fica em Configurações › Equipe. Produto vendido por ela também conta.</p>
+</aside>
+</div>
+@@script
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { sel: 0, pagos: [] }; }
+  renderVals() {
+    const s = this.state; const set = (o) => this.setState(o);
+    const brl = (v) => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const P = [
+      { ini: 'CN', n: 'Carla Nunes', regra: '20% dos serviços · 5% dos produtos', vale: 370, linhas: [{ t: '35 peelings químicos', base: 'R$ 12.250,00', v: 2450 }, { t: 'Produtos vendidos', base: 'R$ 1.240,00', v: 62 }] },
+      { ini: 'AR', n: 'Ana Ribeiro', regra: '15% dos serviços · 5% dos produtos', vale: 0, linhas: [{ t: '41 limpezas de pele', base: 'R$ 7.380,00', v: 1107 }, { t: '10 massagens', base: 'R$ 1.600,00', v: 240 }, { t: 'Produtos vendidos', base: 'R$ 220,00', v: 11 }] },
+      { ini: 'BT', n: 'Bruno Teles', regra: 'R$ 35,00 por atendimento', vale: 0, linhas: [{ t: '22 drenagens', base: '', v: 770 }, { t: '10 massagens', base: '', v: 350 }] },
+    ].map((p) => ({ ...p, tot: p.linhas.reduce((a, l) => a + l.v, 0) - p.vale }));
+    const pago = (i) => s.pagos.includes(i);
+    const pagoTot = P.filter((p, i) => pago(i)).reduce((a, p) => a + p.tot, 0);
+    const sel = P[s.sel];
+    return {
+      profs: P.map((p, i) => ({ ...p, v: brl(p.tot), st: pago(i) ? 'Pago' : 'A pagar', stCls: 'pill ' + (pago(i) ? 'ok' : 'wait'), cls: 'opt' + (s.sel === i ? ' on' : ''), pick: () => set({ sel: i }) })),
+      sel: { ...sel, v: brl(sel.tot), vale: sel.vale ? '− ' + brl(sel.vale) : 'R$ 0,00', linhas: sel.linhas.map((l) => ({ ...l, v: brl(l.v) })), aberto: !pago(s.sel), pago: pago(s.sel), primeiro: sel.n.split(' ')[0] },
+      pagoTot: brl(pagoTot), pagoX: s.pagos.length + ' de 3 pessoas', faltaTot: brl(P.reduce((a, p) => a + p.tot, 0) - pagoTot),
+      pagar: () => set({ pagos: [...s.pagos, s.sel] }),
+    };
+  }
+}

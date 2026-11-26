@@ -44,7 +44,9 @@ export default function ModalIntegracoes({ isOpen, onClose, cliente }) {
 
   const grupos = useMemo(() => {
     const porCat = {};
-    for (const t of tipos) {
+    // Fiscal: so a Focus NFe (unico emissor). O normal e o cliente usar a conta
+    // da Sellergy pelo assistente fiscal; chave propria aqui e o caso avancado.
+    for (const t of tipos.filter((x) => x.tipo !== 'NUVEM_FISCAL_KEY')) {
       const cat = t.categoria || 'Outro';
       (porCat[cat] = porCat[cat] || []).push(t);
     }
@@ -182,11 +184,6 @@ export default function ModalIntegracoes({ isOpen, onClose, cliente }) {
                             <div className="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)]">
                               <Lock size={12} /> A chave é cifrada no cofre e nunca volta pela tela.
                             </div>
-                            {t.tipo === 'WHATSAPP_CLOUD_TOKEN' && (
-                              <div className="text-[11px] text-[var(--text-muted)]">
-                                O número do canal (phoneNumberId) e o verify token ficam na tela do bot, não aqui.
-                              </div>
-                            )}
                             <div className="flex justify-end gap-2">
                               <Button variant="secondary" size="sm" onClick={() => setEditando(null)}>Cancelar</Button>
                               <Button variant="primary" size="sm" onClick={salvar} loading={salvando}>Salvar</Button>
@@ -200,6 +197,9 @@ export default function ModalIntegracoes({ isOpen, onClose, cliente }) {
               </div>
             );
           })}
+          <p className="m-0 text-xs text-[var(--text-muted)] leading-relaxed">
+            Nota fiscal: o normal é o cliente ativar pelo assistente fiscal, com a conta da Sellergy. Só cadastre a Focus aqui se ele já tiver conta própria. WhatsApp oficial: o próprio cliente conecta na tela Bots. IA: use “IA do bot” no menu do cliente.
+          </p>
         </div>
       )}
     </Modal>

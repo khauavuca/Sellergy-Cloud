@@ -1,4 +1,5 @@
 const express = require('express');
+const { uploadSeguro } = require('../seguranca/uploadSeguro');
 const FornecedorController = require('../controllers/FornecedorController');
 const middlewareAutenticacao = require('../middlewares/auth.middleware');
 const {
@@ -18,7 +19,7 @@ roteador.post('/', requerPermissao('ESTOQUE', 'criar'), (req, res) => Fornecedor
 roteador.post(
   '/importar',
   requerPermissao('ESTOQUE', 'criar'),
-  aceitarUmCsv('arquivo'),
+  aceitarUmCsv('arquivo'), uploadSeguro('csv'),
   (req, res) => FornecedorController.importar(req, res),
 );
 roteador.get('/:id', requerPermissao('ESTOQUE', 'visualizar'), (req, res) => FornecedorController.buscarPorId(req, res));

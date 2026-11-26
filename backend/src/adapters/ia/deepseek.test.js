@@ -76,3 +76,48 @@ test('normalizarResposta com argumentos malformados nao lanca — trata como vaz
   const r = normalizarResposta(raw);
   assert.deepStrictEqual(r.toolCalls[0].argumentos, {});
 });
+
+// --- nome do modelo configuravel (IA_MODELO_PADRAO) ---
+
+test('resolverModelo: aceita os dois nomes do flash e o pro', () => {
+  const { resolverModelo, MODELOS_VALIDOS } = DeepSeekAdapter;
+  assert.ok(MODELOS_VALIDOS.has('deepseek-flash'));
+  assert.ok(MODELOS_VALIDOS.has('deepseek-v4-flash'));
+  assert.equal(resolverModelo('deepseek-flash', {}), 'deepseek-flash');
+  assert.equal(resolverModelo('deepseek-v4-flash', {}), 'deepseek-v4-flash');
+  assert.equal(resolverModelo('deepseek-v4-pro', {}), 'deepseek-v4-pro');
+  assert.equal(resolverModelo(undefined, {}), 'deepseek-v4-flash');
+});
+
+test('IA_MODELO_PADRAO troca o nome real do flash (e do invalido), sem mexer no pro', () => {
+  const { resolverModelo } = DeepSeekAdapter;
+  const env = { IA_MODELO_PADRAO: 'deepseek-flash' };
+  assert.equal(resolverModelo('deepseek-v4-flash', env), 'deepseek-flash');
+  assert.equal(resolverModelo('gpt-4o', env), 'deepseek-flash');
+  assert.equal(resolverModelo('deepseek-v4-pro', env), 'deepseek-v4-pro');
+  // Valor estranho na env e ignorado (cai no fixo).
+  assert.equal(resolverModelo('deepseek-v4-flash', { IA_MODELO_PADRAO: 'rm -rf /' }), 'deepseek-v4-flash');
+});
+
+test('adapter manda o nome resolvido pela env', async () => {
+  process.env.IA_MODELO_PADRAO = 'deepseek-flash';
+  try {
+    const r = await criarAdapter().responder({ mensagens: [{ role: 'user', content: 'oi' }], modelo: 'deepseek-v4-flash' });
+    assert.strictEqual(r.bruto.model, 'deepseek-flash');
+  } finally {
+    delete process.env.IA_MODELO_PADRAO;
+  }
+});
+
+test('OpenRouter: IA_BASE_URL troca o endereco (so https) e IA_MODELO_FORCADO manda no modelo', () => {
+  const { baseUrl, modeloForcado, resolverModelo } = DeepSeekAdapter;
+  assert.equal(baseUrl({}), 'https://api.deepseek.com');
+  assert.equal(baseUrl({ IA_BASE_URL: 'https://openrouter.ai/api/v1/' }), 'https://openrouter.ai/api/v1');
+  assert.equal(baseUrl({ IA_BASE_URL: 'http://openrouter.ai/api/v1' }), 'https://api.deepseek.com');
+  assert.equal(baseUrl({ IA_BASE_URL: 'javascript:alert(1)' }), 'https://api.deepseek.com');
+  const env = { IA_MODELO_FORCADO: 'deepseek/deepseek-v4-flash-0731:free' };
+  assert.equal(modeloForcado(env), 'deepseek/deepseek-v4-flash-0731:free');
+  assert.equal(modeloForcado({ IA_MODELO_FORCADO: 'x y' }), null);
+  assert.equal(resolverModelo('deepseek-v4-pro', env), 'deepseek/deepseek-v4-flash-0731:free');
+  assert.equal(resolverModelo('deepseek-v4-pro', {}), 'deepseek-v4-pro');
+});

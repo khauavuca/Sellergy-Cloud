@@ -1,4 +1,4 @@
-import { forwardRef } from 'react';
+import { forwardRef, useId } from 'react';
 import clsx from 'clsx';
 import { ChevronDown } from 'lucide-react';
 
@@ -17,6 +17,9 @@ const Select = forwardRef(function Select({
   className,
   ...props
 }, ref) {
+  // Liga o rótulo ao campo (leitor de tela e clique no rótulo).
+  const idGerado = useId();
+  const idCampo = props.id || idGerado;
   const sizes = {
     sm: 'h-9 text-sm pl-3 pr-9',
     md: 'h-11 text-sm pl-4 pr-10',
@@ -32,12 +35,13 @@ const Select = forwardRef(function Select({
   return (
     <div className={clsx(fullWidth && 'w-full')}>
       {label && (
-        <label className={labelCls}>
+        <label htmlFor={idCampo} className={labelCls}>
           {label}
         </label>
       )}
       <div className="relative">
         <select
+          id={idCampo}
           ref={ref}
           className={clsx(
             'w-full appearance-none bg-[var(--bg-card)] text-[var(--text-main)] rounded-xl',

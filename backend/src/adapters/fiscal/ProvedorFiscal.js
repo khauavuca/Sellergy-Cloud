@@ -86,14 +86,58 @@ class ProvedorFiscal {
       body: req.corpo ? JSON.stringify(req.corpo) : undefined,
     });
     const texto = await resp.text();
-    const json = texto ? JSON.parse(texto) : {};
+    let json = {};
+    try { json = texto ? JSON.parse(texto) : {}; } catch { json = { mensagem: texto.slice(0, 300) }; }
     if (!resp.ok) {
-      throw Object.assign(new Error(`Emissor ${this.constructor.provedor} HTTP ${resp.status}`), {
-        status: 502, codigo: 'FISCAL_ERRO', detalhe: json,
+      const motivo = mensagemDoEmissor(json);
+      throw Object.assign(new Error(motivo
+        ? `O emissor recusou (HTTP ${resp.status}): ${motivo}`
+        : `Emissor ${this.constructor.provedor} HTTP ${resp.status}`), {
+        status: 502, httpStatus: resp.status, codigo: 'FISCAL_ERRO', mensagemEmissor: motivo, detalhe: json,
       });
     }
     return json;
   }
+
+  /**
+   * Faltou dado obrigatorio para montar a nota: em 'live' bloqueia antes de
+   * chamar o emissor (422 com a lista); em 'fixture' segue (facilita teste).
+   */
+  _exigirCompleto(faltas) {
+    if (this.modo !== 'live' || !faltas || !faltas.length) return;
+    throw Object.assign(new Error(`Falta para emitir a nota: ${[...new Set(faltas)].join('; ')}.`), {
+      status: 422, codigo: 'FISCAL_DADOS_INCOMPLETOS', faltas: [...new Set(faltas)],
+    });
+  }
 }
 
-module.exports = { ProvedorFiscal, STATUS };
+/**
+ * Texto do erro devolvido pelo emissor, sem dado sensivel: mascara CPF/CNPJ,
+ * e-mail e qualquer coisa com cara de token. Max 400 caracteres.
+ */
+function mensagemDoEmissor(json) {
+  if (!json || typeof json !== 'object') return '';
+  const partes = [];
+  const add = (v) => { if (typeof v === 'string' && v.trim()) partes.push(v.trim()); };
+  add(json.mensagem);
+  add(json.mensagem_sefaz);
+  add(json.message);
+  add(json.error?.message);
+  add(typeof json.error === 'string' ? json.error : null);
+  for (const lista of [json.erros, json.errors, json.error?.errors, json.mensagens]) {
+    if (Array.isArray(lista)) lista.slice(0, 5).forEach((e) => add(typeof e === 'string' ? e : e?.mensagem || e?.message || e?.descricao));
+  }
+  return sanitizarMensagem([...new Set(partes)].join(' | '));
+}
+
+function sanitizarMensagem(texto) {
+  return String(texto || '')
+    .replace(/Bearer\s+[\w.~+/=-]+/gi, 'Bearer ***')
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '***@***')
+    .replace(/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/g, '**.***.***/****-**')
+    .replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, '***.***.***-**')
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '***')
+    .slice(0, 400);
+}
+
+module.exports = { ProvedorFiscal, STATUS, mensagemDoEmissor, sanitizarMensagem };

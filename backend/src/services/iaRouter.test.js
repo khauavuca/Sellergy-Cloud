@@ -108,3 +108,54 @@ test('estoura o teto de iteracoes sem resposta final: corta o loop em vez de rod
   assert.ok(chamadas <= 4, `deveria parar no teto (chamou ${chamadas} vezes)`);
   assert.match(r.texto, /Nao consegui concluir/);
 });
+
+// --- registrarConsumo: incremento atomico (nao perde tokens com 2 mensagens juntas) ---
+
+test('registrarConsumo usa increment atomico e grava o excedente com condicao', async () => {
+  const prisma = require('../prisma');
+  const { registrarConsumo } = require('./iaRouter');
+  let total = 0;
+  const upserts = [];
+  const condicionais = [];
+  prisma.consumoIA.upsert = async (args) => {
+    upserts.push(args);
+    total += args.update.tokensUsados.increment; // o banco soma; aqui simula
+    return { id: 'c1', tokensUsados: total, tokensExcedentes: 0, valorExcedenteCentavos: 0 };
+  };
+  prisma.consumoIA.updateMany = async (args) => { condicionais.push(args); return { count: 1 }; };
+
+  // Duas mensagens "ao mesmo tempo": nenhuma le-e-sobrescreve a outra.
+  await Promise.all([
+    registrarConsumo({ clienteId: 'cli', botId: 'b', tokensUsados: 1_500_000, tokensIncluidosMes: 2_000_000, precoPorMilCentavos: 1.5 }),
+    registrarConsumo({ clienteId: 'cli', botId: 'b', tokensUsados: 1_000_000, tokensIncluidosMes: 2_000_000, precoPorMilCentavos: 1.5 }),
+  ]);
+  assert.equal(total, 2_500_000);
+  assert.ok(upserts.every((u) => typeof u.update.tokensUsados.increment === 'number'));
+  // Passou 500 mil da cota -> 500 milhares * 1,5 centavo = 750 centavos (R$ 15/milhao).
+  const ultimo = condicionais.at(-1);
+  assert.deepEqual(ultimo.data, { tokensExcedentes: 500_000, valorExcedenteCentavos: 750 });
+  assert.equal(ultimo.where.tokensUsados, 2_500_000);
+});
+
+test('preco novo: R$ 15 por milhao de excedente', () => {
+  const r = calcularExcedente({ totalTokens: 3_000_000, tokensIncluidosMes: 2_000_000, precoPorMilCentavos: 1.5 });
+  assert.equal(r.tokensExcedentes, 1_000_000);
+  assert.equal(r.valorExcedenteCentavos, 1500);
+});
+
+test('cota esgotada: bot de IA responde pelo menu de perguntas (busca as FAQs sozinho)', async () => {
+  const prisma = require('../prisma');
+  const { montarRespostaBot } = require('./iaRouter');
+  prisma.consumoIADiario.findUnique = async () => null;
+  prisma.consumoIA.aggregate = async () => ({ _sum: { tokensUsados: 2_000_000 } });
+  prisma.consumoIA.upsert = async () => ({});
+  prisma.consumoIA.updateMany = async () => ({ count: 0 }); // ja avisado
+  prisma.faq.findMany = async () => [{ ativo: true, ordem: 1, pergunta: 'Horario', resposta: 'Das 9h as 18h', palavrasChave: [] }];
+  const r = await montarRespostaBot({
+    bot: { id: 'b', clienteId: 'cli', iaAtiva: true, iaTokensIncluidosMes: 2_000_000, iaExcedenteAutorizadoTokens: 0 },
+    texto: 'oi', faqs: [], de: '5511999990000',
+  });
+  assert.equal(r.origem, 'MENU');
+  assert.equal(r.iaIndisponivel, 'COTA_ESGOTADA');
+  assert.match(r.texto, /1\. Horario/);
+});

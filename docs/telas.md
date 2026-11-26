@@ -1,6 +1,6 @@
 # Telas do ERP — diagramas e estrutura (pós-pivô)
 
-> Mapa de telas do produto **ERP-first**. Substitui `telas-e-fluxos.md` (histórico).
+> Mapa de telas do produto **ERP-first**. Substitui o antigo `telas-e-fluxos.md` (removido; está no histórico do git).
 > Cada tela tem **propósito + diagrama de layout (blocos) + elementos + notas de
 > segmento**. Os diagramas são wireframes (estrutura, não pixel). Visuais detalhados da
 > **Agenda** já existem (mockups Dia/Semana/Mês). Posso gerar mockup visual de qualquer

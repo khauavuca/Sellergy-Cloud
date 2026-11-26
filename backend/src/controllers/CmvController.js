@@ -1,4 +1,15 @@
 const prisma = require('../prisma');
+const R = require('../financeiro/regras');
+
+// Periodo opcional; data invalida ou inicio depois do fim -> erro 422.
+function lerFiltroData(query) {
+  const p = R.lerPeriodo({ inicio: query.inicio, fim: query.fim });
+  if (!p.ok) return p;
+  const data = {};
+  if (p.inicio) data.gte = p.inicio;
+  if (p.fim) data.lte = p.fim;
+  return { ok: true, data };
+}
 
 class CmvController {
 
@@ -6,15 +17,17 @@ class CmvController {
     try {
       const { clienteId } = req.usuario;
       const { inicio, fim } = req.query;
+      const f = lerFiltroData(req.query);
+      if (!f.ok) return res.status(422).json({ erro: f.erro });
 
+      // So vendas concluidas (cancelada nao entra no CMV — mesmo criterio
+      // dos relatorios de Vendas e Visao executiva).
       const movimentacoes = await prisma.movimentacaoEstoque.findMany({
         where: {
           variacao: { produto: { clienteId } },
           tipo: 'VENDA',
-          data: {
-            gte: inicio ? new Date(inicio) : undefined,
-            lte: fim ? new Date(fim) : undefined
-          }
+          venda: { is: { status: 'COMPLETED' } },
+          data: f.data,
         },
         include: {
           variacao: true
@@ -83,15 +96,14 @@ class CmvController {
   async relatorioLucratividade(req, res) {
     try {
       const { clienteId } = req.usuario;
-      const { inicio, fim } = req.query;
+      const f = lerFiltroData(req.query);
+      if (!f.ok) return res.status(422).json({ erro: f.erro });
 
       const onde = {
         variacao: { produto: { clienteId } },
         tipo: 'VENDA',
-        data: {
-          gte: inicio ? new Date(inicio) : undefined,
-          lte: fim ? new Date(fim) : undefined
-        }
+        venda: { is: { status: 'COMPLETED' } },
+        data: f.data,
       };
 
       const movimentacoes = await prisma.movimentacaoEstoque.findMany({

@@ -4,6 +4,8 @@ import { Mail, ArrowRight, AlertCircle, MessageCircle, Calendar, ShoppingBag } f
 import { useAuthStore } from '../store/auth.store';
 import { Button, Input } from '../components/ui';
 import SellergyLogo from '../components/SellergyLogo';
+import EtapaCodigo from '../components/auth/EtapaCodigo';
+import { ADMIN_NESTE_SITE } from '../utils/painel';
 
 /**
  * Login do cliente final (CLIENT, ADMINISTRADOR, VENDEDOR).
@@ -11,13 +13,16 @@ import SellergyLogo from '../components/SellergyLogo';
 export default function ClientLoginPage() {
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
-  const { login, error, isLoading, isAuthenticated, user, logout } = useAuthStore();
+  const { login, error, isLoading, isAuthenticated, user, logout, desafio2fa, confirmar2fa, cancelar2fa } = useAuthStore();
   const navigate = useNavigate();
 
   useEffect(() => {
     if (isAuthenticated && user) {
       if (user.perfil === 'ADMIN') {
-        logout();
+        // No endereco do painel (crm) o admin segue pro painel. No site publico
+        // (sellergycloud.com) o painel nao existe: encerra a sessao.
+        if (ADMIN_NESTE_SITE) navigate('/admin/dashboard', { replace: true });
+        else logout();
       } else if (['CLIENT', 'ADMINISTRADOR', 'VENDEDOR'].includes(user.perfil)) {
         navigate('/app/dashboard');
       }
@@ -83,56 +88,56 @@ export default function ClientLoginPage() {
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-[var(--danger-soft)] border border-[var(--danger-soft)]">
-                <AlertCircle size={16} className="text-[var(--danger)] flex-shrink-0 mt-0.5" />
-                <p className="text-sm text-[var(--danger-text)] font-medium">{error}</p>
-              </div>
-            )}
+          {desafio2fa ? (
+            <EtapaCodigo erro={error} carregando={isLoading} onConfirmar={confirmar2fa} onVoltar={cancelar2fa} />
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {error && (
+                <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-[var(--danger-soft)] border border-[var(--danger-soft)]">
+                  <AlertCircle size={16} className="text-[var(--danger)] flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-[var(--danger-text)] font-medium">{error}</p>
+                </div>
+              )}
+  
+              <Input
+                label="E-mail"
+                type="email"
+                icon={Mail}
+                placeholder="seuemail@email.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
+                required
+              />
+  
+              <Input
+                label="Senha"
+                type="password"
+                placeholder="Digite sua senha"
+                value={senha}
+                onChange={(e) => setSenha(e.target.value)}
+                autoComplete="current-password"
+                required
+              />
+  
+              <Button
+                type="submit"
+                variant="primary"
+                size="lg"
+                fullWidth
+                loading={isLoading}
+                icon={ArrowRight}
+                iconPosition="right"
+              >
+                Entrar
+              </Button>
+            </form>
+          )}
 
-            <Input
-              label="E-mail"
-              type="email"
-              icon={Mail}
-              placeholder="seuemail@email.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoComplete="email"
-              required
-            />
-
-            <Input
-              label="Senha"
-              type="password"
-              placeholder="Digite sua senha"
-              value={senha}
-              onChange={(e) => setSenha(e.target.value)}
-              autoComplete="current-password"
-              required
-            />
-
-            <Button
-              type="submit"
-              variant="primary"
-              size="lg"
-              fullWidth
-              loading={isLoading}
-              icon={ArrowRight}
-              iconPosition="right"
-            >
-              Entrar
-            </Button>
-          </form>
-
-          <div className="mt-8 text-center">
-            <Link
-              to="/admin/login"
-              className="text-sm text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors font-medium"
-            >
-              Voce e administrador do sistema? Acesse aqui
-            </Link>
-          </div>
+          <p className="mt-6 text-center text-sm text-[var(--text-muted)]">
+            Ainda não tem conta?{' '}
+            <Link to="/cadastro" className="font-semibold text-[var(--text-main)] hover:underline">Teste grátis por 14 dias</Link>
+          </p>
         </div>
       </div>
     </div>

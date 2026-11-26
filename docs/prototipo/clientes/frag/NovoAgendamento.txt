@@ -1,0 +1,153 @@
+@@title Sellergy — novo agendamento
+@@nav Agenda.dc.html
+@@h 1040
+@@css
+.slot{min-height:44px;border:1px solid #D5D8DC;border-radius:10px;background:#fff;font:inherit;font-size:15px;font-weight:600;cursor:pointer;font-variant-numeric:tabular-nums;color:#15171A}
+.slot.on{background:#136F4D;border-color:#136F4D;color:#fff}
+.slot.x{background:#F1F2EF;color:#A0A5AD;text-decoration:line-through;cursor:not-allowed}
+@@main
+<div class="row">
+<a href="Agenda.dc.html" class="bg" aria-label="Voltar para a agenda"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"></path></svg>Agenda</a>
+<h1 class="t1">Novo agendamento</h1>
+</div>
+<div class="steps" aria-label="Etapas">
+<sc-for list="{{passos}}" as="p" hint-placeholder-count="4"><span class="{{p.cls}}"><b>{{p.n}}</b>{{p.t}}</span></sc-for>
+</div>
+
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section class="card" style="flex: 999 1 560px; min-width: 0; padding: 22px; box-sizing: border-box">
+
+<sc-if value="{{e1}}" hint-placeholder-val="{{ true }}">
+<h2 class="t2">Pra quem é o horário?</h2>
+<div class="f" style="margin-top: 14px"><label for="bc">Buscar por nome ou celular</label><input id="bc" type="text" value="pau"></div>
+<div style="margin-top: 12px; border: 1px solid #E3E5E8; border-radius: 12px; overflow: hidden">
+<sc-for list="{{clientes}}" as="c" hint-placeholder-count="3">
+<button type="button" class="{{c.cls}}" onClick="{{c.pick}}" style="border-radius: 0; border: 0; border-top: 1px solid #EEF0EC"><span class="av">{{c.ini}}</span><span style="flex: 1"><strong style="display: block">{{c.nome}}</strong><span class="sm mut">{{c.info}}</span></span></button>
+</sc-for>
+</div>
+<button type="button" class="bs" style="margin-top: 12px"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Cadastrar cliente nova (só nome e celular)</button>
+</sc-if>
+
+<sc-if value="{{e2}}" hint-placeholder-val="{{ false }}">
+<h2 class="t2">Serviço</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 10px; margin-top: 12px">
+<sc-for list="{{servicos}}" as="s" hint-placeholder-count="4">
+<button type="button" class="{{s.cls}}" onClick="{{s.pick}}"><span style="flex: 1"><strong style="display: block">{{s.nome}}</strong><span class="sm mut">{{s.info}}</span></span><span class="n" style="font-weight: 700">{{s.preco}}</span></button>
+</sc-for>
+</div>
+<h2 class="t2" style="margin-top: 22px">Com quem</h2>
+<div class="row" style="margin-top: 12px">
+<sc-for list="{{profs}}" as="p" hint-placeholder-count="2"><button type="button" class="{{p.cls}}" onClick="{{p.pick}}">{{p.nome}}</button></sc-for>
+</div>
+<p class="ajuda" style="margin: 8px 0 0">Só aparece quem faz esse serviço. Configure em Serviços.</p>
+</sc-if>
+
+<sc-if value="{{e3}}" hint-placeholder-val="{{ false }}">
+<div class="row"><h2 class="t2 grow">Dia e horário</h2><span class="sm mut">Horários livres de {{profNome}}</span></div>
+<div class="row" style="margin-top: 12px">
+<sc-for list="{{dias}}" as="d" hint-placeholder-count="5"><button type="button" class="{{d.cls}}" onClick="{{d.pick}}">{{d.t}}</button></sc-for>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; margin-top: 16px">
+<sc-for list="{{slots}}" as="h" hint-placeholder-count="12"><button type="button" class="{{h.cls}}" onClick="{{h.pick}}">{{h.t}}</button></sc-for>
+</div>
+<p class="ajuda" style="margin: 10px 0 0">Riscados já estão ocupados. O sistema já conta o tempo do serviço e o intervalo de limpeza da sala.</p>
+</sc-if>
+
+<sc-if value="{{e4}}" hint-placeholder-val="{{ false }}">
+<h2 class="t2">Confirmação e sinal</h2>
+<div style="display: flex; flex-direction: column; gap: 14px; margin-top: 14px">
+<div class="row"><div class="grow"><strong>Mandar confirmação no WhatsApp agora</strong><p class="sm mut" style="margin: 2px 0 0">Paula recebe o horário com os botões Confirmar e Remarcar.</p></div><button type="button" class="sw on" aria-label="Mandar confirmação" aria-pressed="true"></button></div>
+<div class="row"><div class="grow"><strong>Cobrar sinal por Pix</strong><p class="sm mut" style="margin: 2px 0 0">30% do valor ({{sinalValor}}). O horário só fica confirmado depois do pagamento. Reduz falta.</p></div><button type="button" class="{{swSinal}}" onClick="{{toggleSinal}}" aria-label="Cobrar sinal"></button></div>
+<div class="row"><div class="grow"><strong>Lembretes</strong><p class="sm mut" style="margin: 2px 0 0">24 h e 2 h antes, como nas configurações.</p></div><span class="pill ok">Ligados</span></div>
+<div class="f"><label for="ob">Observação para a profissional</label><textarea id="ob">Pele sensível, evitar ácido glicólico.</textarea></div>
+</div>
+</sc-if>
+
+<sc-if value="{{e5}}" hint-placeholder-val="{{ false }}">
+<div style="text-align: center; padding: 30px 10px">
+<span class="ok-ic"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width: 30px; height: 30px; stroke-width: 2.2"><path d="m5 12.5 4.5 4.5L19 7.5"></path></svg></span>
+<h2 style="margin: 16px 0 0; font-family: 'Space Grotesk', sans-serif; font-size: 24px">Horário marcado</h2>
+<p class="mut" style="margin: 8px 0 0; line-height: 1.5">{{fimTxt}}</p>
+<div class="row" style="justify-content: center; margin-top: 20px">
+<a href="Agenda.dc.html" class="bp">Ver na agenda</a>
+<a href="SinalPix.dc.html" class="bs">Ver o que a cliente recebe</a>
+<button type="button" class="bg" onClick="{{reiniciar}}">Marcar outro</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{navegando}}" hint-placeholder-val="{{ true }}">
+<div class="row" style="margin-top: 22px; padding-top: 16px; border-top: 1px solid #EEF0EC">
+<button type="button" class="bg" onClick="{{voltar}}">Voltar</button>
+<span class="grow"></span>
+<button type="button" class="bp" onClick="{{avancar}}">{{avancarTxt}}</button>
+</div>
+</sc-if>
+</section>
+
+<aside class="card" style="flex: 1 1 320px; padding: 20px; box-sizing: border-box" aria-label="Resumo">
+<h2 class="t2">Resumo</h2>
+<dl style="margin: 14px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 10px 14px; font-size: 14px">
+<dt class="mut">Cliente</dt><dd style="margin: 0; font-weight: 600">{{rCliente}}</dd>
+<dt class="mut">Serviço</dt><dd style="margin: 0; font-weight: 600">{{rServico}}</dd>
+<dt class="mut">Com</dt><dd style="margin: 0; font-weight: 600">{{rProf}}</dd>
+<dt class="mut">Quando</dt><dd style="margin: 0; font-weight: 600">{{rQuando}}</dd>
+<dt class="mut">Valor</dt><dd class="n" style="margin: 0; font-weight: 600">{{rValor}}</dd>
+<dt class="mut">Sinal</dt><dd class="n" style="margin: 0; font-weight: 600">{{rSinal}}</dd>
+</dl>
+<div style="margin-top: 18px; padding: 12px; border-radius: 12px; background: #FDF0D9; color: #7A4A00; font-size: 13px; line-height: 1.5">Paula faltou 1 vez nos últimos 6 meses. Cobrar sinal é uma boa ideia.</div>
+<p class="ajuda" style="margin: 14px 0 0">Tem pacote ativo: Drenagem linfática, 4 de 10 sessões usadas. Se escolher drenagem, desconta do pacote e não cobra.</p>
+</aside>
+</div>
+@@script
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { e: 1, cli: 0, srv: 0, prof: 0, dia: 0, hora: 3, sinal: true }; }
+  renderVals() {
+    const s = this.state; const set = (o) => this.setState(o);
+    const nomes = ['Cliente', 'Serviço', 'Horário', 'Confirmação'];
+    const cl = [
+      { nome: 'Paula Rocha', ini: 'PR', info: '(11) 99812-4410 · última visita 10/11 · pacote ativo' },
+      { nome: 'Paulo Henrique Dias', ini: 'PH', info: '(11) 98120-3377 · última visita em agosto' },
+      { nome: 'Ana Paula Moreira', ini: 'AP', info: '(11) 97455-0921 · cliente nova' },
+    ];
+    const sv = [
+      { nome: 'Limpeza de pele', info: '1 h · Ana', preco: 180, p: [0] },
+      { nome: 'Drenagem linfática', info: '50 min · Bruno', preco: 150, p: [1] },
+      { nome: 'Peeling químico', info: '1 h · Carla', preco: 350, p: [2] },
+      { nome: 'Massagem relaxante', info: '1 h · Bruno, Ana', preco: 160, p: [1, 0] },
+    ];
+    const pf = ['Ana Ribeiro', 'Bruno Teles', 'Carla Nunes'];
+    const dias = ['Hoje, 24/11', 'Qua, 25/11', 'Qui, 26/11', 'Sex, 27/11', 'Sáb, 28/11'];
+    const hs = ['09:00', '09:30', '10:00', '10:30', '11:00', '13:30', '14:00', '14:30', '15:00', '16:00', '16:30', '17:00'];
+    const ocup = s.dia === 0 ? [0, 1, 2, 7] : [4, 9];
+    const srv = sv[s.srv]; const profIdx = srv.p.includes(s.prof) ? s.prof : srv.p[0];
+    const brl = (v) => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+    const quando = dias[s.dia] + ' às ' + hs[s.hora];
+    const pacote = s.srv === 1;
+    const sinalV = pacote ? 0 : Math.round(srv.preco * 0.3);
+    return {
+      passos: nomes.map((t, i) => ({ n: i + 1 < s.e ? '✓' : i + 1, t, cls: 'st' + (i + 1 === s.e ? ' on' : i + 1 < s.e ? ' done' : '') })),
+      e1: s.e === 1, e2: s.e === 2, e3: s.e === 3, e4: s.e === 4, e5: s.e === 5, navegando: s.e < 5,
+      clientes: cl.map((c, i) => ({ ...c, cls: 'opt' + (s.cli === i ? ' on' : ''), pick: () => set({ cli: i }) })),
+      servicos: sv.map((x, i) => ({ ...x, preco: brl(x.preco), cls: 'opt' + (s.srv === i ? ' on' : ''), pick: () => set({ srv: i, prof: x.p[0] }) })),
+      profs: srv.p.map((i) => ({ nome: pf[i], cls: 'chip' + (profIdx === i ? ' on' : ''), pick: () => set({ prof: i }) })),
+      dias: dias.map((t, i) => ({ t, cls: 'chip' + (s.dia === i ? ' on' : ''), pick: () => set({ dia: i, hora: s.dia === i ? s.hora : 5 }) })),
+      slots: hs.map((t, i) => ({ t, cls: 'slot' + (ocup.includes(i) ? ' x' : s.hora === i ? ' on' : ''), pick: () => { if (!ocup.includes(i)) set({ hora: i }); } })),
+      profNome: pf[profIdx].split(' ')[0],
+      swSinal: 'sw' + (s.sinal && !pacote ? ' on' : ''),
+      toggleSinal: () => set({ sinal: !s.sinal }),
+      sinalValor: pacote ? 'não se aplica, usa o pacote' : brl(sinalV),
+      rCliente: cl[s.cli].nome,
+      rServico: s.e > 1 ? srv.nome : '—',
+      rProf: s.e > 1 ? pf[profIdx] : '—',
+      rQuando: s.e > 2 ? quando : '—',
+      rValor: s.e > 1 ? (pacote ? 'Pacote (sessão 5 de 10)' : brl(srv.preco)) : '—',
+      rSinal: s.e > 3 ? (s.sinal && !pacote ? brl(sinalV) + ' por Pix' : 'Sem sinal') : '—',
+      fimTxt: cl[s.cli].nome + ' · ' + srv.nome + ' com ' + pf[profIdx] + ' · ' + quando + '. ' + (s.sinal && !pacote ? 'O Pix do sinal de ' + brl(sinalV) + ' foi enviado no WhatsApp. O horário fica amarelo na agenda até ela pagar.' : 'A confirmação já foi enviada no WhatsApp.'),
+      avancarTxt: s.e === 4 ? 'Marcar horário' : 'Continuar',
+      avancar: () => set({ e: s.e + 1 }),
+      voltar: () => set({ e: Math.max(1, s.e - 1) }),
+      reiniciar: () => set({ e: 1 }),
+    };
+  }
+}

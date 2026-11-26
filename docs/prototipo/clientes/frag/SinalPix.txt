@@ -1,0 +1,60 @@
+@@phone
+@@title Sinal do horário
+@@css
+.qr{width:180px;height:180px;margin:0 auto;border-radius:12px;background:
+repeating-linear-gradient(90deg,#15171A 0 8px,#fff 8px 14px,#15171A 14px 18px,#fff 18px 30px),#fff;
+-webkit-mask:repeating-linear-gradient(0deg,#000 0 10px,transparent 10px 14px,#000 14px 22px,transparent 22px 26px);mask:repeating-linear-gradient(0deg,#000 0 10px,transparent 10px 14px,#000 14px 22px,transparent 22px 26px)}
+@@main
+<div style="background: #075E54; color: #fff; padding: 14px 16px; display: flex; align-items: center; gap: 12px">
+<span style="width: 38px; height: 38px; border-radius: 50%; background: #F2C46B; color: #4A3000; display: grid; place-items: center; font-weight: 700; font-size: 14px">CL</span>
+<span style="line-height: 1.25"><strong style="display: block; font-size: 15px">Clínica Lumi Estética</strong><span style="font-size: 12px; opacity: .8">Conta comercial</span></span>
+</div>
+
+<sc-if value="{{chat}}" hint-placeholder-val="{{ true }}">
+<div class="wa">
+<div class="msg">Oi, Paula! Seu horário está reservado:<br><strong>Limpeza de pele com Ana</strong><br>Quarta, 25/11, às 13:30<br><br>Pra garantir, pague o sinal de <strong>R$ 54,00</strong> por Pix. O resto você paga na clínica. Se não pagar até hoje às 20:00, o horário volta pra agenda.<small>15:12</small>
+<button type="button" class="wb" onClick="{{abrir}}">Pagar sinal de R$ 54,00</button></div>
+</div>
+</sc-if>
+
+<sc-if value="{{pagar}}" hint-placeholder-val="{{ false }}">
+<div style="padding: 22px 20px; display: flex; flex-direction: column; flex: 1">
+<p class="mut" style="margin: 0; font-size: 14px">Sinal do horário</p>
+<p class="n" style="margin: 4px 0 0; font-family: 'Space Grotesk', sans-serif; font-size: 40px; font-weight: 700">R$ 54,00</p>
+<p class="mut" style="margin: 4px 0 0; font-size: 14px">Limpeza de pele · qua, 25/11, 13:30 · desconta do total de R$ 180,00</p>
+<div class="cd" style="margin-top: 20px; padding: 20px; text-align: center">
+<div class="qr" role="img" aria-label="QR Code do Pix"></div>
+<p class="mut" style="margin: 14px 0 0; font-size: 13px">Vence em 4 h 48 min</p>
+</div>
+<div style="margin-top: auto; display: flex; flex-direction: column; gap: 10px">
+<button type="button" class="bp" onClick="{{pago}}">Copiar código Pix</button>
+<p class="mut" style="margin: 0; text-align: center; font-size: 12px; line-height: 1.5">Abra o app do seu banco, escolha Pix copia e cola. A confirmação chega aqui sozinha. (Toque no botão pra simular o pagamento.)</p>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{feito}}" hint-placeholder-val="{{ false }}">
+<div style="padding: 40px 20px 20px; display: flex; flex-direction: column; flex: 1; text-align: center">
+<span class="ok-ic" style="margin: 0 auto"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width: 34px; height: 34px; stroke-width: 2.2"><path d="m5 12.5 4.5 4.5L19 7.5"></path></svg></span>
+<h1 class="h" style="margin-top: 18px">Horário garantido</h1>
+<p class="mut" style="margin: 10px 0 0; line-height: 1.5">Recebemos R$ 54,00. Quarta, 25/11, às 13:30 com Ana.<br>Na clínica você paga R$ 126,00.</p>
+<div class="cd" style="margin-top: 24px; padding: 14px 16px; text-align: left; font-size: 14px; line-height: 1.6">
+<strong>Se precisar desmarcar</strong><br><span class="mut">Até 24 h antes o sinal vira crédito pro próximo horário. Depois disso fica com a clínica.</span>
+</div>
+<div style="margin-top: auto"><button type="button" class="bg" onClick="{{reiniciar}}">Ver de novo</button></div>
+</div>
+</sc-if>
+<p style="margin: 0; padding: 10px; text-align: center; font-size: 12px; color: #6B717A">Pagamento processado pela Sellergy</p>
+@@script
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { t: 'chat' }; }
+  renderVals() {
+    const t = this.state.t;
+    return {
+      chat: t === 'chat', pagar: t === 'pagar', feito: t === 'feito',
+      abrir: () => this.setState({ t: 'pagar' }),
+      pago: () => this.setState({ t: 'feito' }),
+      reiniciar: () => this.setState({ t: 'chat' }),
+    };
+  }
+}

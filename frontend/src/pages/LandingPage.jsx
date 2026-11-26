@@ -1,105 +1,109 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, MessageCircle, Calendar, ShoppingBag, BarChart3, ShieldCheck, Sparkles } from 'lucide-react';
-import { Button } from '../components/ui';
-import SellergyLogo from '../components/SellergyLogo';
+import LandingHeader from '../components/landing/LandingHeader';
+import MockProduto from '../components/landing/MockProduto';
+import FaixaRecursos from '../components/landing/FaixaRecursos';
+import AntesDepois from '../components/landing/AntesDepois';
+import UmDia from '../components/landing/UmDia';
+import AbasSegmento from '../components/landing/AbasSegmento';
+import Vantagens from '../components/landing/Vantagens';
+import ComoFunciona from '../components/landing/ComoFunciona';
+import Precos from '../components/landing/Precos';
+import Faq from '../components/landing/Faq';
+import LandingRodape from '../components/landing/LandingRodape';
+import { IconeCheck, IconeSeta } from '../components/landing/Icones';
+import { ROTA_CADASTRO } from '../components/landing/conteudo';
+import { botaoPrimario, botaoSecundario, foco, titulo } from '../components/landing/estilo';
+import '../components/landing/animacoes.css';
 
+const GARANTIAS = ['14 dias com tudo liberado', 'Sem cartão de crédito', 'Cancele quando quiser'];
+const atraso = (ms) => ({ '--ld-atraso': `${ms}ms` });
+
+// A pagina conta uma historia: a rotina de hoje (AntesDepois), um dia com o
+// sistema (UmDia), pra quem e (AbasSegmento), por que vale (Vantagens) e
+// como comecar (ComoFunciona, Precos, CTA final).
 export default function LandingPage() {
+  // Aba aberta em "Feito para quem atende..."; o menu "Para lojas/clinicas" troca.
+  const [segmento, setSegmento] = useState('clinicas');
+
   return (
-    <div className="min-h-screen bg-[var(--bg-app)]">
-      {/* Header */}
-      <header className="px-6 lg:px-12 py-5 flex items-center justify-between max-w-[1400px] mx-auto">
-        <Link to="/" className="flex items-center gap-2.5">
-          <SellergyLogo size={36} />
-          <span className="text-base font-semibold tracking-tight text-[var(--text-main)]">
-            Sellergy Cloud
-          </span>
-        </Link>
-        <div className="flex items-center gap-2">
-          <Link to="/app/login">
-            <Button variant="primary" size="md">Entrar</Button>
-          </Link>
-        </div>
-      </header>
+    // Cores fixas (igual ao prototipo): a landing nao segue o tema escuro do painel.
+    <div className="ld-raiz min-h-screen bg-[#F6F7F5] text-[#15171A] font-[family-name:Inter,system-ui,sans-serif] leading-[normal] antialiased overflow-x-clip">
+      <a
+        href="#conteudo"
+        className={`sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:px-4 focus:py-3 focus:rounded-lg focus:bg-white focus:text-[#15171A] focus:shadow-lg ${foco}`}
+      >
+        Pular para o conteúdo
+      </a>
 
-      {/* Hero */}
-      <section className="px-6 lg:px-12 pt-12 pb-20 max-w-[1400px] mx-auto">
-        <div className="text-center max-w-3xl mx-auto">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] text-xs font-semibold tracking-tight mb-6">
-            <Sparkles size={12} />
-            Plataforma premium de atendimento via bots
+      <LandingHeader aoEscolherSegmento={setSegmento} />
+
+      <main id="conteudo" tabIndex={-1} className="outline-none">
+        {/* Hero */}
+        <section aria-labelledby="titulo-hero" className="relative isolate">
+          <div className="absolute inset-0 -z-10 overflow-hidden" aria-hidden="true">
+            <div className="ld-grade" />
+            <div className="ld-bolha w-[560px] h-[560px] bg-[#1FA672]/25 -top-48 -right-24" />
+            <div className="ld-bolha w-[440px] h-[440px] bg-[#F2C46B]/25 top-40 -left-40" style={{ animationDelay: '-6s' }} />
           </div>
-          <h1 className="text-4xl md:text-6xl font-semibold tracking-tight text-[var(--text-main)] leading-[1.05]">
-            Atendimento automatizado.<br />
-            Vendas humanizadas.
-          </h1>
-          <p className="text-base md:text-lg text-[var(--text-secondary)] mt-6 max-w-xl mx-auto leading-relaxed">
-            Bots inteligentes integrados a CRM, agenda, estoque e financeiro. Tudo o que sua loja precisa em um unico painel premium.
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-3 mt-8">
-            <Link to="/app/login">
-              <Button variant="primary" size="lg" icon={ArrowRight} iconPosition="right">
-                Acessar minha loja
-              </Button>
-            </Link>
+
+          <div className="max-w-[1200px] mx-auto px-6 pt-12 pb-20 sm:pt-[76px] sm:pb-24 grid grid-cols-[repeat(auto-fit,minmax(min(100%,480px),1fr))] gap-14 items-center">
+            <div className="min-w-0">
+              <p className="ld-entrar inline-flex items-center gap-2 m-0 pl-2.5 pr-3.5 py-1.5 rounded-full bg-white/80 backdrop-blur border border-[#D7E9DF] text-[#0E5C34] font-semibold text-[13px] shadow-[0_4px_14px_rgba(19,111,77,0.08)]">
+                <span className="relative flex w-2 h-2" aria-hidden="true">
+                  <span className="ld-ping absolute inline-flex h-full w-full rounded-full bg-[#1FA672] opacity-70" />
+                  <span className="relative inline-flex w-2 h-2 rounded-full bg-[#136F4D]" />
+                </span>
+                Para lojas, clínicas e estética
+              </p>
+              <h1
+                id="titulo-hero"
+                className={`${titulo} ld-entrar text-[clamp(40px,5.2vw,66px)] leading-[1.02] tracking-[-0.035em] font-bold mt-5 mb-0`}
+                style={atraso(100)}
+              >
+                Saia do caderno. Venda, agende e receba pelo <span className="ld-texto-vivo">WhatsApp.</span>
+              </h1>
+              <p className="ld-entrar text-[19px] leading-[1.55] text-[#4A5059] mt-[22px] mb-0 max-w-[540px]" style={atraso(220)}>
+                Agenda com lembrete automático, venda no balcão com Pix, caixa que abre sozinho e nota fiscal. Tudo num
+                lugar só, por um preço fixo e sem fidelidade.
+              </p>
+              <div className="ld-entrar flex flex-wrap gap-3 mt-8" style={atraso(340)}>
+                <Link
+                  to={ROTA_CADASTRO}
+                  className={`${botaoPrimario} ld-brilho group min-h-[54px] px-[26px] text-[16px] shadow-[0_12px_30px_rgba(19,111,77,0.3)] hover:shadow-[0_16px_36px_rgba(19,111,77,0.38)]`}
+                >
+                  Começar teste grátis
+                  <IconeSeta className="transition-transform group-hover:translate-x-1" />
+                </Link>
+                <a href="#um-dia" className={`${botaoSecundario} min-h-[54px] px-6 text-[16px]`}>
+                  Ver um dia com o Sellergy
+                </a>
+              </div>
+              <ul className="ld-entrar list-none p-0 mt-[26px] mb-0 flex flex-wrap gap-x-[22px] gap-y-2 text-[#4A5059] text-[14px]" style={atraso(460)}>
+                {GARANTIAS.map((g) => (
+                  <li key={g} className="flex gap-1.5 items-center">
+                    <IconeCheck className="text-[#136F4D]" />
+                    {g}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <MockProduto />
           </div>
-        </div>
+        </section>
 
-        {/* Recursos */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-20">
-          <Recurso
-            icon={MessageCircle}
-            titulo="Inbox unificada"
-            desc="Atenda o WhatsApp por um painel so. Bot responde sozinho ou passa pra voce."
-          />
-          <Recurso
-            icon={Calendar}
-            titulo="Agenda integrada"
-            desc="Agendamentos automaticos via bot. Confirma, cancela e lembra os clientes pra voce."
-          />
-          <Recurso
-            icon={ShoppingBag}
-            titulo="Vendas e estoque"
-            desc="Cada venda baixa estoque e gera lancamento financeiro. Sem planilha paralela."
-          />
-          <Recurso
-            icon={BarChart3}
-            titulo="Relatorios premium"
-            desc="DRE, fluxo de caixa, CMV e dashboards. Saiba o que ta dando lucro de verdade."
-          />
-          <Recurso
-            icon={ShieldCheck}
-            titulo="Multi-usuario com permissoes"
-            desc="Cadastre vendedores e administradores com permissoes granulares por modulo."
-          />
-          <Recurso
-            icon={Sparkles}
-            titulo="Premium por padrao"
-            desc="Interface limpa, light/dark, mobile-first. Sua equipe vai querer usar."
-          />
-        </div>
-      </section>
+        <FaixaRecursos />
+        <AntesDepois />
+        <UmDia />
+        <AbasSegmento ativo={segmento} aoTrocar={setSegmento} />
+        <Vantagens />
+        <ComoFunciona />
+        <Precos />
+        <Faq />
+      </main>
 
-      {/* Footer */}
-      <footer className="border-t border-[var(--border-main)] px-6 lg:px-12 py-8">
-        <div className="max-w-[1400px] mx-auto flex flex-wrap items-center justify-between gap-4 text-xs text-[var(--text-muted)]">
-          <div>© {new Date().getFullYear()} Sellergy Cloud — Todos os direitos reservados</div>
-          <div className="flex gap-4">
-            <Link to="/app/login" className="hover:text-[var(--text-main)] transition-colors">Acessar</Link>
-          </div>
-        </div>
-      </footer>
-    </div>
-  );
-}
-
-function Recurso({ icon: Icon, titulo, desc }) {
-  return (
-    <div className="p-6 rounded-2xl border border-[var(--border-main)] bg-[var(--bg-card)] hover:border-[var(--text-muted)] hover:shadow-[var(--shadow-sm)] transition-all">
-      <div className="w-10 h-10 rounded-xl bg-[var(--bg-subtle)] flex items-center justify-center mb-4">
-        <Icon size={18} strokeWidth={1.75} className="text-[var(--accent)]" />
-      </div>
-      <h3 className="text-base font-semibold tracking-tight text-[var(--text-main)]">{titulo}</h3>
-      <p className="text-sm text-[var(--text-secondary)] mt-1.5 leading-relaxed">{desc}</p>
+      <LandingRodape />
     </div>
   );
 }

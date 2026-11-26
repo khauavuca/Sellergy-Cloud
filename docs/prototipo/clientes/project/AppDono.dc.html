@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Sellergy no celular</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#136F4D}
+.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.bp,.bs,.bg{display:flex;align-items:center;justify-content:center;gap:8px;min-height:52px;padding:0 20px;border-radius:12px;font-weight:600;font-size:16px;text-decoration:none;cursor:pointer;font-family:inherit;box-sizing:border-box;width:100%}
+.bp{background:#136F4D;color:#fff;border:1px solid #136F4D}
+.bs{background:#fff;color:#15171A;border:1px solid #D5D8DC}
+.bg{background:transparent;color:#3D434B;border:0;min-height:44px;font-size:15px}
+.cd{background:#fff;border:1px solid #E3E5E8;border-radius:18px}
+.mut{color:#5B616B}.n{font-variant-numeric:tabular-nums}
+.pill{display:inline-flex;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px}
+.ok{background:#E3F4EA;color:#0E5C34}.wait{background:#FDF0D9;color:#7A4A00}.bad{background:#FBE4E1;color:#8F1D12}
+.f{display:flex;flex-direction:column;gap:6px}.f label{font-size:14px;font-weight:600}
+.f input{font:inherit;font-size:16px;min-height:50px;padding:0 14px;border:1px solid #CDD1D6;border-radius:12px;box-sizing:border-box;width:100%}
+.ok-ic{width:72px;height:72px;border-radius:50%;background:#E3F4EA;color:#136F4D;display:inline-grid;place-items:center}
+.h{margin:0;font-family:'Space Grotesk',sans-serif;font-size:26px;letter-spacing:-0.02em}
+.wa{background:#EFE7DD;flex:1;display:flex;flex-direction:column;gap:8px;padding:14px 12px;overflow:hidden}
+.msg{max-width:84%;background:#fff;border-radius:10px;padding:9px 11px;font-size:14px;line-height:1.45;box-shadow:0 1px 0 rgba(0,0,0,.08)}
+.msg.me{align-self:flex-end;background:#D9FDD3}
+.msg small{display:block;text-align:right;font-size:11px;color:#667}
+.wb{display:block;width:100%;min-height:44px;border:0;border-top:1px solid #E8E8E8;background:#fff;color:#0A7CFF;font:inherit;font-size:15px;font-weight:600;cursor:pointer}
+.tb{display:flex;border-top:1px solid #E3E5E8;background:#fff}
+.tb a{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 0 12px;font-size:11px;font-weight:600;color:#6B717A;text-decoration:none;min-height:44px;justify-content:center}
+.tb a.on{color:#136F4D}
+
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; font-family: Inter, system-ui, sans-serif; color: #15171A; background: #F6F7F5; display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden; position: relative">
+<div style="padding: 18px 18px 10px; background: #fff; border-bottom: 1px solid #E3E5E8">
+<div style="display: flex; align-items: center; gap: 10px"><span style="width: 28px; height: 28px; border-radius: 8px; background: #136F4D; color: #fff; display: grid; place-items: center; font-family: 'Space Grotesk', sans-serif; font-weight: 700">S</span><strong style="flex: 1">{{titulo}}</strong><span style="width: 32px; height: 32px; border-radius: 50%; background: #F2C46B; display: grid; place-items: center; font-weight: 700; font-size: 12px; color: #4A3000">ML</span></div>
+</div>
+
+<div style="flex: 1; overflow: hidden; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+<sc-if value="{{hoje}}" hint-placeholder-val="{{ true }}">
+<div class="cd" style="padding: 16px; background: #15171A; border-color: #15171A; color: #fff">
+<p style="margin: 0; font-size: 13px; color: #B9BEC6">Vendeu hoje</p>
+<p class="n" style="margin: 4px 0 0; font-size: 32px; font-weight: 700; font-family: 'Space Grotesk', sans-serif">R$ 1.240,00</p>
+<div style="display: flex; gap: 16px; margin-top: 10px; font-size: 13px"><span><span style="color: #B9BEC6">A receber</span><br><strong class="n">R$ 1.962,00</strong></span><span><span style="color: #B9BEC6">Saldo</span><br><strong class="n">R$ 3.418,60</strong></span></div>
+</div>
+<p style="margin: 4px 0 0; font-size: 13px; font-weight: 600" class="mut">Avisos</p>
+<sc-for list="{{avisos}}" as="a" hint-placeholder-count="4">
+<div class="cd" style="padding: 12px 14px; display: flex; gap: 12px; align-items: center; border-radius: 14px"><span class="{{a.cls}}">{{a.tag}}</span><span style="flex: 1; font-size: 14px; line-height: 1.35">{{a.t}}</span><span class="mut n" style="font-size: 12px">{{a.h}}</span></div>
+</sc-for>
+</sc-if>
+
+<sc-if value="{{agenda}}" hint-placeholder-val="{{ false }}">
+<p style="margin: 0; font-size: 13px; font-weight: 600" class="mut">Terça, 24/11 · 14 horários</p>
+<sc-for list="{{horarios}}" as="h" hint-placeholder-count="5">
+<div class="cd" style="padding: 12px 14px; display: flex; gap: 12px; align-items: center; border-radius: 14px"><strong class="n" style="width: 48px">{{h.h}}</strong><span style="flex: 1; font-size: 14px; line-height: 1.35"><strong>{{h.c}}</strong><br><span class="mut">{{h.s}}</span></span><span class="{{h.cls}}">{{h.st}}</span></div>
+</sc-for>
+</sc-if>
+
+<sc-if value="{{vender}}" hint-placeholder-val="{{ false }}">
+<div class="cd" style="padding: 18px; text-align: center">
+<p class="mut" style="margin: 0; font-size: 14px">Cobrar rápido</p>
+<p class="n" style="margin: 8px 0 0; font-size: 40px; font-weight: 700; font-family: 'Space Grotesk', sans-serif">{{valor}}</p>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px">
+<sc-for list="{{teclas}}" as="k" hint-placeholder-count="12"><button type="button" onClick="{{k.tap}}" style="min-height: 54px; border-radius: 12px; border: 1px solid #E3E5E8; background: #fff; font: inherit; font-size: 22px; font-weight: 600; cursor: pointer">{{k.t}}</button></sc-for>
+</div>
+<sc-if value="{{semPix}}" hint-placeholder-val="{{ true }}"><button type="button" class="bp" onClick="{{gerar}}">Gerar Pix</button></sc-if>
+<sc-if value="{{comPix}}" hint-placeholder-val="{{ false }}"><div class="cd" style="padding: 12px; text-align: center; font-size: 14px"><span class="pill ok">Pago às 15:42</span><p style="margin: 8px 0 0">Venda lançada no caixa.</p><button type="button" class="bg" onClick="{{limpar}}">Nova cobrança</button></div></sc-if>
+</sc-if>
+</div>
+
+<nav class="tb" aria-label="Menu">
+<sc-for list="{{abas}}" as="a" hint-placeholder-count="4"><a href="#" class="{{a.cls}}" onClick="{{a.pick}}"><span style="font-size: 18px; line-height: 1">{{a.ic}}</span>{{a.t}}</a></sc-for>
+</nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { aba: 0, v: '18000', pix: false }; }
+  renderVals() {
+    const s = this.state; const set = (o) => this.setState(o);
+    const cents = parseInt(s.v || '0', 10);
+    const valor = 'R$ ' + (cents / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+    const T = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', '⌫'];
+    return {
+      titulo: ['Hoje', 'Agenda', 'Cobrar', 'Mais'][s.aba],
+      hoje: s.aba === 0 || s.aba === 3, agenda: s.aba === 1, vender: s.aba === 2,
+      avisos: [
+        { tag: 'Pix', cls: 'pill ok', t: 'Paula Rocha pagou o sinal de R$ 54,00', h: '15:12' },
+        { tag: 'Agenda', cls: 'pill ok', t: 'Juliana confirmou 14:30 com Carla', h: '14:41' },
+        { tag: 'Encaixe', cls: 'pill wait', t: 'Vagou 16:00 com Carla. Oferta enviada pra fila', h: '14:05' },
+        { tag: 'Pedido', cls: 'pill wait', t: 'Camila fez um pedido de R$ 151,70 no catálogo', h: '13:58' },
+        { tag: 'Estoque', cls: 'pill bad', t: 'Sérum vitamina C acabando: 3 unidades', h: '13:02' },
+      ],
+      horarios: [
+        { h: '14:30', c: 'Juliana Prado', s: 'Peeling químico · Carla', st: 'Confirmado', cls: 'pill ok' },
+        { h: '15:00', c: 'Gabriela Alves', s: 'Limpeza de pele · Ana', st: 'Confirmado', cls: 'pill ok' },
+        { h: '15:00', c: 'Thiago Vieira', s: 'Massagem · Bruno', st: 'Aguardando', cls: 'pill wait' },
+        { h: '16:00', c: 'Renata Campos', s: 'Peeling químico · Carla', st: 'Encaixe', cls: 'pill ok' },
+        { h: '16:30', c: 'Lívia Martins', s: 'Drenagem · Bruno', st: 'Aguardando', cls: 'pill wait' },
+        { h: '17:00', c: 'Bianca Ramos', s: 'Sobrancelha · Ana', st: 'Confirmado', cls: 'pill ok' },
+      ],
+      valor,
+      teclas: T.map((t) => ({ t, tap: () => { if (s.pix) return; set({ v: t === '⌫' ? s.v.slice(0, -1) : (s.v + t).replace(/^0+/, '').slice(0, 8) }); } })),
+      semPix: !s.pix, comPix: s.pix, gerar: () => set({ pix: true }), limpar: () => set({ pix: false, v: '' }),
+      abas: [['⌂', 'Hoje'], ['▦', 'Agenda'], ['R$', 'Cobrar'], ['≡', 'Mais']].map(([ic, t], i) => ({ ic, t, cls: s.aba === i ? 'on' : '', pick: (e) => { if (e && e.preventDefault) e.preventDefault(); set({ aba: i }); } })),
+    };
+  }
+}
+</script>
+</body>
+</html>

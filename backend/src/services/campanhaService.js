@@ -6,6 +6,33 @@ const prisma = require('../prisma');
 const { criarProvedorWhatsapp } = require('../adapters/whatsapp');
 const { carregarCredencialDecifrada } = require('../credenciais');
 const { obterSocket } = require('./baileys/gerenciadorConexao');
+const { telefoneParaWhatsapp } = require('./whatsappDoTenant');
+const { camposUsados, textoQrCode, componentesMeta } = require('./campanhaTexto');
+
+/**
+ * Dados do cliente pros campos entre colchetes ([nome], [ultimo servico],
+ * [profissional], [cupom], [link de agendamento]). So busca o que o texto
+ * usa; tudo filtrado pelo clienteId da campanha.
+ */
+async function dadosDoCliente(campanha, lead, usados) {
+  const dados = { nome: String(lead.nome || '').trim().split(/\s+/)[0] || '' };
+  if (usados.has('cupom')) dados.cupom = campanha.cupom?.codigo || '';
+  if (usados.has('link') || campanha.botao === 'MARCAR_HORARIO') {
+    const cliente = await prisma.cliente.findUnique({ where: { id: campanha.clienteId }, select: { slugPublico: true } });
+    const base = (process.env.APP_URL_PUBLICA || '').replace(/\/$/, '');
+    dados.link = cliente?.slugPublico && base ? `${base}/agendar/${cliente.slugPublico}` : '';
+  }
+  if (usados.has('ultimoServico') || usados.has('profissional')) {
+    const ultimo = await prisma.agendamento.findFirst({
+      where: { clienteId: campanha.clienteId, leadId: lead.id, status: 'COMPLETED' },
+      orderBy: { data: 'desc' },
+      select: { servico: true, especialista: { select: { nome: true } } },
+    });
+    dados.ultimoServico = ultimo?.servico || '';
+    dados.profissional = String(ultimo?.especialista?.nome || '').trim().split(/\s+/)[0] || '';
+  }
+  return dados;
+}
 
 // Marca 1 envio como falho + soma no contador da campanha.
 async function marcarFalha(envio, motivo) {
@@ -37,7 +64,7 @@ async function processarEnvioCampanha(campanhaEnvioId) {
   const envio = await prisma.campanhaEnvio.findUnique({
     where: { id: campanhaEnvioId },
     include: {
-      campanha: { select: { id: true, clienteId: true, nomeTemplate: true, mensagem: true } },
+      campanha: { select: { id: true, clienteId: true, nomeTemplate: true, mensagem: true, botao: true, cupom: { select: { codigo: true } } } },
       lead: { select: { id: true, nome: true, telefone: true } },
     },
   });
@@ -53,15 +80,31 @@ async function processarEnvioCampanha(campanhaEnvioId) {
     return marcarFalha(envio, 'Nenhum bot com WhatsApp conectado.');
   }
 
+  // Lead.telefone fica sem o 55 (DDD + numero): o WhatsApp exige o DDI.
+  const para = telefoneParaWhatsapp(envio.lead.telefone);
+  if (!para || para.length < 12) return marcarFalha(envio, 'Telefone do lead invalido.');
+
+  // Quem respondeu SAIR/PARAR (no QR Code OU no oficial) nao recebe campanha.
+  const optOut = await prisma.optOutWhatsapp.findUnique({
+    where: { clienteId_telefone: { clienteId: envio.campanha.clienteId, telefone: para } },
+  }).catch(() => null);
+  if (optOut) return marcarFalha(envio, 'Contato pediu para não receber mensagens (SAIR).');
+
   let resultado;
+  if (bot.provedorCanal === 'BAILEYS' && process.env.CAMPANHA_CANAL_NAO_OFICIAL === 'bloqueado') {
+    // Interruptor de emergencia do operador (ex.: onda de banimentos).
+    return marcarFalha(envio, 'Campanha pelo WhatsApp Web desligada pelo operador.');
+  }
   if (bot.provedorCanal === 'BAILEYS') {
-    // Sem template no WhatsApp Web — a mensagem da campanha e o texto de
-    // verdade que sai (pra Meta, esse campo e so preview: o que sai la e o
-    // template aprovado). Precisa da conexao viva (socket) do proprio worker.
+    // Sem template no WhatsApp Web: a mensagem da campanha e o texto que sai,
+    // com variacao {a|b} e todo o "envio humano" (ver envioHumano.js). O
+    // espacamento e a cota diaria ja foram reservados no worker antes daqui.
     const socket = obterSocket(bot.id);
-    if (!socket) return marcarFalha(envio, 'WhatsApp Web nao esta conectado no momento.');
+    if (!socket) throw new Error('WhatsApp Web nao esta conectado no momento.'); // retry do BullMQ
     const adapter = criarProvedorWhatsapp('BAILEYS', { modo: 'live', socket });
-    resultado = await adapter.enviarTexto({ para: envio.lead.telefone, texto: envio.campanha.mensagem });
+    const dados = await dadosDoCliente(envio.campanha, envio.lead, camposUsados(envio.campanha.mensagem));
+    const texto = textoQrCode(envio.campanha.mensagem, dados, envio.campanha.botao);
+    resultado = await adapter.enviarTexto({ para, texto, tipo: 'campanha' });
   } else {
     if (!envio.campanha.nomeTemplate) return marcarFalha(envio, 'Campanha sem template aprovado configurado.');
 
@@ -74,7 +117,11 @@ async function processarEnvioCampanha(campanhaEnvioId) {
     const adapter = criarProvedorWhatsapp('META_CLOUD', {
       credencial: { dados: { accessToken: token } }, identificadorCanal: bot.identificadorCanal, modo: 'live',
     });
-    resultado = await adapter.enviarTemplate({ para: envio.lead.telefone, nomeTemplate: envio.campanha.nomeTemplate, idioma: 'pt_BR' });
+    const usados = camposUsados(envio.campanha.mensagem);
+    const componentes = usados.size
+      ? componentesMeta(envio.campanha.mensagem, await dadosDoCliente(envio.campanha, envio.lead, usados))
+      : undefined;
+    resultado = await adapter.enviarTemplate({ para, nomeTemplate: envio.campanha.nomeTemplate, idioma: 'pt_BR', componentes });
   }
 
   if (!resultado.ok) {
@@ -88,4 +135,15 @@ async function processarEnvioCampanha(campanhaEnvioId) {
   await finalizarSeCompleto(envio.campanhaId);
 }
 
-module.exports = { processarEnvioCampanha };
+/** Bot com canal conectado do tenant dono do envio (pro worker reservar a vez). */
+async function numeroDoEnvio(campanhaEnvioId) {
+  const envio = await prisma.campanhaEnvio.findUnique({ where: { id: campanhaEnvioId }, select: { campanha: { select: { clienteId: true } } } });
+  if (!envio) return null;
+  const bot = await prisma.bot.findFirst({
+    where: { clienteId: envio.campanha.clienteId, provedorCanal: 'BAILEYS', identificadorCanal: { not: null } },
+    select: { id: true, baileysNumeroConectado: true },
+  });
+  return bot?.baileysNumeroConectado || null;
+}
+
+module.exports = { processarEnvioCampanha, numeroDoEnvio };

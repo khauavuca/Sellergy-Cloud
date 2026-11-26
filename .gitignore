@@ -1,9 +1,18 @@
 node_modules/
 .env
 dist/
+dist-painel/
 build/
 .DS_Store
 *.log
 backend/scratch/
 backend/node_modules/
 frontend/node_modules/
+
+# Segredos: nenhum .env real vai pro git (só os *.example).
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+chave-backup*.txt

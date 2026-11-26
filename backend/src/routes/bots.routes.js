@@ -10,8 +10,12 @@ const {
 const { MODELOS_VALIDOS } = require('../adapters/ia/deepseek');
 const { REGISTRO: FERRAMENTAS_VALIDAS } = require('../services/iaFerramentas');
 const { periodoAtual } = require('../services/iaRouter');
+const { avaliarCota, consumoDoClienteNoMes, situacaoTetoGlobal } = require('../services/iaLimites');
+const { emitirEventoBot } = require('../services/eventosBot');
 const { enfileirarComandoBaileys } = require('../filas');
 const { cifrarPayload } = require('../cripto/cofreCredenciais');
+const { carregarCredencialDecifrada } = require('../credenciais');
+const { validarDadosOficiais, gerarVerifyToken, conferirNaMeta } = require('../services/whatsappOficialConexao');
 
 const roteador = express.Router();
 roteador.use(middlewareAutenticacao);
@@ -37,6 +41,8 @@ const camposBotPublicos = {
   credencialCanalId: true,
   identificadorCanal: true,
   verifyTokenCanal: true,
+  webhookConfirmadoEm: true,
+  oficialNumeroExibicao: true,
   provedorCanal: true,
   statusConexaoBaileys: true,
   qrCodeAtual: true,
@@ -47,6 +53,7 @@ const camposBotPublicos = {
   iaPromptSistema: true,
   iaTokensIncluidosMes: true,
   iaPrecoPorMilTokensExcedenteCentavos: true,
+  iaExcedenteAutorizadoTokens: true,
   acoesPermitidas: true,
   criadoEm: true,
   atualizadoEm: true,
@@ -54,10 +61,22 @@ const camposBotPublicos = {
 
 const TAM_MAX_PROMPT_IA = 4000;
 
+// Campos de IA que so o admin da plataforma pode mudar (ver PUT /:id).
+const CAMPOS_IA_SO_ADMIN = [
+  'iaAtiva',
+  'iaModelo',
+  'iaTokensIncluidosMes',
+  'iaPrecoPorMilTokensExcedenteCentavos',
+  'iaExcedenteAutorizadoTokens',
+];
+
 // Valida os campos de IA vindos do body. Retorna { data } com so o que veio
 // definido, ou { erro }.
 function validarCamposIA(body) {
-  const { iaAtiva, iaModelo, iaPromptSistema, iaTokensIncluidosMes, iaPrecoPorMilTokensExcedenteCentavos, acoesPermitidas } = body;
+  const {
+    iaAtiva, iaModelo, iaPromptSistema, iaTokensIncluidosMes, iaPrecoPorMilTokensExcedenteCentavos,
+    iaExcedenteAutorizadoTokens, acoesPermitidas,
+  } = body;
   const data = {};
 
   if (iaAtiva !== undefined) {
@@ -85,9 +104,15 @@ function validarCamposIA(body) {
     data.iaTokensIncluidosMes = n;
   }
   if (iaPrecoPorMilTokensExcedenteCentavos !== undefined) {
+    // Centavos por mil tokens, com fracao (R$ 15/milhao = 1,5).
     const n = Number(iaPrecoPorMilTokensExcedenteCentavos);
-    if (!Number.isInteger(n) || n < 0) return { erro: 'iaPrecoPorMilTokensExcedenteCentavos deve ser inteiro >= 0.' };
-    data.iaPrecoPorMilTokensExcedenteCentavos = n;
+    if (!Number.isFinite(n) || n < 0) return { erro: 'iaPrecoPorMilTokensExcedenteCentavos deve ser numero >= 0.' };
+    data.iaPrecoPorMilTokensExcedenteCentavos = Math.round(n * 10000) / 10000;
+  }
+  if (iaExcedenteAutorizadoTokens !== undefined) {
+    const n = Number(iaExcedenteAutorizadoTokens);
+    if (!Number.isInteger(n) || n < 0) return { erro: 'iaExcedenteAutorizadoTokens deve ser inteiro >= 0.' };
+    data.iaExcedenteAutorizadoTokens = n;
   }
   if (acoesPermitidas !== undefined) {
     if (!Array.isArray(acoesPermitidas) || !acoesPermitidas.every((a) => typeof a === 'string')) {
@@ -110,8 +135,13 @@ function filtroTenant(req) {
 
 roteador.get('/', requerPermissao('BOTS', 'visualizar'), async (req, res) => {
   try {
+    // Admin pode pedir os bots de um negocio so (?clienteId=), ex.: tela de IA.
+    const where = filtroTenant(req);
+    if (ehAdmin(req.usuario) && typeof req.query.clienteId === 'string' && req.query.clienteId) {
+      where.clienteId = req.query.clienteId;
+    }
     const bots = await prisma.bot.findMany({
-      where: filtroTenant(req),
+      where,
       select: {
         ...camposBotPublicos,
         cliente: { select: { nome: true } },
@@ -184,20 +214,40 @@ roteador.get('/:id/consumo-ia', requerPermissao('BOTS', 'visualizar'), async (re
   try {
     const bot = await prisma.bot.findFirst({
       where: { id: req.params.id, ...filtroTenant(req) },
-      select: { id: true, iaTokensIncluidosMes: true },
+      select: {
+        id: true, clienteId: true, iaTokensIncluidosMes: true,
+        iaPrecoPorMilTokensExcedenteCentavos: true, iaExcedenteAutorizadoTokens: true,
+      },
     });
     if (!bot) return res.status(404).json({ erro: 'Bot nao encontrado' });
 
     const periodo = periodoAtual();
-    const consumo = await prisma.consumoIA.findUnique({
-      where: { botId_periodo: { botId: bot.id, periodo } },
-      select: { tokensUsados: true, tokensExcedentes: true, valorExcedenteCentavos: true },
+    const [consumo, usadoCliente, global] = await Promise.all([
+      prisma.consumoIA.findUnique({
+        where: { botId_periodo: { botId: bot.id, periodo } },
+        select: { tokensUsados: true, tokensExcedentes: true, valorExcedenteCentavos: true },
+      }),
+      consumoDoClienteNoMes(bot.clienteId, periodo),
+      situacaoTetoGlobal().catch(() => ({ bloqueado: false })),
+    ]);
+    // A cota e por cliente (soma dos bots) — e o que decide se a IA responde.
+    const cota = avaliarCota({
+      usadoMes: usadoCliente,
+      tokensIncluidosMes: bot.iaTokensIncluidosMes,
+      excedenteAutorizado: bot.iaExcedenteAutorizadoTokens,
     });
 
     res.json({
       periodo,
       tokensUsados: consumo?.tokensUsados || 0,
+      tokensUsadosCliente: usadoCliente,
       tokensIncluidosMes: bot.iaTokensIncluidosMes,
+      excedenteAutorizadoTokens: bot.iaExcedenteAutorizadoTokens,
+      limiteTokens: cota.limite,
+      tokensRestantes: cota.restante,
+      cotaEsgotada: cota.esgotada,
+      iaPausadaNaPlataforma: Boolean(global.bloqueado),
+      precoPorMilhaoCentavos: Math.round(bot.iaPrecoPorMilTokensExcedenteCentavos * 1000),
       tokensExcedentes: consumo?.tokensExcedentes || 0,
       valorExcedenteCentavos: consumo?.valorExcedenteCentavos || 0,
     });
@@ -243,6 +293,12 @@ roteador.put('/:id', requerPermissao('BOTS', 'editar'), async (req, res) => {
 
     const { data: dadosIA, erro: erroIA } = validarCamposIA(req.body || {});
     if (erroIA) return res.status(400).json({ erro: erroIA });
+    // Ligar a IA, o modelo, a cota, o preco do excedente e o pacote extra sao
+    // regra comercial (a IA custa pra plataforma): so o admin muda. O dono do
+    // negocio so ajusta a instrucao (prompt) e as acoes da IA.
+    if (!ehAdmin(req.usuario)) {
+      for (const campo of CAMPOS_IA_SO_ADMIN) delete dadosIA[campo];
+    }
 
     const bot = await prisma.bot.update({
       where: { id },
@@ -250,7 +306,7 @@ roteador.put('/:id', requerPermissao('BOTS', 'editar'), async (req, res) => {
       select: camposBotPublicos,
     });
 
-    if (req.io) req.io.emit('bot_atualizado', bot);
+    emitirEventoBot(req.io, 'bot_atualizado', bot.clienteId, bot);
 
     res.json(bot);
   } catch (erro) {
@@ -284,7 +340,7 @@ roteador.patch('/:id/status', requerPermissao('BOTS', 'editar'), async (req, res
       select: camposBotPublicos,
     });
 
-    if (req.io) req.io.emit('bot_atualizado', bot);
+    emitirEventoBot(req.io, 'bot_atualizado', bot.clienteId, bot);
     res.json(bot);
   } catch (erro) {
     console.error('[bots/status]', erro);
@@ -298,12 +354,12 @@ roteador.delete('/:id', requerPermissao('BOTS', 'excluir'), async (req, res) => 
 
     const existente = await prisma.bot.findFirst({
       where: { id, ...filtroTenant(req) },
-      select: { id: true }
+      select: { id: true, clienteId: true }
     });
     if (!existente) return res.status(404).json({ erro: 'Bot nao encontrado' });
 
     await prisma.bot.delete({ where: { id } });
-    if (req.io) req.io.emit('bot_deletado', id);
+    emitirEventoBot(req.io, 'bot_deletado', existente.clienteId, id);
     res.json({ message: 'Bot excluido com sucesso' });
   } catch (error) {
     console.error('[bots/delete]', error);
@@ -352,7 +408,7 @@ roteador.post('/:id/duplicate', requerPermissao('BOTS', 'criar'), async (req, re
       }
     });
 
-    if (req.io) req.io.emit('bot_criado', botCompleto);
+    emitirEventoBot(req.io, 'bot_criado', botCompleto.clienteId, botCompleto);
 
     res.status(201).json(botCompleto);
   } catch (error) {
@@ -398,7 +454,25 @@ roteador.patch('/:id/canal', requerPermissao('BOTS', 'editar'), async (req, res)
       }
     }
     if (identificadorCanal !== undefined) {
-      data.identificadorCanal = identificadorCanal ? String(identificadorCanal).trim() : null;
+      const valor = identificadorCanal ? String(identificadorCanal).trim() : '';
+      data.identificadorCanal = valor || null;
+      // Numero novo (ou removido): a Meta precisa confirmar o webhook de novo.
+      data.webhookConfirmadoEm = null;
+      if (data.identificadorCanal) {
+        // Um numero so pode estar em um bot: sem isso, outro cliente poderia
+        // cadastrar o phoneNumberId de alguem e receber as mensagens dele.
+        const emUso = await prisma.bot.findFirst({
+          where: { identificadorCanal: data.identificadorCanal, id: { not: bot.id } },
+          select: { id: true, clienteId: true },
+        });
+        if (emUso) {
+          return res.status(409).json({
+            erro: emUso.clienteId === bot.clienteId
+              ? 'Este número já está ligado a outro bot do seu negócio. Desconecte lá primeiro.'
+              : 'Este número de WhatsApp já está em uso em outra conta.',
+          });
+        }
+      }
     }
     if (verifyTokenCanal !== undefined) {
       data.verifyTokenCanal = verifyTokenCanal ? String(verifyTokenCanal).trim() : null;
@@ -415,8 +489,98 @@ roteador.patch('/:id/canal', requerPermissao('BOTS', 'editar'), async (req, res)
     });
     res.json(atualizado);
   } catch (erro) {
+    // Corrida entre a checagem e o update: o indice unico do banco segura.
+    if (erro?.code === 'P2002') return res.status(409).json({ erro: 'Este número de WhatsApp já está em uso em outra conta.' });
     console.error('[bots/canal]', erro);
     res.status(500).json({ erro: 'Erro ao configurar canal.' });
+  }
+});
+
+// ==========================================
+// WHATSAPP OFICIAL COM O APP DO PROPRIO CLIENTE — um passo so.
+// Body: { identificadorCanal, accessToken?, appSecret? }
+// Grava/atualiza a credencial WHATSAPP_CLOUD_TOKEN do negocio (token + segredo
+// do app), liga o bot no oficial, gera o verify token se faltar e, com o envio
+// real ligado, confere na Meta antes de salvar. Token/segredo vazios mantem o
+// que ja estava salvo (trocar so o numero, por exemplo).
+// ==========================================
+roteador.put('/:id/canal/oficial', requerPermissao('BOTS', 'editar'), async (req, res) => {
+  try {
+    const where = ehAdmin(req.usuario) ? { id: req.params.id } : { id: req.params.id, clienteId: req.usuario.clienteId };
+    const bot = await prisma.bot.findFirst({
+      where,
+      select: { id: true, clienteId: true, credencialCanalId: true, identificadorCanal: true, verifyTokenCanal: true },
+    });
+    if (!bot) return res.status(404).json({ erro: 'Bot nao encontrado.' });
+
+    // Credencial atual do bot (so se for WhatsApp oficial do proprio negocio).
+    let credAtual = null;
+    if (bot.credencialCanalId) {
+      const linha = await prisma.credencial.findFirst({
+        where: { id: bot.credencialCanalId, clienteId: bot.clienteId, tipo: 'WHATSAPP_CLOUD_TOKEN' },
+        select: { id: true },
+      });
+      if (linha) {
+        const dec = await carregarCredencialDecifrada({ credencialId: linha.id, clienteId: bot.clienteId }).catch(() => null);
+        if (dec) credAtual = { id: linha.id, dados: dec.dados || {} };
+      }
+    }
+    const tokenSalvo = credAtual?.dados?.accessToken || credAtual?.dados?.token || null;
+    const segredoSalvo = credAtual?.dados?.appSecret || null;
+
+    const v = validarDadosOficiais(req.body || {}, { temToken: !!tokenSalvo, temSegredo: !!segredoSalvo });
+    if (!v.ok) return res.status(400).json({ erro: v.erro, campo: v.campo });
+    const { identificadorCanal } = v.dados;
+    const accessToken = v.dados.accessToken || tokenSalvo;
+    const appSecret = v.dados.appSecret || segredoSalvo;
+
+    const emUso = await prisma.bot.findFirst({
+      where: { identificadorCanal, id: { not: bot.id } },
+      select: { clienteId: true },
+    });
+    if (emUso) {
+      return res.status(409).json({
+        campo: 'identificadorCanal',
+        erro: emUso.clienteId === bot.clienteId
+          ? 'Este número já está ligado a outro bot do seu negócio. Desconecte lá primeiro.'
+          : 'Este número de WhatsApp já está em uso em outra conta.',
+      });
+    }
+
+    const meta = await conferirNaMeta({ phoneNumberId: identificadorCanal, token: accessToken });
+    if (!meta.ok) return res.status(422).json({ erro: meta.erro, motivo: meta.motivo });
+
+    const cifrado = cifrarPayload(bot.clienteId, { accessToken, appSecret });
+    const camposCifra = { dadosCifrados: cifrado.conteudoCifrado, iv: cifrado.iv, tag: cifrado.tag, versaoChave: cifrado.versaoChave };
+    const numeroMudou = bot.identificadorCanal !== identificadorCanal;
+
+    const atualizado = await prisma.$transaction(async (tx) => {
+      const credencialId = credAtual
+        ? (await tx.credencial.update({ where: { id: credAtual.id }, data: camposCifra, select: { id: true } })).id
+        : (await tx.credencial.create({
+          data: { clienteId: bot.clienteId, nome: 'WhatsApp oficial', tipo: 'WHATSAPP_CLOUD_TOKEN', ...camposCifra, criadoPorId: req.usuario.id || null },
+          select: { id: true },
+        })).id;
+      return tx.bot.update({
+        where: { id: bot.id },
+        data: {
+          canal: 'WHATSAPP',
+          provedorCanal: 'META_CLOUD',
+          credencialCanalId: credencialId,
+          identificadorCanal,
+          verifyTokenCanal: bot.verifyTokenCanal || gerarVerifyToken(),
+          ...(numeroMudou ? { webhookConfirmadoEm: null } : {}),
+          oficialNumeroExibicao: meta.numero ? [meta.numero, meta.nome].filter(Boolean).join(' · ') : (numeroMudou ? null : undefined),
+        },
+        select: camposBotPublicos,
+      });
+    });
+
+    res.json({ bot: atualizado, conferidoNaMeta: !meta.simulado });
+  } catch (erro) {
+    if (erro?.code === 'P2002') return res.status(409).json({ campo: 'identificadorCanal', erro: 'Este número de WhatsApp já está em uso em outra conta.' });
+    console.error('[bots/canal/oficial]', erro);
+    res.status(500).json({ erro: 'Erro ao salvar a conexão oficial.' });
   }
 });
 

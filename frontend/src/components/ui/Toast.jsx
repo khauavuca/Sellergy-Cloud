@@ -1,20 +1,13 @@
-import { createContext, useContext, useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { CheckCircle2, XCircle, AlertCircle, Info, X } from 'lucide-react';
 import clsx from 'clsx';
 
+import { ToastContext } from './useToast';
+
 /**
- * Sistema de toast.
- * Uso:
- *   const toast = useToast();
- *   toast.success('Salvo com sucesso');
- *   toast.error('Falha ao carregar');
- *   toast('Mensagem neutra');
- *
+ * Sistema de toast (o hook useToast e o contexto ficam em ./useToast).
  * Necessita <ToastProvider> no topo da arvore.
  */
-const ToastContext = createContext({
-  toast: () => {},
-});
 
 let idCounter = 0;
 
@@ -34,11 +27,17 @@ export function ToastProvider({ children }) {
     return id;
   }, [remover]);
 
-  const api = useCallback((msg, op) => adicionar(msg, op), [adicionar]);
-  api.success = (msg, op) => adicionar(msg, { ...op, tipo: 'success' });
-  api.error = (msg, op) => adicionar(msg, { ...op, tipo: 'error' });
-  api.warning = (msg, op) => adicionar(msg, { ...op, tipo: 'warning' });
-  api.info = (msg, op) => adicionar(msg, { ...op, tipo: 'info' });
+  // Funcao chamavel com atalhos por tipo; montada uma vez por "adicionar"
+  // (mesma identidade estavel de antes, sem mutar valor memoizado).
+  const api = useMemo(() => Object.assign(
+    (msg, op) => adicionar(msg, op),
+    {
+      success: (msg, op) => adicionar(msg, { ...op, tipo: 'success' }),
+      error: (msg, op) => adicionar(msg, { ...op, tipo: 'error' }),
+      warning: (msg, op) => adicionar(msg, { ...op, tipo: 'warning' }),
+      info: (msg, op) => adicionar(msg, { ...op, tipo: 'info' }),
+    },
+  ), [adicionar]);
 
   return (
     <ToastContext.Provider value={api}>
@@ -50,10 +49,6 @@ export function ToastProvider({ children }) {
       </div>
     </ToastContext.Provider>
   );
-}
-
-export function useToast() {
-  return useContext(ToastContext);
 }
 
 function ToastItem({ toast, onClose }) {

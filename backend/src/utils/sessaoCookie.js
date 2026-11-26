@@ -18,6 +18,28 @@ const crypto = require('crypto');
 const NOME_SESSAO = 'sellergy_sessao';
 const NOME_CSRF = 'sellergy_csrf';
 
+// O site do cliente e o painel (crm.) falam com a mesma API, entao o cookie da
+// API vale pros dois. Com um nome so, entrar como cliente no site derrubava a
+// sessao do admin no painel (e vice-versa). Pedido vindo de uma origem do
+// painel (ADMIN_ORIGENS) usa cookies proprios. Localhost (dev, um front so)
+// continua com o nome comum.
+const SUFIXO_PAINEL = '_painel';
+function ehOrigemPainel(req) {
+  // A API do painel num endereco proprio (API_PAINEL_HOSTS) e sempre painel,
+  // mesmo sem Origin (ex.: <img> buscando a foto de um chamado).
+  const host = String(req?.hostname || req?.headers?.['x-forwarded-host'] || req?.headers?.host || '').split(',')[0].trim().replace(/:\d+$/, '').toLowerCase();
+  const hostsPainel = String(process.env.API_PAINEL_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+  if (host && hostsPainel.includes(host)) return true;
+  const origem = String(req?.headers?.origin || '').trim().replace(/\/$/, '').toLowerCase();
+  if (!origem || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origem)) return false;
+  const lista = String(process.env.ADMIN_ORIGENS || '').split(',').map((o) => o.trim().replace(/\/$/, '').toLowerCase()).filter(Boolean);
+  return lista.includes(origem);
+}
+/** Nome do cookie de sessao pra este pedido (painel ou site). */
+function nomeSessao(req) { return ehOrigemPainel(req) ? NOME_SESSAO + SUFIXO_PAINEL : NOME_SESSAO; }
+/** Nome do cookie de CSRF pra este pedido (painel ou site). */
+function nomeCsrf(req) { return ehOrigemPainel(req) ? NOME_CSRF + SUFIXO_PAINEL : NOME_CSRF; }
+
 // Espelha o prazo do JWT emitido em routes/auth.routes.js. Se um mudar, o outro
 // precisa mudar junto, senao o cookie sobrevive ao token (ou o contrario).
 const DURACAO_MS = 7 * 24 * 60 * 60 * 1000;
@@ -71,8 +93,8 @@ const FORMATO_CSRF = /^[a-f0-9]{64}$/;
  */
 function definirSessao(res, token) {
   const csrf = gerarCsrf();
-  res.cookie(NOME_SESSAO, token, { ...opcoesBase(), httpOnly: true, maxAge: DURACAO_MS });
-  res.cookie(NOME_CSRF, csrf, { ...opcoesBase(), httpOnly: true, maxAge: DURACAO_MS });
+  res.cookie(nomeSessao(res.req), token, { ...opcoesBase(), httpOnly: true, maxAge: DURACAO_MS });
+  res.cookie(nomeCsrf(res.req), csrf, { ...opcoesBase(), httpOnly: true, maxAge: DURACAO_MS });
   return csrf;
 }
 
@@ -81,11 +103,11 @@ function definirSessao(res, token) {
  * antes desta versao, ou cookie expirado antes do token).
  */
 function garantirCsrf(req, res) {
-  const atual = lerCookie(req, NOME_CSRF);
+  const atual = lerCookie(req, nomeCsrf(req));
   if (atual && FORMATO_CSRF.test(atual)) return atual;
 
   const novo = gerarCsrf();
-  res.cookie(NOME_CSRF, novo, { ...opcoesBase(), httpOnly: true, maxAge: DURACAO_MS });
+  res.cookie(nomeCsrf(req), novo, { ...opcoesBase(), httpOnly: true, maxAge: DURACAO_MS });
   return novo;
 }
 
@@ -95,13 +117,15 @@ function garantirCsrf(req, res) {
  */
 function limparSessao(res) {
   const opcoes = { ...opcoesBase(), httpOnly: true };
-  res.clearCookie(NOME_SESSAO, opcoes);
-  res.clearCookie(NOME_CSRF, opcoes);
+  res.clearCookie(nomeSessao(res.req), opcoes);
+  res.clearCookie(nomeCsrf(res.req), opcoes);
 }
 
 module.exports = {
   NOME_SESSAO,
   NOME_CSRF,
+  nomeSessao,
+  nomeCsrf,
   DURACAO_MS,
   lerCookie,
   gerarCsrf,

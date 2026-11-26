@@ -9,8 +9,11 @@ const MAX_OBS = 500;
 
 const soDigitos = (s) => String(s ?? '').replace(/\D+/g, '');
 
+// So texto/numero vira texto. Objeto/lista ({a:1} virava "[object Object]")
+// fica vazio e cai na validacao de campo obrigatorio/invalido.
 function limparTexto(v, max) {
-  const s = String(v ?? '').trim();
+  if (typeof v !== 'string' && typeof v !== 'number') return '';
+  const s = String(v).trim();
   return s.length > max ? s.slice(0, max) : s;
 }
 
@@ -258,4 +261,6 @@ class FornecedorController {
   }
 }
 
-module.exports = new FornecedorController();
+const instancia = new FornecedorController();
+instancia.montarDados = montarDados; // regra pura exposta pra teste
+module.exports = instancia;

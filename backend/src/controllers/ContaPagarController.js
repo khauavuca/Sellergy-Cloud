@@ -7,8 +7,24 @@
 
 const prisma = require('../prisma');
 const { lockClienteAdvisory } = require('../utils/locks');
+const R = require('../financeiro/regras');
+const { helpers: caixa } = require('./CaixaController');
 
-const PERIODICIDADES_VALIDAS = ['PONTUAL', 'MENSAL', 'ANUAL'];
+function responderErro(res, e, rotulo, msg500) {
+  if (e?.status && e.status < 500) {
+    const payload = { erro: e.message };
+    if (e.codigo) payload.codigo = e.codigo;
+    if (e.extra) Object.assign(payload, e.extra);
+    return res.status(e.status).json(payload);
+  }
+  console.error(rotulo, e);
+  return res.status(500).json({ erro: msg500 });
+}
+
+async function conferirCategoriaDespesa(categoriaId, clienteId) {
+  if (typeof categoriaId !== 'string') return false;
+  return !!(await prisma.categoriaFinanceira.findFirst({ where: { id: categoriaId, clienteId, tipo: 'DESPESA' }, select: { id: true } }));
+}
 
 class ContaPagarController {
 
@@ -42,45 +58,42 @@ class ContaPagarController {
       const { clienteId } = req.usuario;
       if (!clienteId) return res.status(403).json({ error: 'Acesso negado.' });
 
-      const { nome, valorPadrao, categoriaId, periodicidade, diaVencimento, mesVencimento, observacoes } = req.body;
-      if (!nome || typeof nome !== 'string' || nome.trim().length < 2) {
-        return res.status(422).json({ error: 'Nome obrigatório (mínimo 2 caracteres).' });
-      }
-      const valor = parseFloat(valorPadrao);
-      if (!Number.isFinite(valor) || valor < 0) {
-        return res.status(422).json({ error: 'Valor padrão inválido.' });
-      }
-      const per = PERIODICIDADES_VALIDAS.includes(periodicidade) ? periodicidade : 'MENSAL';
-      const dia = Number.isInteger(diaVencimento) && diaVencimento >= 1 && diaVencimento <= 31 ? diaVencimento : null;
-      const mes = (per === 'ANUAL' && Number.isInteger(mesVencimento) && mesVencimento >= 1 && mesVencimento <= 12)
-        ? mesVencimento : null;
+      const corpo = req.body || {};
+      const { categoriaId } = corpo;
+      const nome = R.lerTexto(corpo.nome, { rotulo: 'Nome', min: 2, max: 120, obrigatorio: true });
+      if (!nome.ok) return res.status(422).json({ erro: nome.erro, campos: ['nome'] });
+      const v = R.lerDinheiro(corpo.valorPadrao, { min: 0, max: 10_000_000 });
+      if (!v.ok) return res.status(422).json({ erro: `Valor padrão: ${v.erro}`, campos: ['valorPadrao'] });
+      const valor = v.valor;
+      const ag = R.validarAgendaConta(corpo);
+      if (!ag.ok) return res.status(422).json({ erro: ag.erro, campos: [ag.campo] });
+      const per = ag.valores.periodicidade;
+      const dia = ag.valores.diaVencimento ?? null;
+      const mes = per === 'ANUAL' ? (ag.valores.mesVencimento ?? null) : null;
+      const obs = R.lerTexto(corpo.observacoes, { rotulo: 'Observações', max: 2000 });
+      if (!obs.ok) return res.status(422).json({ erro: obs.erro, campos: ['observacoes'] });
 
-      // Valida categoria do tenant se informada.
-      if (categoriaId) {
-        const cat = await prisma.categoriaFinanceira.findFirst({
-          where: { id: categoriaId, clienteId, tipo: 'DESPESA' },
-        });
-        if (!cat) return res.status(422).json({ error: 'Categoria inválida (deve ser DESPESA do tenant).' });
+      if (categoriaId && !(await conferirCategoriaDespesa(categoriaId, clienteId))) {
+        return res.status(422).json({ erro: 'Categoria inválida (tem que ser uma categoria de despesa sua).', campos: ['categoriaId'] });
       }
 
       const conta = await prisma.contaPagar.create({
         data: {
           clienteId,
-          nome: nome.trim(),
+          nome: nome.valor,
           valorPadrao: valor,
           categoriaId: categoriaId || null,
           periodicidade: per,
           diaVencimento: dia,
           mesVencimento: mes,
-          observacoes: observacoes ? String(observacoes).trim() : null,
+          observacoes: obs.valor,
           ativa: true,
         },
         include: { categoria: { select: { id: true, nome: true } } },
       });
       res.status(201).json(conta);
     } catch (e) {
-      console.error('[contaPagar/criar]', e);
-      res.status(500).json({ error: 'Erro ao criar conta a pagar.' });
+      return responderErro(res, e, '[contaPagar/criar]', 'Erro ao criar conta a pagar.');
     }
   }
 
@@ -93,39 +106,38 @@ class ContaPagarController {
       const existente = await prisma.contaPagar.findFirst({ where: { id, clienteId } });
       if (!existente) return res.status(404).json({ error: 'Conta a pagar não encontrada.' });
 
-      const { nome, valorPadrao, categoriaId, periodicidade, diaVencimento, mesVencimento, observacoes, ativa } = req.body;
+      const { nome, valorPadrao, categoriaId, observacoes, ativa } = req.body || {};
       const data = {};
       if (nome !== undefined) {
-        if (typeof nome !== 'string' || nome.trim().length < 2) {
-          return res.status(422).json({ error: 'Nome inválido.' });
-        }
-        data.nome = nome.trim();
+        const n = R.lerTexto(nome, { rotulo: 'Nome', min: 2, max: 120, obrigatorio: true });
+        if (!n.ok) return res.status(422).json({ erro: n.erro, campos: ['nome'] });
+        data.nome = n.valor;
       }
       if (valorPadrao !== undefined) {
-        const v = parseFloat(valorPadrao);
-        if (!Number.isFinite(v) || v < 0) return res.status(422).json({ error: 'Valor inválido.' });
-        data.valorPadrao = v;
+        const v = R.lerDinheiro(valorPadrao, { min: 0, max: 10_000_000 });
+        if (!v.ok) return res.status(422).json({ erro: `Valor padrão: ${v.erro}`, campos: ['valorPadrao'] });
+        data.valorPadrao = v.valor;
       }
       if (categoriaId !== undefined) {
-        if (categoriaId) {
-          const cat = await prisma.categoriaFinanceira.findFirst({
-            where: { id: categoriaId, clienteId, tipo: 'DESPESA' },
-          });
-          if (!cat) return res.status(422).json({ error: 'Categoria inválida.' });
+        if (categoriaId && !(await conferirCategoriaDespesa(categoriaId, clienteId))) {
+          return res.status(422).json({ erro: 'Categoria inválida (tem que ser uma categoria de despesa sua).', campos: ['categoriaId'] });
         }
         data.categoriaId = categoriaId || null;
       }
-      if (periodicidade !== undefined && PERIODICIDADES_VALIDAS.includes(periodicidade)) {
-        data.periodicidade = periodicidade;
+      const ag = R.validarAgendaConta(req.body || {}, { parcial: true });
+      if (!ag.ok) return res.status(422).json({ erro: ag.erro, campos: [ag.campo] });
+      Object.assign(data, ag.valores);
+      const perFinal = data.periodicidade || existente.periodicidade;
+      if (perFinal !== 'ANUAL' && (data.periodicidade !== undefined || data.mesVencimento !== undefined)) data.mesVencimento = null;
+      if (observacoes !== undefined) {
+        const o = R.lerTexto(observacoes, { rotulo: 'Observações', max: 2000 });
+        if (!o.ok) return res.status(422).json({ erro: o.erro, campos: ['observacoes'] });
+        data.observacoes = o.valor;
       }
-      if (diaVencimento !== undefined) {
-        data.diaVencimento = (Number.isInteger(diaVencimento) && diaVencimento >= 1 && diaVencimento <= 31) ? diaVencimento : null;
+      if (ativa !== undefined) {
+        if (typeof ativa !== 'boolean') return res.status(422).json({ erro: 'Campo "ativa" inválido.', campos: ['ativa'] });
+        data.ativa = ativa;
       }
-      if (mesVencimento !== undefined) {
-        data.mesVencimento = (Number.isInteger(mesVencimento) && mesVencimento >= 1 && mesVencimento <= 12) ? mesVencimento : null;
-      }
-      if (observacoes !== undefined) data.observacoes = observacoes ? String(observacoes).trim() : null;
-      if (ativa !== undefined) data.ativa = !!ativa;
 
       const conta = await prisma.contaPagar.update({
         where: { id },
@@ -134,8 +146,7 @@ class ContaPagarController {
       });
       res.json(conta);
     } catch (e) {
-      console.error('[contaPagar/editar]', e);
-      res.status(500).json({ error: 'Erro ao editar conta a pagar.' });
+      return responderErro(res, e, '[contaPagar/editar]', 'Erro ao editar conta a pagar.');
     }
   }
 
@@ -158,7 +169,7 @@ class ContaPagarController {
           codigo: 'TEM_PAGAMENTOS',
         });
       }
-      await prisma.contaPagar.delete({ where: { id } });
+      await prisma.contaPagar.deleteMany({ where: { id, clienteId } });
       res.json({ ok: true });
     } catch (e) {
       console.error('[contaPagar/excluir]', e);
@@ -180,21 +191,30 @@ class ContaPagarController {
       const { id } = req.params;
       if (!clienteId) return res.status(403).json({ error: 'Acesso negado.' });
 
-      const valor = parseFloat(req.body.valor);
-      if (!Number.isFinite(valor) || valor <= 0) {
-        return res.status(422).json({ error: 'Valor inválido (> 0).' });
+      const corpo = req.body || {};
+      const v = R.lerDinheiro(corpo.valor, { min: 0.01, max: 10_000_000 });
+      if (!v.ok) return res.status(422).json({ erro: `Valor: ${v.erro}`, campos: ['valor'] });
+      const valor = v.valor;
+      const m = R.lerTexto(corpo.motivo, { rotulo: 'Observação', max: 500 });
+      if (!m.ok) return res.status(422).json({ erro: m.erro, campos: ['motivo'] });
+      const motivo = m.valor || '';
+      let dataVencimento = new Date();
+      if (corpo.dataVencimento) {
+        const dv = R.lerDataDia(corpo.dataVencimento, 'Data de vencimento');
+        if (!dv.ok) return res.status(422).json({ erro: dv.erro, campos: ['dataVencimento'] });
+        dataVencimento = dv.data;
       }
-      const motivo = typeof req.body.motivo === 'string' ? req.body.motivo.trim() : '';
-      const dataVencimento = req.body.dataVencimento ? new Date(req.body.dataVencimento) : new Date();
+      const confirmarSaldoNegativo = corpo.confirmarSaldoNegativo === true;
       // Flag explicita: se false, paga apenas como lancamento (nao tira do caixa).
       // Util quando o usuario pagou direto do banco (boleto, PIX) sem mexer no caixa.
-      const tirarDoCaixa = req.body.tirarDoCaixa !== false;
+      const tirarDoCaixa = corpo.tirarDoCaixa !== false;
 
       const conta = await prisma.contaPagar.findFirst({
         where: { id, clienteId },
         include: { categoria: true },
       });
-      if (!conta) return res.status(404).json({ error: 'Conta a pagar não encontrada.' });
+      if (!conta) return res.status(404).json({ erro: 'Conta a pagar não encontrada.' });
+      if (!conta.ativa) return res.status(409).json({ erro: 'Esta conta está desativada. Reative antes de pagar.', codigo: 'CONTA_INATIVA' });
 
       const usuarioNome = usuarioId ? (await prisma.usuario.findUnique({
         where: { id: usuarioId },
@@ -217,7 +237,15 @@ class ContaPagarController {
               codigo: 'CAIXA_FECHADO',
             });
           }
+          const saldo = await caixa.calcularSaldoEsperado(sessao.id, tx);
+          const chk = R.checarRetirada(valor, saldo, confirmarSaldoNegativo);
+          if (!chk.ok) {
+            throw Object.assign(new Error(chk.erro), { status: 422, codigo: chk.codigo, extra: { saldoEsperado: saldo, saldoDepois: chk.saldoDepois } });
+          }
         }
+        // A conta pode ter sido desativada entre a leitura e o lock.
+        const aindaAtiva = await tx.contaPagar.findFirst({ where: { id: conta.id, clienteId, ativa: true }, select: { id: true } });
+        if (!aindaAtiva) throw Object.assign(new Error('Esta conta está desativada. Reative antes de pagar.'), { status: 409, codigo: 'CONTA_INATIVA' });
 
         const descricao = `${conta.nome}${motivo ? ` — ${motivo}` : ''}`;
 
@@ -258,11 +286,7 @@ class ContaPagarController {
 
       res.status(201).json(resultado);
     } catch (e) {
-      const status = e?.status || 500;
-      const payload = { error: e?.message || 'Erro ao pagar conta.' };
-      if (e?.codigo) payload.codigo = e.codigo;
-      console.error('[contaPagar/pagar]', e?.message);
-      res.status(status).json(payload);
+      return responderErro(res, e, '[contaPagar/pagar]', 'Erro ao pagar conta.');
     }
   }
 }

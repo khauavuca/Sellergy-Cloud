@@ -5,6 +5,8 @@
 const path = require('path');
 require('dotenv').config();
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
+// Em producao nao sobe com segredo fraco, faltando ou valor de exemplo.
+require('./seguranca/validarAmbiente').garantirAmbienteSeguro();
 
 const express = require('express');
 const cors = require('cors');
@@ -48,7 +50,7 @@ const middlewareAutenticacao = require('./middlewares/auth.middleware');
 const { SEGREDO_JWT } = require('./middlewares/auth.middleware');
 const { limitadorApi } = require('./middlewares/rateLimit.middleware');
 const middlewareCsrf = require('./middlewares/csrf.middleware');
-const { NOME_SESSAO, lerCookie } = require('./utils/sessaoCookie');
+const { nomeSessao, lerCookie } = require('./utils/sessaoCookie');
 const { ehAdmin } = require('./middlewares/permissoes.middleware');
 const prisma = require('./prisma');
 
@@ -70,10 +72,12 @@ const opcoesCors = {
 };
 
 const app = express();
-// Atras de proxy/tunel (ngrok, nginx, load balancer): confia no
-// primeiro hop pra que req.ip e X-Forwarded-For funcionem corretamente.
-// Necessario pro express-rate-limit nao reclamar e identificar o cliente real.
-app.set('trust proxy', 1);
+// A API so recebe trafego pelo tunel do Cloudflare (cloudflared no host ou na
+// rede do Docker) e pela propria maquina. Confia no X-Forwarded-For SO quando o
+// salto vem de loopback/rede interna: antes ('trust proxy' 1) qualquer um que
+// mandasse um X-Forwarded-For falso zerava o limite de tentativas de login.
+// O IP real do visitante pelo tunel e lido em seguranca/ipCliente.js.
+app.set('trust proxy', 'loopback, linklocal, uniquelocal');
 const servidor = http.createServer(app);
 const io = new Server(servidor, {
   cors: opcoesCors,
@@ -83,7 +87,7 @@ const io = new Server(servidor, {
 io.use((socket, next) => {
   // Mesma ordem do middleware HTTP: cookie httpOnly primeiro (navegador),
   // depois as formas explicitas usadas por clientes fora do navegador.
-  const token = lerCookie(socket.handshake, NOME_SESSAO)
+  const token = lerCookie(socket.handshake, nomeSessao(socket.handshake))
     || socket.handshake?.auth?.token
     || socket.handshake?.headers?.authorization?.replace(/^Bearer\s+/i, '');
 
@@ -93,6 +97,10 @@ io.use((socket, next) => {
 
   try {
     const dados = jwt.verify(token, SEGREDO_JWT);
+    // So token de sessao (o desafio do 2FA nao abre o tempo real).
+    if (!dados?.id || !dados?.perfil || dados.etapa) return next(new Error('Token invalido'));
+    // Sessao de suporte (so leitura) nao abre o tempo real: ali ha eventos que escrevem.
+    if (dados.suporte) return next(new Error('Sessao de suporte nao usa o tempo real'));
     socket.usuario = dados;
     return next();
   } catch (erro) {
@@ -100,6 +108,9 @@ io.use((socket, next) => {
   }
 });
 
+// Erros sempre com `erro` e sem detalhe interno no 5xx (seguranca/respostaSegura.js).
+const { mensagemPadronizada, tratadorFinal } = require('./seguranca/respostaSegura');
+app.use(mensagemPadronizada);
 app.use(helmet());
 app.use(cors(opcoesCors));
 
@@ -157,6 +168,16 @@ app.use('/estoque', rotasEstoque);
 app.use('/fornecedores', rotasFornecedores);
 app.use('/notas-compra', rotasNotasCompra);
 // Admin gerencia as integracoes (credenciais) de cada cliente — rota segura, admin-only.
+// Com a API do painel num endereco proprio (API_PAINEL_HOSTS), as rotas de
+// admin nem existem no endereco do site.
+{
+  const { hostsPainel } = require('./seguranca/acessoAdmin');
+  app.use('/admin', (req, res, next) => {
+    const hosts = hostsPainel();
+    if (hosts.length && !hosts.includes(String(req.hostname || '').toLowerCase())) return res.status(404).json({ erro: 'Rota não encontrada' });
+    return next();
+  });
+}
 app.use('/admin/clientes', rotasAdminCredenciais);
 // Credencial de IA da PLATAFORMA (uma so, da Sellergy) — rota separada da
 // acima porque nao pertence a nenhum cliente.
@@ -172,6 +193,33 @@ app.use('/campanhas', rotasCampanhas);
 app.use('/faq', rotasFaq);
 app.use('/pagamentos', rotasPagamentos);
 app.use('/fiscal', rotasFiscal);
+// Fase 1: conta (plano, assinatura, assistente de inicio) e rotas publicas
+// (agendamento pelo link, confirmacao do lembrete, planos da landing).
+app.use('/conta', require('./routes/conta.routes'));
+// Fase 2 (rotas publicas mais especificas antes de /publico).
+app.use('/publico/encaixe', require('./routes/publicoEncaixe.routes'));
+app.use('/publico/loja', require('./routes/publicoCatalogo.routes'));
+app.use('/publico/convite', require('./routes/publicoConvite.routes'));
+app.use('/publico', require('./routes/publico.routes'));
+app.use('/encaixe', require('./routes/encaixe.routes'));
+app.use('/pacotes', require('./routes/pacotes.routes'));
+app.use('/comissoes', require('./routes/comissoes.routes'));
+app.use('/pedidos', require('./routes/pedidos.routes'));
+app.use('/conta-recebimento', require('./routes/contaRecebimento.routes'));
+app.use('/importacao', require('./routes/importacao.routes'));
+app.use('/convites', require('./routes/convites.routes'));
+app.use('/hoje', require('./routes/hoje.routes'));
+app.use('/suporte', require('./routes/suporte.routes'));
+app.use('/comunicados', require('./routes/comunicados.routes'));
+// Caixa de entrada do WhatsApp (tela /app/whatsapp).
+app.use('/conversas', require('./routes/conversas.routes'));
+app.use('/admin/suporte', require('./routes/adminSuporte.routes'));
+app.use('/admin/saude', require('./routes/adminSaude.routes'));
+app.use('/admin/comunicados', require('./routes/adminComunicados.routes'));
+app.use('/admin/uso', require('./routes/adminUso.routes'));
+app.use('/admin/equipe', require('./routes/adminEquipe.routes'));
+app.use('/admin/planos', require('./routes/adminPlanos.routes'));
+app.use('/admin/assinaturas', require('./routes/assinaturas.routes'));
 
 // Webhooks externos — SEM autenticacao de usuario (o chamador e o provedor/Meta;
 // a autenticidade vem da assinatura/verify token validada no handler).
@@ -183,13 +231,21 @@ app.get('/saude', (req, res) => {
   res.json({ status: 'ok', data: new Date() });
 });
 
+// Ultimo da cadeia: erro nao tratado (CORS, JSON quebrado, excecao) vira JSON seguro.
+app.use(tratadorFinal);
+
 io.on('connection', (socket) => {
   console.log('Novo cliente conectado:', socket.id, 'usuario:', socket.usuario?.id);
 
+  // Sala do negocio (tenant): eventos de bot (bot_atualizado/criado/deletado)
+  // vao so pra quem e do mesmo cliente — nunca io.emit global. Admin da
+  // plataforma entra na sala "admins".
+  if (ehAdmin(socket.usuario)) socket.join('admins');
+  else if (socket.usuario?.clienteId) socket.join(`cliente:${socket.usuario.clienteId}`);
+
   // Sala por bot — usada SO pelo pareamento Baileys (QR code + status), que
-  // precisa ficar restrito a quem e dono do bot. Ao contrario dos demais
-  // eventos deste arquivo (io.emit global, aceitavel pra "nome do bot
-  // mudou"), transmitir um QR code escaneavel pra qualquer sessao logada de
+  // precisa ficar restrito a quem e dono do bot. Transmitir um QR code
+  // escaneavel pra qualquer sessao logada de
   // QUALQUER tenant seria uma falha real de isolamento — quem escanear
   // primeiro pareia. Por isso valida o dono do bot antes de entrar na sala.
   socket.on('join_bot', async (botId) => {
@@ -227,6 +283,27 @@ io.on('connection', (socket) => {
     }
   });
 })();
+
+// Tempo real da caixa de entrada do WhatsApp: sala conversas:<clienteId>
+// (join validado no banco) + relay Redis dos eventos da API e do worker.
+require('./conversas/tempoReal').ligarTempoReal(io);
+
+// Rota que nao existe: JSON curto (sem a pagina padrao do Express).
+app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada' }));
+
+// Erros que escaparam das rotas: resposta curta, sem stack trace nem caminho
+// de arquivo (o Express em modo dev devolvia o erro inteiro em HTML).
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  if (/Origem nao permitida pelo CORS/.test(err?.message || '')) return res.status(403).json({ erro: 'Origem não permitida.' });
+  if (err?.type === 'entity.parse.failed') return res.status(400).json({ erro: 'Corpo da requisição inválido.' });
+  if (err?.type === 'entity.too.large') return res.status(413).json({ erro: 'Requisição grande demais.' });
+  const status = Number(err?.status || err?.statusCode);
+  if (status >= 400 && status < 500) return res.status(status).json({ erro: 'Requisição inválida.' });
+  console.error('[erro nao tratado]', req.method, req.originalUrl, err?.message || err);
+  return res.status(500).json({ erro: 'Erro interno. Tente de novo em instantes.' });
+});
 
 const PORTA = process.env.BACKEND_PORT || 3333;
 
@@ -267,6 +344,21 @@ servidor.listen(PORTA, async () => {
     iniciarCronDevolucoes();
   } catch (e) {
     console.error('[boot] Falha ao inicializar cron de devoluções:', e?.message);
+  }
+
+  // Campanhas agendadas: confere a cada minuto e dispara as que venceram.
+  try {
+    require('./jobs/cronCampanhasAgendadas').iniciar();
+  } catch (e) {
+    console.error('[boot] Falha ao inicializar campanhas agendadas:', e?.message);
+  }
+
+  // Suporte: apaga a conversa dos chamados resolvidos ha mais de 7 dias
+  // (as fotos ja somem ao resolver). Ver suporte/anexos.js.
+  try {
+    require('./jobs/cronLimpezaSuporte').iniciar();
+  } catch (e) {
+    console.error('[boot] Falha ao inicializar limpeza do suporte:', e?.message);
   }
 });
 

@@ -83,3 +83,61 @@ test('resolverDataDevolucao exige data manual quando nao ha data nem prazo padra
   assert.ok(r.erro);
   assert.match(r.erro, /Fantasia/);
 });
+
+// ----- Correcoes dos testes de uso (vendas) -----
+const {
+  normalizarMetodoPagamento, lerParcelas, podeDarDesconto, lerDataEstrita, calcularEstornoEstoque,
+} = VendaController;
+
+test('forma de pagamento: so as conhecidas; vazio = nao informado; apelido de cartao vira o curto', () => {
+  assert.deepStrictEqual(normalizarMetodoPagamento('pix'), { valor: 'PIX' });
+  assert.deepStrictEqual(normalizarMetodoPagamento(''), { valor: null });
+  assert.deepStrictEqual(normalizarMetodoPagamento('CARTAO_CREDITO'), { valor: 'CREDITO' });
+  assert.ok(normalizarMetodoPagamento('BITCOIN').erro);
+  assert.ok(normalizarMetodoPagamento('<img src=x onerror=alert(1)>').erro);
+  assert.ok(normalizarMetodoPagamento(5).erro);
+});
+
+test('parcelas: 1..24 no credito; 999, 0, 1,5 e texto recusados; fora do credito vira 1', () => {
+  assert.deepStrictEqual(lerParcelas(12, 'CREDITO'), { valor: 12 });
+  assert.deepStrictEqual(lerParcelas(undefined, 'CREDITO'), { valor: 1 });
+  assert.deepStrictEqual(lerParcelas(3, 'PIX'), { valor: 1 });
+  assert.ok(lerParcelas(999, 'CREDITO').erro);
+  assert.ok(lerParcelas(0, 'CREDITO').erro);
+  assert.ok(lerParcelas('1,5', 'CREDITO').erro);
+  assert.ok(lerParcelas('abc', 'CREDITO').erro);
+});
+
+test('desconto manual: dono/administrador sempre; vendedor so com VENDAS.desconto', () => {
+  assert.strictEqual(podeDarDesconto({ perfil: 'CLIENT' }, null), true);
+  assert.strictEqual(podeDarDesconto({ perfil: 'ADMINISTRADOR' }, null), true);
+  assert.strictEqual(podeDarDesconto({ perfil: 'VENDEDOR' }, { VENDAS: { criar: true } }), false);
+  assert.strictEqual(podeDarDesconto({ perfil: 'VENDEDOR' }, { VENDAS: { desconto: true } }), true);
+});
+
+test('data estrita: recusa 31/02, ano 3000 e ano < 1900; aceita data real', () => {
+  assert.strictEqual(lerDataEstrita('2027-02-31'), null);
+  assert.strictEqual(lerDataEstrita('3000-01-01'), null);
+  assert.strictEqual(lerDataEstrita('1800-01-01'), null);
+  assert.strictEqual(lerDataEstrita('2027-02-28').toISOString().slice(0, 10), '2027-02-28');
+});
+
+test('resolverDataDevolucao recusa 31/02 e ano 3000', () => {
+  const agora = new Date('2026-11-25T00:00:00Z');
+  assert.ok(resolverDataDevolucao({ dataDevolucaoInput: '2027-02-31', nomeProduto: 'Vestido', agora }).erro);
+  assert.ok(resolverDataDevolucao({ dataDevolucaoInput: '3000-01-01', nomeProduto: 'Vestido', agora }).erro);
+});
+
+test('estorno do cancelamento: so o que ainda nao voltou (devolucao concluida nao devolve de novo)', () => {
+  const fis = { produto: { tipo: 'FISICO' } };
+  // Vendeu 2, devolucao de aluguel ja trouxe 2 -> nada a devolver.
+  assert.deepStrictEqual(calcularEstornoEstoque([
+    { variacaoId: 'a', quantidade: -2, variacao: fis },
+    { variacaoId: 'a', quantidade: 2, variacao: fis },
+  ]), []);
+  // Vendeu 3 de b (pendente) e 1 servico -> devolve 3 fisico + 1 servico (sem estoque).
+  assert.deepStrictEqual(calcularEstornoEstoque([
+    { variacaoId: 'b', quantidade: -3, variacao: fis },
+    { variacaoId: 's', quantidade: -1, variacao: { produto: { tipo: 'SERVICO' } } },
+  ]), [{ variacaoId: 'b', quantidade: 3, fisico: true }, { variacaoId: 's', quantidade: 1, fisico: false }]);
+});

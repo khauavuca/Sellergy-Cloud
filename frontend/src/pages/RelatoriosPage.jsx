@@ -1,34 +1,38 @@
 // Pagina de relatorios consolidados do tenant.
-// Estrutura: Tabs (Visao Executiva, CRM, ...) + filtro de periodo GLOBAL.
-// Cada aba e um componente que recebe o intervalo e busca seus dados.
+// Estrutura (layout novo): barra de periodo + seletor de relatorio no topo,
+// faixa de numeros, conteudo principal + coluna lateral. Cada aba e um
+// componente que recebe o intervalo e busca seus dados.
 //
 // Filosofia do filtro de periodo:
 //   - Default: ultimos 30 dias. Presets rapidos + custom.
 //   - GLOBAL: vale pra todas as abas — quando troca, todas refazem queries.
+//   - O botao "Exportar" de cada aba vai pro topo da tela (useAcaoTopo).
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/auth.store';
+import { useAcaoTopo } from '../hooks/useAcaoTopo';
 import relatorioMensalService from '../services/relatorioMensalService';
 import {
-  TrendingUp, TrendingDown, DollarSign, ShoppingCart,
-  Users, Package, AlertCircle, Image as ImageIcon, Calendar,
-  Filter, Clock, Phone, Mail, Wallet, ArrowUpRight, ArrowDownRight,
-  Bot, MessageSquare, Sparkles, Wrench, CheckCircle2, XCircle, HelpCircle,
+  TrendingDown, Package, AlertCircle, Image as ImageIcon, Calendar,
+  Clock, Phone, Mail, Sparkles, Wrench, CheckCircle2, XCircle, HelpCircle, X, RefreshCw, ChevronRight,
 } from 'lucide-react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, BarChart, Bar,
 } from 'recharts';
 import api from '../services/api';
 import {
-  Card, Badge, Select, Input, KpiCard,
+  Badge, Input, Button,
   Tooltip as InfoTooltip,
-  BarraFiltros, FiltroRapido, Combobox, PeriodoPills, BotaoExportar,
+  FiltroRapido, Combobox, BotaoExportar,
+  Pagina, FaixaNumeros, Numero, ColunasPagina, Painel, LinhaInfo, AbasPilula,
 } from '../components/ui';
 
 const fmtBRL = (v) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtPct = (v) => `${Number(v ?? 0).toFixed(1)}%`;
 const fmtNum = (v) => Number(v ?? 0).toLocaleString('pt-BR');
+const fmtDelta = (d) => (d === null || d === undefined ? null : `${d > 0 ? '+' : ''}${Number(d).toFixed(1)}% que o período anterior`);
+const tomDelta = (d) => (d === null || d === undefined ? 'neutro' : d >= 0 ? 'sucesso' : 'perigo');
 
 const PRESETS = [
   { value: 'hoje', label: 'Hoje' },
@@ -79,11 +83,18 @@ function calcularIntervalo(preset, customInicio, customFim) {
 }
 
 // Mapeia o slug da URL pro componente da aba e seus metadados.
+// A ordem aqui é a mesma do menu lateral (vira o seletor "Relatório").
 const ABAS = {
   'visao-executiva': {
     titulo: 'Visão executiva',
     descricao: 'Visão consolidada do que está acontecendo no seu negócio.',
     Componente: AbaVisaoExecutiva,
+  },
+  'mensais': {
+    titulo: 'Fechamento mensal',
+    descricao: 'Histórico dos meses fechados. Snapshots gerados automaticamente todo dia 7 ou disparados manualmente.',
+    Componente: AbaMensais,
+    semPeriodo: true,
   },
   'crm': {
     titulo: 'CRM',
@@ -94,6 +105,11 @@ const ABAS = {
     titulo: 'Financeiro',
     descricao: 'Resultado do período, fluxo de caixa, cobranças vencidas e detalhamento por categoria.',
     Componente: AbaFinanceiro,
+  },
+  'caixa': {
+    titulo: 'Caixa',
+    descricao: 'Sessões fechadas, retiradas, entradas e auditoria de diferenças de saldo.',
+    Componente: AbaCaixa,
   },
   'vendas': {
     titulo: 'Vendas',
@@ -110,99 +126,322 @@ const ABAS = {
     descricao: 'Mensagens, ferramentas usadas, custo de IA e atendimentos bem-sucedidos.',
     Componente: AbaBots,
   },
-  'caixa': {
-    titulo: 'Caixa',
-    descricao: 'Sessões fechadas, retiradas, entradas e auditoria de diferenças de saldo.',
-    Componente: AbaCaixa,
-  },
-  'mensais': {
-    titulo: 'Fechamento mensal',
-    descricao: 'Histórico dos meses fechados. Snapshots gerados automaticamente todo dia 7 ou disparados manualmente.',
-    Componente: AbaMensais,
-  },
 };
+
+const TH = 'text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap';
+const TD = 'px-4 py-2.5 border-b border-[var(--border-subtle)]';
+const classeCampo = 'h-9 px-2.5 rounded-lg border border-[var(--border-main)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-main)] focus:outline-none focus:border-[var(--primary)]';
 
 export default function RelatoriosPage() {
   const { aba } = useParams();
-  const config = ABAS[aba] || ABAS['visao-executiva'];
+  const navigate = useNavigate();
+  const slug = ABAS[aba] ? aba : 'visao-executiva';
+  const config = ABAS[slug];
   const [preset, setPreset] = useState('30d');
   const [customInicio, setCustomInicio] = useState('');
   const [customFim, setCustomFim] = useState('');
 
+  // Periodo personalizado invertido (inicio depois do fim): avisa e usa as
+  // datas na ordem certa, em vez de mandar um periodo impossivel.
+  const periodoInvertido = preset === 'custom' && !!customInicio && !!customFim && customInicio > customFim;
   const intervalo = useMemo(
-    () => calcularIntervalo(preset, customInicio, customFim),
-    [preset, customInicio, customFim]
+    () => (periodoInvertido
+      ? calcularIntervalo(preset, customFim, customInicio)
+      : calcularIntervalo(preset, customInicio, customFim)),
+    [preset, customInicio, customFim, periodoInvertido]
   );
 
   const Componente = config.Componente;
 
   return (
-    <div className="space-y-5">
-      {/* Header: título + período em pills horizontais (substitui o
-          antigo FiltroPeriodo em dropdown). Os filtros específicos de
-          cada aba (categoria, tipo, etapa, etc.) vivem na BarraFiltros
-          dentro de cada componente. */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <div className="text-xs text-[var(--text-muted)] font-medium uppercase tracking-wider">
-            Relatório
+    <Pagina>
+      {/* Barra do topo: período (global) + qual relatório ver. Os filtros
+          específicos de cada aba ficam no painel de filtros da própria aba. */}
+      <div className="rounded-[10px] border border-[var(--border-main)] bg-[var(--bg-card)] px-2.5 py-2" data-no-print>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+          {!config.semPeriodo && (
+            <>
+              <span className="text-xs font-medium text-[var(--text-muted)] px-1">Período</span>
+              <AbasPilula
+                rotulo="Período do relatório"
+                abas={PRESETS.map((p) => ({ valor: p.value, rotulo: p.label }))}
+                valor={preset}
+                onChange={setPreset}
+              />
+              {preset === 'custom' && (
+                <div className="flex items-center gap-1.5">
+                  <label className="sr-only" htmlFor="rel-ini">Data inicial</label>
+                  <input id="rel-ini" type="date" value={customInicio} onChange={(e) => setCustomInicio(e.target.value)} className={classeCampo} />
+                  <span className="text-xs text-[var(--text-muted)]">até</span>
+                  <label className="sr-only" htmlFor="rel-fim">Data final</label>
+                  <input id="rel-fim" type="date" value={customFim} onChange={(e) => setCustomFim(e.target.value)} className={classeCampo} />
+                </div>
+              )}
+            </>
+          )}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-muted)]">
+              Relatório
+              <select
+                value={slug}
+                onChange={(e) => navigate(`/app/relatorios/${e.target.value}`)}
+                className={classeCampo}
+              >
+                {Object.entries(ABAS).map(([k, a]) => (
+                  <option key={k} value={k}>{a.titulo}</option>
+                ))}
+              </select>
+            </label>
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-main)] mt-1">
-            {config.titulo}
-          </h1>
-          <p className="text-sm text-[var(--text-muted)] mt-1">{config.descricao}</p>
         </div>
-        <div className="min-w-0 flex-1 lg:max-w-2xl">
-          <PeriodoPills
-            preset={preset}
-            onPresetChange={setPreset}
-            customInicio={customInicio}
-            customFim={customFim}
-            onCustomInicio={setCustomInicio}
-            onCustomFim={setCustomFim}
-            intervalo={intervalo}
-          />
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 pt-1.5 text-xs text-[var(--text-muted)]">
+          {!config.semPeriodo && (
+            <span className="inline-flex items-center gap-1.5">
+              <Calendar size={12} aria-hidden="true" />
+              {intervalo.inicio.toLocaleDateString('pt-BR')} até {intervalo.fim.toLocaleDateString('pt-BR')}
+            </span>
+          )}
+          <span>{config.descricao}</span>
         </div>
+        {periodoInvertido && (
+          <p role="alert" className="m-0 px-1 pt-1.5 text-xs font-medium text-[var(--warning-text)]">
+            A data inicial era depois da final — mostrando de {intervalo.inicio.toLocaleDateString('pt-BR')} até {intervalo.fim.toLocaleDateString('pt-BR')}.
+          </p>
+        )}
       </div>
 
       <Componente intervalo={intervalo} />
+    </Pagina>
+  );
+}
+
+// Coloca o "Exportar" da aba no topo da tela (botão principal do Topbar).
+// Guarda o montarDados mais recente num ref, pra exportar sempre o que está
+// na tela (filtros incluídos) sem recriar o botão a cada render.
+function useExportarNoTopo(montarDados, dados) {
+  const ref = useRef(montarDados);
+  useEffect(() => { ref.current = montarDados; });
+  const montar = useCallback(() => ref.current(), []);
+  const pronto = !!dados;
+  useAcaoTopo(<BotaoExportar montarDados={montar} desabilitado={!pronto} />, [pronto, montar]);
+}
+
+// Rótulo de número com explicação ao passar o mouse (title nativo, que não
+// é cortado pelo truncate do cartão).
+function rotuloInfo(texto, info) {
+  if (!info) return texto;
+  return <span title={info} className="cursor-help">{texto}</span>;
+}
+
+// Painel de filtros da aba: filtros rápidos/campos + rodapé com contador,
+// chips removíveis e "Limpar tudo" (mesmo comportamento do BarraFiltros).
+function PainelFiltros({ children, contador, filtrosAtivos = [], onLimparTudo }) {
+  const ativos = filtrosAtivos.filter(Boolean);
+  return (
+    <section aria-label="Filtros do relatório" className="rounded-[10px] border border-[var(--border-main)] bg-[var(--bg-card)] px-4 py-3 flex flex-col gap-3" data-no-print>
+      {children}
+      {(contador || ativos.length > 0) && (
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-[var(--border-subtle)]">
+          <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+            {contador && <span className="text-xs font-semibold text-[var(--text-secondary)] mr-2">{contador}</span>}
+            {ativos.map((f, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={f.onRemover}
+                aria-label={`Remover filtro ${f.rotulo}`}
+                className="inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full text-xs font-semibold bg-[var(--accent-soft)] text-[var(--accent-text)] hover:opacity-80 transition-opacity"
+              >
+                {f.rotulo}
+                <X size={11} strokeWidth={2.5} aria-hidden="true" />
+              </button>
+            ))}
+          </div>
+          {ativos.length > 0 && onLimparTudo && (
+            <button
+              type="button"
+              onClick={onLimparTudo}
+              className="text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--danger-text)] hover:underline"
+            >
+              Limpar tudo
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// Lista "rótulo ... valor" com barrinha proporcional (ex.: "Como pagaram").
+function ListaBarras({ itens, carregando, vazio = 'Sem dados no período.', cor = 'var(--primary)' }) {
+  if (carregando && !itens) return <div className="px-4 py-6 text-center text-[13px] text-[var(--text-muted)]">Calculando…</div>;
+  if (!itens || itens.length === 0) return <div className="px-4 py-8 text-center text-[13px] text-[var(--text-muted)]">{vazio}</div>;
+  const total = itens.reduce((a, i) => a + (Number(i.valor) || 0), 0);
+  return (
+    <div className="px-4 py-3.5 flex flex-col gap-3 text-[13px]">
+      {itens.map((i) => {
+        const pct = total > 0 ? ((Number(i.valor) || 0) / total) * 100 : 0;
+        return (
+          <div key={i.chave}>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="min-w-0 [overflow-wrap:anywhere] text-[var(--text-secondary)]">
+                {i.rotulo}
+                {i.extra && <span className="ml-1.5 text-xs text-[var(--text-muted)]">{i.extra}</span>}
+              </span>
+              <span className="flex-shrink-0 tabular-nums">
+                <strong className="text-[var(--text-main)]">{i.valorTexto ?? fmtPct(pct)}</strong>
+                {i.valorTexto && <span className="ml-1.5 text-xs text-[var(--text-muted)]">{fmtPct(pct)}</span>}
+              </span>
+            </div>
+            <div className="h-2 rounded bg-[var(--bg-subtle)] mt-1.5" aria-hidden="true">
+              <div className="h-2 rounded" style={{ width: `${pct}%`, backgroundColor: i.cor || cor }} />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-// Cabeçalho compacto que cada aba usa: contém apenas o botão de exportar
-// alinhado à direita. Mantém consistência visual entre as 7 abas.
-function CabecalhoAba({ montarDados, dados }) {
+// Gráfico de barras do faturamento (mesmo desenho do mockup): agrupa a
+// receita paga por dia, semana ou mês conforme o tamanho do período e
+// destaca a melhor barra.
+function agruparFaturamento(fluxo, intervalo) {
+  if (!fluxo || fluxo.length === 0) return { unidade: 'dia', barras: [] };
+  const dias = Math.round((intervalo.fim - intervalo.inicio) / 86400000) + 1;
+  const unidade = dias <= 14 ? 'dia' : dias <= 92 ? 'semana' : 'mês';
+  const grupos = new Map();
+  for (const f of fluxo) {
+    const [a, m, d] = f.data.split('-').map(Number);
+    const dt = new Date(a, m - 1, d);
+    let chave;
+    let rotulo;
+    if (unidade === 'dia') {
+      chave = f.data;
+      rotulo = dias <= 7 ? dt.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '') : `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}`;
+    } else if (unidade === 'semana') {
+      const ini = new Date(dt);
+      ini.setDate(dt.getDate() - dt.getDay());
+      chave = ini.toISOString().slice(0, 10);
+      rotulo = `${String(ini.getDate()).padStart(2, '0')}/${String(ini.getMonth() + 1).padStart(2, '0')}`;
+    } else {
+      chave = `${a}-${m}`;
+      rotulo = dt.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '');
+    }
+    const g = grupos.get(chave) || { chave, rotulo, valor: 0 };
+    g.valor += Number(f.receita) || 0;
+    grupos.set(chave, g);
+  }
+  return { unidade, barras: [...grupos.values()].sort((x, y) => (x.chave < y.chave ? -1 : 1)) };
+}
+
+function GraficoBarrasFaturamento({ barras, carregando }) {
+  if (carregando && !barras) return <div className="px-4 py-12 text-center text-[13px] text-[var(--text-muted)]">Calculando…</div>;
+  if (!barras || barras.length === 0 || barras.every((b) => b.valor === 0)) {
+    return <div className="px-4 py-12 text-center text-[13px] text-[var(--text-muted)]">Sem faturamento no período.</div>;
+  }
+  const max = Math.max(...barras.map((b) => b.valor));
+  const compacto = barras.length > 12;
   return (
-    <div className="flex justify-end" data-no-print>
-      <BotaoExportar montarDados={montarDados} desabilitado={!dados} />
+    <div className="overflow-x-auto">
+      <div
+        className="px-4 pt-4 pb-3 flex items-end gap-2 h-[200px]"
+        style={{ minWidth: compacto ? `${barras.length * 34}px` : undefined }}
+        role="img"
+        aria-label={`Faturamento: ${barras.map((b) => `${b.rotulo} ${fmtBRL(b.valor)}`).join(', ')}`}
+      >
+        {barras.map((b) => {
+          const melhor = b.valor === max;
+          return (
+            <div key={b.chave} className="flex-1 min-w-0 h-full flex flex-col items-center justify-end gap-1.5" title={`${b.rotulo}: ${fmtBRL(b.valor)}`}>
+              {!compacto && (
+                <span className="text-[11px] font-semibold text-[var(--text-secondary)] whitespace-nowrap tabular-nums">
+                  {Number(b.valor).toLocaleString('pt-BR', { notation: 'compact', style: 'currency', currency: 'BRL' })}
+                </span>
+              )}
+              <div
+                className="w-[70%] max-w-16 rounded-t"
+                style={{
+                  height: `${Math.max(4, Math.round((b.valor / max) * 140))}px`,
+                  backgroundColor: melhor ? 'var(--primary)' : 'color-mix(in srgb, var(--primary) 45%, transparent)',
+                }}
+              />
+              <span className="text-[11px] font-medium text-[var(--text-muted)] whitespace-nowrap">{b.rotulo}</span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
+
+function LegendaFaturamento({ unidade }) {
+  return (
+    <div className="flex gap-3 text-xs font-medium text-[var(--text-muted)]">
+      <span className="inline-flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-[var(--primary)]" aria-hidden="true" /> Melhor {unidade}</span>
+      <span className="inline-flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: 'color-mix(in srgb, var(--primary) 45%, transparent)' }} aria-hidden="true" /> Demais</span>
+    </div>
+  );
+}
+
+const CORES_PAGAMENTO = ['var(--primary)', 'var(--info)', 'var(--warning)', 'var(--accent)', 'var(--success)', 'var(--danger)'];
+const NOMES_METODO = {
+  PIX: 'Pix', CREDITO: 'Cartão de crédito', DEBITO: 'Cartão de débito', DINHEIRO: 'Dinheiro',
+  BOLETO: 'Boleto', TRANSFERENCIA: 'Transferência', CARTAO: 'Cartão',
+};
+const itensPagamento = (porMetodo) => porMetodo?.map((m, i) => ({
+  chave: m.metodo,
+  rotulo: NOMES_METODO[m.metodo] || m.metodo,
+  extra: `${fmtNum(m.qtd)}×`,
+  valor: m.valor,
+  valorTexto: fmtBRL(m.valor),
+  cor: CORES_PAGAMENTO[i % CORES_PAGAMENTO.length],
+}));
 
 // ============================================================
 // ABA: Visao Executiva
 // ============================================================
+// Além do /relatorios/visao-executiva, puxa (em paralelo e sem travar a
+// tela se falhar) o /relatorios/financeiro — pro gráfico de faturamento e
+// "Como pagaram" — e o /relatorios/crm — pro "Dinheiro na mesa".
 function AbaVisaoExecutiva({ intervalo }) {
   const [carregando, setCarregando] = useState(false);
   const [dados, setDados] = useState(null);
   const [erro, setErro] = useState(null);
+  const [fin, setFin] = useState(null);
+  const [crm, setCrm] = useState(null);
+  const navigate = useNavigate();
+
+  // Periodo/filtros mudaram: liga o carregando e limpa o erro ja no render
+  // (guardando a chave da busca) em vez de setState sincrono no efeito.
+  const tIni = intervalo.inicio.getTime();
+  const tFim = intervalo.fim.getTime();
+  const chaveBusca = `${tIni}|${tFim}`;
+  const [chaveBuscaAnterior, setChaveBuscaAnterior] = useState(null);
+  if (chaveBuscaAnterior !== chaveBusca) {
+    setChaveBuscaAnterior(chaveBusca);
+    setCarregando(true);
+    setErro(null);
+  }
 
   useEffect(() => {
     let ativo = true;
-    setCarregando(true);
-    setErro(null);
-    api.get('/relatorios/visao-executiva', {
-      params: {
-        inicio: intervalo.inicio.toISOString(),
-        fim: intervalo.fim.toISOString(),
-      },
-    })
+    const params = {
+      inicio: new Date(tIni).toISOString(),
+      fim: new Date(tFim).toISOString(),
+    };
+    api.get('/relatorios/visao-executiva', { params })
       .then((r) => { if (ativo) setDados(r.data); })
       .catch((e) => { if (ativo) setErro(e?.response?.data?.error || 'Erro ao carregar.'); })
       .finally(() => { if (ativo) setCarregando(false); });
+    api.get('/relatorios/financeiro', { params })
+      .then((r) => { if (ativo) setFin(r.data); })
+      .catch(() => { if (ativo) setFin(null); });
+    api.get('/relatorios/crm', { params })
+      .then((r) => { if (ativo) setCrm(r.data); })
+      .catch(() => { if (ativo) setCrm(null); });
     return () => { ativo = false; };
-  }, [intervalo.inicio.getTime(), intervalo.fim.getTime()]);
+  }, [tIni, tFim]);
 
   const montarDados = () => ({
     nome: 'relatorio-visao-executiva',
@@ -237,68 +476,121 @@ function AbaVisaoExecutiva({ intervalo }) {
       },
     ],
   });
+  useExportarNoTopo(montarDados, dados);
+
+  const { unidade, barras } = useMemo(() => agruparFaturamento(fin?.fluxoDiario, intervalo), [fin, intervalo]);
+  const parados = crm?.leadsParados || [];
+  const valorParados = parados.reduce((a, l) => a + (Number(l.valor) || 0), 0);
+  const emRisco = dados?.caixa.emRisco || 0;
+  const valorFunil = crm?.totais?.valorTotalFunil || 0;
+  const totalNaMesa = emRisco + valorFunil;
 
   return (
-    <div className="space-y-5">
+    <>
       {erro && <ErroBox mensagem={erro} />}
 
-      <CabecalhoAba montarDados={montarDados} dados={dados} />
+      <FaixaNumeros min={200}>
+        <Numero destaque rotulo="Faturamento" valor={fmtBRL(dados?.faturamento.valor)}
+          detalhe={fmtDelta(dados?.faturamento.delta)} carregando={carregando} />
+        <Numero rotulo={rotuloInfo('Ticket médio', 'Quanto cada cliente gasta em média por venda.')}
+          valor={fmtBRL(dados?.vendas.ticketMedio)}
+          detalhe={dados ? `${fmtNum(dados.vendas.total)} venda(s) no período` : null} carregando={carregando} />
+        <Numero rotulo={rotuloInfo('Lucro líquido', 'Quanto sobrou depois de pagar tudo (vendas menos despesas).')}
+          valor={fmtBRL(dados?.lucroLiquido.valor)}
+          tom={dados?.lucroLiquido.valor < 0 ? 'perigo' : 'neutro'}
+          detalhe={dados ? `Margem ${fmtPct(dados.lucroLiquido.margem)}` : null} carregando={carregando} />
+        <Numero rotulo={rotuloInfo('Clientes novos', 'Pessoas que entraram no funil no período.')}
+          valor={fmtNum(dados?.leads.criados)}
+          detalhe={fmtDelta(dados?.leads.delta)} tomDetalhe={tomDelta(dados?.leads.delta)} carregando={carregando} />
+      </FaixaNumeros>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard icon={DollarSign} color="success" label="Faturamento"
-          valor={fmtBRL(dados?.faturamento.valor)} delta={dados?.faturamento.delta} carregando={carregando} />
-        <KpiCard icon={TrendingUp} color="accent" label="Lucro líquido"
-          info="Quanto sobrou depois de pagar tudo (vendas menos despesas)."
-          valor={fmtBRL(dados?.lucroLiquido.valor)} delta={dados?.lucroLiquido.delta}
-          subvalor={dados ? `Margem ${fmtPct(dados.lucroLiquido.margem)}` : null} carregando={carregando} />
-        <KpiCard icon={Package} color="warning" label="Custo dos produtos"
-          info="Quanto você gastou comprando o que vendeu (CMV — Custo da Mercadoria Vendida)."
-          valor={fmtBRL(dados?.cmv.valor)}
-          subvalor={dados ? `${fmtPct(dados.cmv.percentual)} do faturamento` : null} carregando={carregando} />
-        <KpiCard icon={AlertCircle} color={dados?.caixa.emRisco > 0 ? 'danger' : 'neutral'} label="Atrasado a receber"
-          info="Cobranças que venceram e o cliente ainda não pagou."
-          valor={fmtBRL(dados?.caixa.emRisco)}
-          subvalor={dados ? `${dados.caixa.emRiscoQtd} título(s)` : null} carregando={carregando} />
-        <KpiCard icon={ShoppingCart} color="info" label="Vendas no período"
-          valor={fmtNum(dados?.vendas.total)}
-          subvalor={dados ? `Ticket médio ${fmtBRL(dados.vendas.ticketMedio)}` : null} carregando={carregando} />
-        <KpiCard icon={Users} color="info" label="Novos clientes"
-          info="Pessoas que entraram no funil no período."
-          valor={fmtNum(dados?.leads.criados)} delta={dados?.leads.delta} carregando={carregando} />
-        <KpiCard icon={TrendingUp} color="success" label="Lucro bruto"
-          info="Vendas menos o custo dos produtos (sem contar despesas fixas)."
-          valor={fmtBRL(dados?.cmv.lucroBruto)}
-          subvalor={dados?.faturamento.valor > 0
-            ? `${fmtPct((dados.cmv.lucroBruto / dados.faturamento.valor) * 100)} margem bruta`
-            : null} carregando={carregando} />
-        <KpiCard icon={DollarSign} color="success" label="Saldo do período"
-          info="Tudo que entrou menos tudo que saiu no período."
-          valor={fmtBRL(dados?.caixa.saldoPeriodo)}
-          subvalor={dados ? `Receita ${fmtBRL(dados.caixa.receitaPaga)}, despesa ${fmtBRL(dados.caixa.despesaPaga)}` : null}
-          carregando={carregando} />
+      <ColunasPagina
+        lateral={(
+          <>
+            <Painel
+              titulo="Dinheiro na mesa"
+              acoes={totalNaMesa > 0 ? <Badge variant="warning">{fmtBRL(totalNaMesa)} possíveis</Badge> : null}
+              semPadding
+            >
+              <p className="m-0 px-4 pt-3 text-xs text-[var(--text-muted)]">O que o sistema achou pra você vender ou receber.</p>
+              <ItemMesa
+                titulo={`${fmtNum(dados?.caixa.emRiscoQtd)} cobrança(s) vencida(s)`}
+                etiqueta={<Badge variant={emRisco > 0 ? 'danger' : 'success'}>{emRisco > 0 ? fmtBRL(emRisco) : 'Tudo em dia'}</Badge>}
+                texto={emRisco > 0 ? 'Clientes que já deviam ter pago. Vale cobrar antes que esfrie.' : 'Nenhuma cobrança vencida até agora.'}
+                acao={<Button size="sm" variant="secondary" onClick={() => navigate('/app/relatorios/financeiro')}>Ver dívidas</Button>}
+              />
+              {crm && (
+                <ItemMesa
+                  titulo={`${fmtNum(parados.length)} cliente(s) sem contato`}
+                  etiqueta={<Badge variant={parados.length > 0 ? 'warning' : 'success'}>7+ dias</Badge>}
+                  texto={parados.length > 0
+                    ? `Parados no funil${valorParados > 0 ? `, somando ${fmtBRL(valorParados)} em potencial` : ''}. Chame antes que esfriem.`
+                    : 'Todo mundo do funil teve contato recente.'}
+                  acao={<Button size="sm" variant="secondary" onClick={() => navigate('/app/relatorios/crm')}>Ver quem chamar</Button>}
+                />
+              )}
+              {crm && (
+                <ItemMesa
+                  ultimo
+                  titulo={`${fmtNum(crm.totais?.leadsAbertos)} em negociação`}
+                  etiqueta={<Badge variant="info">{fmtBRL(valorFunil)}</Badge>}
+                  texto="Valor potencial do que está no funil agora. Fechar uma parte já faz diferença no mês."
+                />
+              )}
+            </Painel>
+
+            <Painel titulo="Como pagaram" subtitulo="Recebimentos pagos no período" semPadding>
+              <ListaBarras itens={itensPagamento(fin?.porMetodo)} carregando={!fin && carregando} vazio="Sem recebimentos no período." />
+            </Painel>
+
+            <Painel titulo="Resumo do período" semPadding>
+              <LinhaInfo rotulo="Custo dos produtos (CMV)" valor={dados ? `${fmtBRL(dados.cmv.valor)} · ${fmtPct(dados.cmv.percentual)}` : '—'} />
+              <LinhaInfo rotulo="Lucro bruto" valor={dados ? fmtBRL(dados.cmv.lucroBruto) : '—'} />
+              <LinhaInfo rotulo="Margem bruta" valor={dados?.faturamento.valor > 0 ? fmtPct((dados.cmv.lucroBruto / dados.faturamento.valor) * 100) : '—'} />
+              <LinhaInfo rotulo="Total recebido" valor={dados ? fmtBRL(dados.caixa.receitaPaga) : '—'} />
+              <LinhaInfo rotulo="Total pago" valor={dados ? fmtBRL(dados.caixa.despesaPaga) : '—'} />
+              <LinhaInfo rotulo="Saldo do período" forte valor={dados ? fmtBRL(dados.caixa.saldoPeriodo) : '—'} />
+            </Painel>
+          </>
+        )}
+      >
+        <Painel titulo={`Faturamento por ${unidade}`} acoes={<LegendaFaturamento unidade={unidade} />} semPadding>
+          <GraficoBarrasFaturamento barras={fin ? barras : null} carregando={carregando || !fin} />
+        </Painel>
+
+        <Painel
+          titulo="O que mais vende"
+          acoes={dados ? <span className="text-xs text-[var(--text-muted)]">{dados.topProdutos.length} produto(s) no período</span> : null}
+          semPadding
+          corpoClassName="overflow-x-auto"
+        >
+          <TabelaTopProdutos
+            itens={dados?.topProdutos}
+            carregando={carregando}
+            colunas={[
+              { label: 'Qtd', valor: (p) => fmtNum(p.quantidade), align: 'right' },
+              { label: 'Total', valor: (p) => fmtBRL(p.valor), align: 'right', destaque: 'success' },
+            ]}
+          />
+        </Painel>
+      </ColunasPagina>
+    </>
+  );
+}
+
+function ItemMesa({ titulo, etiqueta, texto, acao, ultimo = false }) {
+  return (
+    <div className={`px-4 py-3.5 flex flex-col gap-1.5 ${ultimo ? '' : 'border-b border-[var(--border-subtle)]'}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <strong className="text-sm text-[var(--text-main)]">{titulo}</strong>
+        {etiqueta}
       </div>
-
-      {/* Top produtos vendidos */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)] flex items-center justify-between">
-          <div>
-            <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Top produtos vendidos</div>
-            <div className="text-sm text-[var(--text-secondary)] mt-0.5">No período selecionado</div>
-          </div>
-          {dados && <Badge variant="neutral" size="sm">{dados.topProdutos.length} produto(s)</Badge>}
-        </div>
-        <TabelaTopProdutos
-          itens={dados?.topProdutos}
-          carregando={carregando}
-          colunas={[
-            { label: 'Quantidade', valor: (p) => fmtNum(p.quantidade), align: 'right' },
-            { label: 'Receita', valor: (p) => fmtBRL(p.valor), align: 'right', destaque: 'success' },
-          ]}
-        />
-      </Card>
+      <span className="text-[13px] text-[var(--text-secondary)] [overflow-wrap:anywhere]">{texto}</span>
+      {acao && <div>{acao}</div>}
     </div>
   );
 }
+
 
 // ============================================================
 // ABA: CRM
@@ -319,14 +611,24 @@ function AbaCRM({ intervalo }) {
     return () => { ativo = false; };
   }, []);
 
-  useEffect(() => {
-    let ativo = true;
+  // Periodo/filtros mudaram: liga o carregando e limpa o erro ja no render
+  // (guardando a chave da busca) em vez de setState sincrono no efeito.
+  const tIni = intervalo.inicio.getTime();
+  const tFim = intervalo.fim.getTime();
+  const chaveBusca = `${tIni}|${tFim}|${filtros.etapaId}|${filtros.origem}`;
+  const [chaveBuscaAnterior, setChaveBuscaAnterior] = useState(null);
+  if (chaveBuscaAnterior !== chaveBusca) {
+    setChaveBuscaAnterior(chaveBusca);
     setCarregando(true);
     setErro(null);
+  }
+
+  useEffect(() => {
+    let ativo = true;
     api.get('/relatorios/crm', {
       params: {
-        inicio: intervalo.inicio.toISOString(),
-        fim: intervalo.fim.toISOString(),
+        inicio: new Date(tIni).toISOString(),
+        fim: new Date(tFim).toISOString(),
         ...(filtros.etapaId ? { etapaId: filtros.etapaId } : {}),
         ...(filtros.origem ? { origem: filtros.origem } : {}),
       },
@@ -335,7 +637,7 @@ function AbaCRM({ intervalo }) {
       .catch((e) => { if (ativo) setErro(e?.response?.data?.error || 'Erro ao carregar.'); })
       .finally(() => { if (ativo) setCarregando(false); });
     return () => { ativo = false; };
-  }, [intervalo.inicio.getTime(), intervalo.fim.getTime(), filtros.etapaId, filtros.origem]);
+  }, [tIni, tFim, filtros.etapaId, filtros.origem]);
 
   // Filtros rápidos do CRM: cada um responde a uma pergunta de negócio.
   // "Última etapa" = etapa final do funil (geralmente "Fechado"/"Convertido").
@@ -422,13 +724,13 @@ function AbaCRM({ intervalo }) {
     ],
   });
 
+  useExportarNoTopo(montarDados, dados);
+
   return (
-    <div className="space-y-5">
+    <>
       {erro && <ErroBox mensagem={erro} />}
 
-      <CabecalhoAba montarDados={montarDados} dados={dados} />
-
-      <BarraFiltros
+      <PainelFiltros
         contador={contador}
         filtrosAtivos={filtrosAtivos}
         onLimparTudo={limparTudo}
@@ -461,94 +763,73 @@ function AbaCRM({ intervalo }) {
             placeholder="Ex.: WhatsApp, Instagram, indicação..."
           />
         </div>
-      </BarraFiltros>
+      </PainelFiltros>
 
-      {/* KPIs do CRM */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard icon={Users} color="info" label="Clientes em negociação"
-          info="Pessoas que ainda não compraram nem foram descartadas — estão em alguma etapa do funil."
+      <FaixaNumeros min={200}>
+        <Numero destaque rotulo="Clientes em negociação"
           valor={fmtNum(dados?.totais.leadsAbertos)}
-          subvalor={dados ? `Valor potencial ${fmtBRL(dados.totais.valorTotalFunil)}` : null}
+          detalhe={dados ? `Potencial ${fmtBRL(dados.totais.valorTotalFunil)}` : null}
           carregando={carregando} />
-        <KpiCard icon={TrendingUp} color="accent" label="Novos clientes no período"
+        <Numero rotulo="Novos clientes no período"
           valor={fmtNum(dados?.totais.criadosPeriodo)} carregando={carregando} />
-        <KpiCard icon={ShoppingCart} color="success" label="Vendas fechadas"
-          info="Clientes que viraram venda no período."
+        <Numero rotulo={rotuloInfo('Vendas fechadas', 'Clientes que viraram venda no período.')}
           valor={fmtNum(dados?.totais.conversoesPeriodo)}
-          subvalor={dados?.totais.taxaConversao !== null && dados?.totais.taxaConversao !== undefined
+          detalhe={dados?.totais.taxaConversao !== null && dados?.totais.taxaConversao !== undefined
             ? `Taxa ${fmtPct(dados.totais.taxaConversao)}` : null}
+          tomDetalhe="sucesso"
           carregando={carregando} />
-        <KpiCard icon={AlertCircle} color="warning" label="Sem contato há 7+ dias"
-          info="Clientes parados no funil que precisam de atenção."
+        <Numero rotulo={rotuloInfo('Sem contato há 7+ dias', 'Clientes parados no funil que precisam de atenção.')}
           valor={fmtNum(dados?.leadsParados.length)}
-          subvalor="Sem contato recente"
+          tom={dados?.leadsParados.length > 0 ? 'alerta' : 'neutro'}
+          detalhe="Sem contato recente"
           carregando={carregando} />
-      </div>
+      </FaixaNumeros>
 
-      {/* Funil de conversao */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Funil de conversão</div>
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">
-            Leads atualmente em cada etapa do CRM (independente do período)
-          </div>
-        </div>
-        <FunilEtapas funil={dados?.funil} carregando={carregando} />
-      </Card>
+      <ColunasPagina
+        lateral={(
+          <>
+            <Painel titulo="Origem dos leads" subtitulo="No período selecionado" semPadding corpoClassName="overflow-x-auto">
+              <TabelaOrigens origens={dados?.origens} carregando={carregando} />
+            </Painel>
+            <Painel titulo="Tempo médio por etapa" subtitulo="Baseado nos últimos 60 dias" semPadding corpoClassName="overflow-x-auto">
+              <TabelaTempoEtapas tempos={dados?.tempoMedioPorEtapa} carregando={carregando} />
+            </Painel>
+          </>
+        )}
+      >
+        <Painel titulo="Funil de conversão" subtitulo="Leads atualmente em cada etapa do CRM (independente do período)" semPadding>
+          <FunilEtapas funil={dados?.funil} carregando={carregando} />
+        </Painel>
 
-      {/* Origem dos leads + Tempo medio por etapa */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <Card padding="none">
-          <div className="px-5 py-4 border-b border-[var(--border-main)]">
-            <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Origem dos leads</div>
-            <div className="text-sm text-[var(--text-secondary)] mt-0.5">No período selecionado</div>
-          </div>
-          <TabelaOrigens origens={dados?.origens} carregando={carregando} />
-        </Card>
+        <Painel
+          titulo={<TituloSecao titulo="Clientes sem contato" info="Clientes parados no funil há vários dias. Vale dar uma atenção pra não esfriar." />}
+          subtitulo="Sem contato registrado há mais de 7 dias — chame eles"
+          semPadding
+          corpoClassName="overflow-x-auto"
+        >
+          <TabelaLeadsParados leads={dados?.leadsParados} carregando={carregando} />
+        </Painel>
 
-        <Card padding="none">
-          <div className="px-5 py-4 border-b border-[var(--border-main)]">
-            <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Tempo médio por etapa</div>
-            <div className="text-sm text-[var(--text-secondary)] mt-0.5">Baseado nos últimos 60 dias</div>
-          </div>
-          <TabelaTempoEtapas tempos={dados?.tempoMedioPorEtapa} carregando={carregando} />
-        </Card>
-      </div>
-
-      {/* Leads parados */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <TituloSecao titulo="Clientes sem contato" info="Clientes parados no funil há vários dias. Vale dar uma atenção pra não esfriar." />
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">
-            Sem contato registrado há mais de 7 dias — chame eles
-          </div>
-        </div>
-        <TabelaLeadsParados leads={dados?.leadsParados} carregando={carregando} />
-      </Card>
-
-      {/* Top produtos no funil */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)] flex items-center justify-between">
-          <div>
-            <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Top produtos no funil</div>
-            <div className="text-sm text-[var(--text-secondary)] mt-0.5">
-              Produtos com mais interesse de leads (não convertidos)
-            </div>
-          </div>
-          {dados && <Badge variant="neutral" size="sm">{dados.topProdutosNoFunil.length}</Badge>}
-        </div>
-        <TabelaTopProdutos
-          itens={dados?.topProdutosNoFunil}
-          carregando={carregando}
-          mensagemVazia="Nenhum produto vinculado a leads ainda."
-          colunas={[
-            { label: 'Leads interessados', valor: (p) => fmtNum(p.leads), align: 'right' },
-            { label: 'Qtd. total', valor: (p) => fmtNum(p.quantidadeTotal), align: 'right' },
-            { label: 'Valor potencial', valor: (p) => fmtBRL(p.valorPotencial), align: 'right', destaque: 'success' },
-          ]}
-        />
-      </Card>
-    </div>
+        <Painel
+          titulo="Top produtos no funil"
+          subtitulo="Produtos com mais interesse de leads (não convertidos)"
+          acoes={dados ? <Badge variant="neutral">{dados.topProdutosNoFunil.length}</Badge> : null}
+          semPadding
+          corpoClassName="overflow-x-auto"
+        >
+          <TabelaTopProdutos
+            itens={dados?.topProdutosNoFunil}
+            carregando={carregando}
+            mensagemVazia="Nenhum produto vinculado a leads ainda."
+            colunas={[
+              { label: 'Leads interessados', valor: (p) => fmtNum(p.leads), align: 'right' },
+              { label: 'Qtd. total', valor: (p) => fmtNum(p.quantidadeTotal), align: 'right' },
+              { label: 'Valor potencial', valor: (p) => fmtBRL(p.valorPotencial), align: 'right', destaque: 'success' },
+            ]}
+          />
+        </Painel>
+      </ColunasPagina>
+    </>
   );
 }
 
@@ -570,14 +851,24 @@ function AbaFinanceiro({ intervalo }) {
     return () => { ativo = false; };
   }, []);
 
-  useEffect(() => {
-    let ativo = true;
+  // Periodo/filtros mudaram: liga o carregando e limpa o erro ja no render
+  // (guardando a chave da busca) em vez de setState sincrono no efeito.
+  const tIni = intervalo.inicio.getTime();
+  const tFim = intervalo.fim.getTime();
+  const chaveBusca = `${tIni}|${tFim}|${filtros.categoriaId}|${filtros.tipo}|${filtros.subTipo}`;
+  const [chaveBuscaAnterior, setChaveBuscaAnterior] = useState(null);
+  if (chaveBuscaAnterior !== chaveBusca) {
+    setChaveBuscaAnterior(chaveBusca);
     setCarregando(true);
     setErro(null);
+  }
+
+  useEffect(() => {
+    let ativo = true;
     api.get('/relatorios/financeiro', {
       params: {
-        inicio: intervalo.inicio.toISOString(),
-        fim: intervalo.fim.toISOString(),
+        inicio: new Date(tIni).toISOString(),
+        fim: new Date(tFim).toISOString(),
         ...(filtros.categoriaId ? { categoriaId: filtros.categoriaId } : {}),
         ...(filtros.tipo ? { tipo: filtros.tipo } : {}),
         ...(filtros.subTipo ? { subTipo: filtros.subTipo } : {}),
@@ -587,7 +878,7 @@ function AbaFinanceiro({ intervalo }) {
       .catch((e) => { if (ativo) setErro(e?.response?.data?.error || 'Erro ao carregar.'); })
       .finally(() => { if (ativo) setCarregando(false); });
     return () => { ativo = false; };
-  }, [intervalo.inicio.getTime(), intervalo.fim.getTime(), filtros.categoriaId, filtros.tipo, filtros.subTipo]);
+  }, [tIni, tFim, filtros.categoriaId, filtros.tipo, filtros.subTipo]);
 
   // Filtros rápidos: aplicam combinações pré-configuradas. Setam o flag
   // `filtroRapido` para marcar a pílula ativa visualmente.
@@ -674,13 +965,13 @@ function AbaFinanceiro({ intervalo }) {
     ],
   });
 
+  useExportarNoTopo(montarDados, dados);
+
   return (
-    <div className="space-y-5">
+    <>
       {erro && <ErroBox mensagem={erro} />}
 
-      <CabecalhoAba montarDados={montarDados} dados={dados} />
-
-      <BarraFiltros
+      <PainelFiltros
         contador={contador}
         filtrosAtivos={filtrosAtivos}
         onLimparTudo={limparTudo}
@@ -713,107 +1004,73 @@ function AbaFinanceiro({ intervalo }) {
           {!filtros.filtroRapido && (
             <div className="flex items-end gap-1.5">
               <span className="text-xs text-[var(--text-muted)] mr-1 pb-2">Tipo:</span>
-              <button
-                type="button"
-                onClick={() => mudarTipo(filtros.tipo === 'RECEITA' ? '' : 'RECEITA')}
-                className={`px-3 py-2 rounded-full text-xs font-semibold border transition-colors ${
-                  filtros.tipo === 'RECEITA'
-                    ? 'bg-[var(--primary)] text-[var(--text-on-primary)] border-[var(--primary)]'
-                    : 'bg-[var(--bg-card)] text-[var(--text-secondary)] border-[var(--border-main)] hover:border-[var(--text-muted)] hover:text-[var(--text-main)]'
-                }`}
-              >
-                Receitas
-              </button>
-              <button
-                type="button"
-                onClick={() => mudarTipo(filtros.tipo === 'DESPESA' ? '' : 'DESPESA')}
-                className={`px-3 py-2 rounded-full text-xs font-semibold border transition-colors ${
-                  filtros.tipo === 'DESPESA'
-                    ? 'bg-[var(--primary)] text-[var(--text-on-primary)] border-[var(--primary)]'
-                    : 'bg-[var(--bg-card)] text-[var(--text-secondary)] border-[var(--border-main)] hover:border-[var(--text-muted)] hover:text-[var(--text-main)]'
-                }`}
-              >
-                Despesas
-              </button>
+              <AbasPilula
+                rotulo="Tipo de lançamento"
+                abas={[{ valor: 'RECEITA', rotulo: 'Receitas' }, { valor: 'DESPESA', rotulo: 'Despesas' }]}
+                valor={filtros.tipo}
+                onChange={(t) => mudarTipo(filtros.tipo === t ? '' : t)}
+              />
             </div>
           )}
         </div>
-      </BarraFiltros>
+      </PainelFiltros>
 
-      {/* KPIs do topo */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard icon={DollarSign} color="success" label="Lucro do período"
-          info="Receita menos despesa no período (resultado líquido)."
+      <FaixaNumeros min={200}>
+        <Numero destaque rotulo={rotuloInfo('Lucro do período', 'Receita menos despesa no período (resultado líquido).')}
           valor={fmtBRL(dados?.dre.resultadoLiquido)}
-          subvalor={dados ? `Margem ${fmtPct(dados.dre.margemLiquida)}` : null}
+          detalhe={dados ? `Margem ${fmtPct(dados.dre.margemLiquida)}` : null}
           carregando={carregando} />
-        <KpiCard icon={Wallet} color="info" label="Total recebido"
-          valor={fmtBRL(dados?.dre.receitaBruta)} carregando={carregando} />
-        <KpiCard icon={AlertCircle} color={dados?.kpis.saldoEmRisco > 0 ? 'danger' : 'neutral'} label="Atrasado a receber"
-          info="Cobranças que venceram e o cliente ainda não pagou."
+        <Numero rotulo="Total recebido"
+          valor={fmtBRL(dados?.dre.receitaBruta)}
+          detalhe={contador}
+          carregando={carregando} />
+        <Numero rotulo={rotuloInfo('Atrasado a receber', 'Cobranças que venceram e o cliente ainda não pagou.')}
           valor={fmtBRL(dados?.kpis.saldoEmRisco)}
-          subvalor={dados ? `${dados.kpis.saldoEmRiscoQtd} título(s)` : null}
+          tom={dados?.kpis.saldoEmRisco > 0 ? 'perigo' : 'neutro'}
+          detalhe={dados ? `${dados.kpis.saldoEmRiscoQtd} título(s)` : null}
           carregando={carregando} />
-        <KpiCard icon={TrendingUp} color="accent" label="Taxa de recebimento"
-          info="% das cobranças que foram pagas em dia."
+        <Numero rotulo={rotuloInfo('Taxa de recebimento', '% das cobranças que foram pagas em dia.')}
           valor={dados ? fmtPct(dados.kpis.indiceEficacia) : '—'}
-          subvalor={dados ? `Previsão recuperar ${fmtBRL(dados.kpis.previsaoRecuperacao)}` : null}
+          detalhe={dados ? `Previsão recuperar ${fmtBRL(dados.kpis.previsaoRecuperacao)}` : null}
           carregando={carregando} />
-      </div>
+      </FaixaNumeros>
 
-      {/* DRE */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <TituloSecao titulo="Resumo do resultado" info="DRE (Demonstrativo do Resultado) — mostra quanto entrou, quanto saiu e quanto sobrou de lucro no período." />
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">Só o que foi pago no período</div>
-        </div>
-        <BlocoDRE dre={dados?.dre} carregando={carregando} />
-      </Card>
+      <ColunasPagina
+        lateral={(
+          <>
+            <Painel titulo="Como pagaram" subtitulo="Recebimentos por método · só o que foi pago" semPadding>
+              <ListaBarras itens={itensPagamento(dados?.porMetodo)} carregando={carregando} vazio="Sem recebimentos no período." />
+            </Painel>
+            <Painel titulo="Receitas por categoria" semPadding>
+              <TabelaCategorias itens={dados?.porCategoriaReceita} cor="success" carregando={carregando} />
+            </Painel>
+            <Painel titulo="Despesas por categoria" semPadding>
+              <TabelaCategorias itens={dados?.porCategoriaDespesa} cor="danger" carregando={carregando} />
+            </Painel>
+          </>
+        )}
+      >
+        <Painel titulo="Fluxo de caixa diário" subtitulo="Dia a dia: o que entrou, o que saiu e como ficou o saldo" semPadding>
+          <GraficoFluxoCaixa fluxo={dados?.fluxoDiario} carregando={carregando} />
+        </Painel>
 
-      {/* Fluxo de caixa diario */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Fluxo de caixa diário</div>
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">Dia a dia: o que entrou, o que saiu e como ficou o saldo</div>
-        </div>
-        <GraficoFluxoCaixa fluxo={dados?.fluxoDiario} carregando={carregando} />
-      </Card>
+        <Painel
+          titulo={<TituloSecao titulo="Resumo do resultado" info="DRE (Demonstrativo do Resultado) — mostra quanto entrou, quanto saiu e quanto sobrou de lucro no período." />}
+          subtitulo="Só o que foi pago no período"
+          semPadding
+        >
+          <BlocoDRE dre={dados?.dre} carregando={carregando} />
+        </Painel>
 
-      {/* Aging de inadimplencia */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <TituloSecao titulo="Dívidas por tempo de atraso" info="Agrupa cobranças vencidas pelo tempo que estão paradas (até 30 dias, 30-60, 60-90, mais de 90)." />
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">Receitas pendentes vencidas, separadas por tempo de atraso</div>
-        </div>
-        <BlocoAging aging={dados?.aging} carregando={carregando} />
-      </Card>
-
-      {/* Por categoria */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <Card padding="none">
-          <div className="px-5 py-4 border-b border-[var(--border-main)]">
-            <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Receitas por categoria</div>
-          </div>
-          <TabelaCategorias itens={dados?.porCategoriaReceita} cor="success" carregando={carregando} />
-        </Card>
-
-        <Card padding="none">
-          <div className="px-5 py-4 border-b border-[var(--border-main)]">
-            <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Despesas por categoria</div>
-          </div>
-          <TabelaCategorias itens={dados?.porCategoriaDespesa} cor="danger" carregando={carregando} />
-        </Card>
-      </div>
-
-      {/* Por metodo de pagamento */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Recebimentos por método de pagamento</div>
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">Só o que foi pago no período</div>
-        </div>
-        <TabelaMetodosPagamento itens={dados?.porMetodo} carregando={carregando} />
-      </Card>
-    </div>
+        <Painel
+          titulo={<TituloSecao titulo="Dívidas por tempo de atraso" info="Agrupa cobranças vencidas pelo tempo que estão paradas (até 30 dias, 30-60, 60-90, mais de 90)." />}
+          subtitulo="Receitas pendentes vencidas, separadas por tempo de atraso"
+          semPadding
+        >
+          <BlocoAging aging={dados?.aging} carregando={carregando} />
+        </Painel>
+      </ColunasPagina>
+    </>
   );
 }
 
@@ -835,14 +1092,24 @@ function AbaEstoque({ intervalo }) {
     return () => { ativo = false; };
   }, []);
 
-  useEffect(() => {
-    let ativo = true;
+  // Periodo/filtros mudaram: liga o carregando e limpa o erro ja no render
+  // (guardando a chave da busca) em vez de setState sincrono no efeito.
+  const tIni = intervalo.inicio.getTime();
+  const tFim = intervalo.fim.getTime();
+  const chaveBusca = `${tIni}|${tFim}|${filtros.categoriaId}`;
+  const [chaveBuscaAnterior, setChaveBuscaAnterior] = useState(null);
+  if (chaveBuscaAnterior !== chaveBusca) {
+    setChaveBuscaAnterior(chaveBusca);
     setCarregando(true);
     setErro(null);
+  }
+
+  useEffect(() => {
+    let ativo = true;
     api.get('/relatorios/estoque', {
       params: {
-        inicio: intervalo.inicio.toISOString(),
-        fim: intervalo.fim.toISOString(),
+        inicio: new Date(tIni).toISOString(),
+        fim: new Date(tFim).toISOString(),
         ...(filtros.categoriaId ? { categoriaId: filtros.categoriaId } : {}),
       },
     })
@@ -850,72 +1117,74 @@ function AbaEstoque({ intervalo }) {
       .catch((e) => { if (ativo) setErro(e?.response?.data?.error || 'Erro ao carregar.'); })
       .finally(() => { if (ativo) setCarregando(false); });
     return () => { ativo = false; };
-  }, [intervalo.inicio.getTime(), intervalo.fim.getTime(), filtros.categoriaId]);
+  }, [tIni, tFim, filtros.categoriaId]);
+
+  const montarDados = () => ({
+    nome: 'relatorio-estoque',
+    titulo: 'Relatório · Estoque & CMV',
+    secoes: [
+      {
+        titulo: 'Resumo',
+        colunas: [{ chave: 'indicador', label: 'Indicador' }, { chave: 'valor', label: 'Valor' }],
+        linhas: dados ? [
+          { indicador: 'Valor do estoque', valor: fmtBRL(dados.kpis.patrimonioImobilizado) },
+          { indicador: 'Produtos físicos', valor: fmtNum(dados.kpis.totalFisicos) },
+          { indicador: 'Índice de ruptura', valor: fmtPct(dados.kpis.indiceRuptura) },
+          { indicador: 'Itens abaixo do mínimo', valor: fmtNum(dados.kpis.abaixoMinimo) },
+        ] : [],
+      },
+      {
+        titulo: 'Lista de reposição',
+        colunas: [
+          { chave: 'nome', label: 'Produto' },
+          { chave: 'estoqueAtual', label: 'Atual' },
+          { chave: 'estoqueMinimo', label: 'Mínimo' },
+          { chave: 'sugestao', label: 'Comprar', valor: (i) => fmtNum(i.sugestao) },
+        ],
+        linhas: dados?.reposicao || [],
+      },
+      {
+        titulo: 'Produtos por importância (Curva ABC)',
+        colunas: [
+          { chave: 'classe', label: 'Classe' },
+          { chave: 'nome', label: 'Produto' },
+          { chave: 'receita', label: 'Receita', valor: (i) => fmtBRL(i.receita) },
+        ],
+        linhas: dados?.curvaABC || [],
+      },
+      {
+        titulo: 'Margem por produto',
+        colunas: [
+          { chave: 'nome', label: 'Produto' },
+          { chave: 'precoCusto', label: 'Custo', valor: (i) => fmtBRL(i.precoCusto) },
+          { chave: 'preco', label: 'Venda', valor: (i) => fmtBRL(i.preco) },
+          { chave: 'margemAbsoluta', label: 'Margem R$', valor: (i) => fmtBRL(i.margemAbsoluta) },
+          { chave: 'margemPercentual', label: 'Margem %', valor: (i) => fmtPct(i.margemPercentual) },
+        ],
+        linhas: dados?.margemPorProduto || [],
+      },
+      {
+        titulo: 'Estoque parado (sem giro)',
+        colunas: [
+          { chave: 'nome', label: 'Produto' },
+          { chave: 'estoqueAtual', label: 'Estoque' },
+          { chave: 'diasSemMovimento', label: 'Dias sem giro' },
+        ],
+        linhas: dados?.estoqueParado || [],
+      },
+    ],
+  });
+  useExportarNoTopo(montarDados, dados);
+
+  const resumoABC = dados?.resumoABC;
+  const totalABC = resumoABC ? ['A', 'B', 'C'].reduce((a, c) => a + (resumoABC[c]?.receita || 0), 0) : 0;
+  const capitalParado = (dados?.estoqueParado || []).reduce((a, i) => a + (Number(i.valorParado) || 0), 0);
 
   return (
-    <div className="space-y-5">
+    <>
       {erro && <ErroBox mensagem={erro} />}
 
-      <CabecalhoAba
-        dados={dados}
-        montarDados={() => ({
-          nome: 'relatorio-estoque',
-          titulo: 'Relatório · Estoque & CMV',
-          secoes: [
-            {
-              titulo: 'Resumo',
-              colunas: [{ chave: 'indicador', label: 'Indicador' }, { chave: 'valor', label: 'Valor' }],
-              linhas: dados ? [
-                { indicador: 'Valor do estoque', valor: fmtBRL(dados.kpis.patrimonioImobilizado) },
-                { indicador: 'Produtos físicos', valor: fmtNum(dados.kpis.totalFisicos) },
-                { indicador: 'Índice de ruptura', valor: fmtPct(dados.kpis.indiceRuptura) },
-                { indicador: 'Itens abaixo do mínimo', valor: fmtNum(dados.kpis.abaixoMinimo) },
-              ] : [],
-            },
-            {
-              titulo: 'Lista de reposição',
-              colunas: [
-                { chave: 'nome', label: 'Produto' },
-                { chave: 'estoqueAtual', label: 'Atual' },
-                { chave: 'estoqueMinimo', label: 'Mínimo' },
-                { chave: 'sugestao', label: 'Comprar', valor: (i) => fmtNum(i.sugestao) },
-              ],
-              linhas: dados?.reposicao || [],
-            },
-            {
-              titulo: 'Produtos por importância (Curva ABC)',
-              colunas: [
-                { chave: 'classe', label: 'Classe' },
-                { chave: 'nome', label: 'Produto' },
-                { chave: 'receita', label: 'Receita', valor: (i) => fmtBRL(i.receita) },
-              ],
-              linhas: dados?.curvaABC || [],
-            },
-            {
-              titulo: 'Margem por produto',
-              colunas: [
-                { chave: 'nome', label: 'Produto' },
-                { chave: 'precoCusto', label: 'Custo', valor: (i) => fmtBRL(i.precoCusto) },
-                { chave: 'preco', label: 'Venda', valor: (i) => fmtBRL(i.preco) },
-                { chave: 'margemAbsoluta', label: 'Margem R$', valor: (i) => fmtBRL(i.margemAbsoluta) },
-                { chave: 'margemPercentual', label: 'Margem %', valor: (i) => fmtPct(i.margemPercentual) },
-              ],
-              linhas: dados?.margemPorProduto || [],
-            },
-            {
-              titulo: 'Estoque parado (sem giro)',
-              colunas: [
-                { chave: 'nome', label: 'Produto' },
-                { chave: 'estoqueAtual', label: 'Estoque' },
-                { chave: 'diasSemMovimento', label: 'Dias sem giro' },
-              ],
-              linhas: dados?.estoqueParado || [],
-            },
-          ],
-        })}
-      />
-
-      <BarraFiltros
+      <PainelFiltros
         contador={dados?.kpis?.totalFisicos !== undefined ? `${dados.kpis.totalFisicos} produto(s) físico(s)` : null}
         filtrosAtivos={[
           (() => {
@@ -925,92 +1194,105 @@ function AbaEstoque({ intervalo }) {
         ].filter(Boolean)}
         onLimparTudo={() => setFiltros({ categoriaId: '' })}
       >
-        <Combobox
-          size="sm"
-          label="Filtrar por categoria"
-          value={filtros.categoriaId}
-          onChange={(id) => setFiltros({ categoriaId: id || '' })}
-          placeholder="Todas as categorias"
-          options={categorias.map((c) => ({ value: c.id, label: c.nome }))}
-          clearable
-        />
-      </BarraFiltros>
+        <div className="max-w-md">
+          <Combobox
+            size="sm"
+            label="Filtrar por categoria"
+            value={filtros.categoriaId}
+            onChange={(id) => setFiltros({ categoriaId: id || '' })}
+            placeholder="Todas as categorias"
+            options={categorias.map((c) => ({ value: c.id, label: c.nome }))}
+            clearable
+          />
+        </div>
+      </PainelFiltros>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard icon={Package} color="info" label="Valor do estoque"
-          info="Quanto vale tudo que você tem parado em estoque (pelo preço de custo)."
+      <FaixaNumeros min={200}>
+        <Numero destaque rotulo={rotuloInfo('Valor do estoque', 'Quanto vale tudo que você tem parado em estoque (pelo preço de custo).')}
           valor={fmtBRL(dados?.kpis.patrimonioImobilizado)}
-          subvalor={dados ? `${dados.kpis.totalFisicos} produtos físicos` : null}
+          detalhe={dados ? `${dados.kpis.totalFisicos} produtos físicos` : null}
           carregando={carregando} />
-        <KpiCard icon={DollarSign} color="success" label="Lucro se vender tudo"
-          info="Quanto você ganharia vendendo todo o estoque pelo preço de venda."
+        <Numero rotulo={rotuloInfo('Lucro se vender tudo', 'Quanto você ganharia vendendo todo o estoque pelo preço de venda.')}
           valor={fmtBRL(dados?.kpis.lucroPotencial)}
-          subvalor={dados ? `Se vender tudo: ${fmtBRL(dados.kpis.valorVarejo)}` : null}
+          tom="sucesso"
+          detalhe={dados ? `Se vender tudo: ${fmtBRL(dados.kpis.valorVarejo)}` : null}
           carregando={carregando} />
-        <KpiCard icon={AlertCircle} color={dados?.kpis.itensAbaixoMinimo > 0 ? 'warning' : 'neutral'} label="Produtos pra repor"
-          info="Produtos com estoque abaixo do mínimo configurado."
+        <Numero rotulo={rotuloInfo('Produtos pra repor', 'Produtos com estoque abaixo do mínimo configurado.')}
           valor={fmtNum(dados?.kpis.itensAbaixoMinimo)}
-          subvalor={dados ? `${dados.kpis.itensZerados} zerados` : null}
+          tom={dados?.kpis.itensAbaixoMinimo > 0 ? 'alerta' : 'neutro'}
+          detalhe={dados ? `${dados.kpis.itensZerados} zerados` : null}
           carregando={carregando} />
-        <KpiCard icon={TrendingDown} color={dados?.kpis.indiceRuptura > 10 ? 'danger' : 'neutral'} label="% sem estoque"
-          info="Quantos produtos estão zerados (sem unidades disponíveis pra venda)."
+        <Numero rotulo={rotuloInfo('% sem estoque', 'Quantos produtos estão zerados (sem unidades disponíveis pra venda).')}
           valor={dados ? fmtPct(dados.kpis.indiceRuptura) : '—'}
-          subvalor="% itens zerados"
+          tom={dados?.kpis.indiceRuptura > 10 ? 'perigo' : 'neutro'}
+          detalhe="% itens zerados"
           carregando={carregando} />
-      </div>
+      </FaixaNumeros>
 
-      {/* Lista de reposicao */}
-      {dados?.reposicao && dados.reposicao.length > 0 && (
-        <Card padding="none">
-          <div className="px-5 py-4 border-b border-[var(--border-main)] flex items-center justify-between">
-            <div>
-              <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Lista de reposição</div>
-              <div className="text-sm text-[var(--text-secondary)] mt-0.5">
-                Comprar: {fmtBRL(dados.custoTotalReposicao)} ({dados.reposicao.length} produto{dados.reposicao.length === 1 ? '' : 's'})
-              </div>
-            </div>
-            <Badge variant="warning" size="sm">Atenção</Badge>
-          </div>
-          <TabelaReposicao itens={dados.reposicao} />
-        </Card>
-      )}
+      <ColunasPagina
+        lateral={(
+          <>
+            <Painel
+              titulo={<TituloSecao titulo="Produtos por importância" info="Curva ABC: A = produtos que trazem ~80% da sua receita (campeões); B = médios (15%); C = vendem pouco (5%)." />}
+              subtitulo="Receita do período por classe"
+              semPadding
+            >
+              {resumoABC ? ['A', 'B', 'C'].map((c) => {
+                const r = resumoABC[c] || { qtd: 0, receita: 0 };
+                return (
+                  <LinhaInfo
+                    key={c}
+                    rotulo={(
+                      <span className="inline-flex items-center gap-2">
+                        <SeloClasse classe={c} />
+                        {r.qtd} produto{r.qtd === 1 ? '' : 's'}
+                        <span className="text-xs text-[var(--text-muted)]">{fmtPct(totalABC > 0 ? (r.receita / totalABC) * 100 : 0)} da receita</span>
+                      </span>
+                    )}
+                    valor={fmtBRL(r.receita)}
+                  />
+                );
+              }) : <div className="px-4 py-6 text-center text-[13px] text-[var(--text-muted)]">{carregando ? 'Calculando…' : 'Sem vendas no período.'}</div>}
+            </Painel>
+            <Painel titulo="Resumo do estoque" semPadding>
+              <LinhaInfo rotulo="Produtos físicos" valor={dados ? fmtNum(dados.kpis.totalFisicos) : '—'} />
+              <LinhaInfo rotulo="Itens zerados" valor={dados ? fmtNum(dados.kpis.itensZerados) : '—'} />
+              <LinhaInfo rotulo="Valor de venda do estoque" valor={dados ? fmtBRL(dados.kpis.valorVarejo) : '—'} />
+              <LinhaInfo rotulo="Custo pra repor o que falta" valor={dados ? fmtBRL(dados.custoTotalReposicao) : '—'} />
+              <LinhaInfo rotulo="Capital travado em estoque parado" forte valor={dados ? fmtBRL(capitalParado) : '—'} />
+            </Painel>
+          </>
+        )}
+      >
+        {dados?.reposicao && dados.reposicao.length > 0 && (
+          <Painel
+            titulo="Lista de reposição"
+            subtitulo={`Comprar: ${fmtBRL(dados.custoTotalReposicao)} (${dados.reposicao.length} produto${dados.reposicao.length === 1 ? '' : 's'})`}
+            acoes={<Badge variant="warning">Atenção</Badge>}
+            semPadding
+            corpoClassName="overflow-x-auto"
+          >
+            <TabelaReposicao itens={dados.reposicao} />
+          </Painel>
+        )}
 
-      {/* Movimento de inventario por dia */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Movimento de inventário</div>
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">Quantos produtos entraram e saíram do estoque por dia</div>
-        </div>
-        <GraficoMovimentoInventario movimento={dados?.movimentoDiario} carregando={carregando} />
-      </Card>
+        <Painel titulo="Movimento de inventário" subtitulo="Quantos produtos entraram e saíram do estoque por dia" semPadding>
+          <GraficoMovimentoInventario movimento={dados?.movimentoDiario} carregando={carregando} />
+        </Painel>
 
-      {/* Curva ABC */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <TituloSecao titulo="Produtos por importância" info="Curva ABC: A = produtos que trazem ~80% da sua receita (campeões); B = médios (15%); C = vendem pouco (5%)." />
-        </div>
-        <BlocoCurvaABC curva={dados?.curvaABC} resumo={dados?.resumoABC} carregando={carregando} />
-      </Card>
+        <Painel titulo="Curva ABC" subtitulo="Produtos ordenados pela receita que trazem" semPadding corpoClassName="overflow-x-auto">
+          <BlocoCurvaABC curva={dados?.curvaABC} carregando={carregando} />
+        </Painel>
 
-      {/* Margem por produto */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Margem por produto</div>
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">Os 50 produtos com a melhor margem de lucro</div>
-        </div>
-        <TabelaMargem itens={dados?.margemPorVariacao} carregando={carregando} />
-      </Card>
+        <Painel titulo="Margem por produto" subtitulo="Os 50 produtos com a melhor margem de lucro" semPadding corpoClassName="overflow-x-auto">
+          <TabelaMargem itens={dados?.margemPorVariacao} carregando={carregando} />
+        </Painel>
 
-      {/* Estoque parado */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Estoque parado</div>
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">Produtos sem movimentação há mais de 60 dias</div>
-        </div>
-        <TabelaEstoqueParado itens={dados?.estoqueParado} carregando={carregando} />
-      </Card>
-    </div>
+        <Painel titulo="Estoque parado" subtitulo="Produtos sem movimentação há mais de 60 dias" semPadding corpoClassName="overflow-x-auto">
+          <TabelaEstoqueParado itens={dados?.estoqueParado} carregando={carregando} />
+        </Painel>
+      </ColunasPagina>
+    </>
   );
 }
 
@@ -1022,46 +1304,46 @@ function TabelaReposicao({ itens }) {
     MEDIA: 'var(--accent)',
   };
   return (
-    <table className="w-full">
+    <table className="w-full text-[13px]">
       <thead>
-        <tr className="border-b border-[var(--border-main)]">
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5 w-28"></th>
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Produto</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Atual / Mín</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Comprar</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Custo estimado</th>
-          <th className="text-center text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Urgência</th>
+        <tr>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap w-14"></th>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Produto</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Atual / Mín</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Comprar</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Custo estimado</th>
+          <th className="text-center text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Urgência</th>
         </tr>
       </thead>
       <tbody>
         {itens.map((r) => (
           <tr key={r.variacaoId} className="border-b border-[var(--border-subtle)] last:border-b-0">
-            <td className="py-3 px-5">
+            <td className="px-4 py-2.5">
               {r.imagemUrl ? (
-                <img src={r.imagemUrl} alt="" className="w-24 h-24 object-contain" />
+                <img src={r.imagemUrl} alt="" className="w-10 h-10 object-contain" />
               ) : (
-                <div className="w-24 h-24 rounded-md bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)]">
-                  <ImageIcon size={28} />
+                <div className="w-10 h-10 rounded-md bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)]">
+                  <ImageIcon size={16} />
                 </div>
               )}
             </td>
-            <td className="py-3 px-5 text-sm">
+            <td className="px-4 py-2.5">
               <div className="font-semibold text-[var(--text-main)]">{r.nome}</div>
               {r.variacao && <div className="text-[11px] text-[var(--text-muted)]">{r.variacao}</div>}
             </td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums">
-              <span className={r.estoqueAtual <= 0 ? 'text-[var(--danger)] font-bold' : 'text-[var(--text-main)]'}>
+            <td className="px-4 py-2.5 text-right tabular-nums">
+              <span className={r.estoqueAtual <= 0 ? 'text-[var(--danger-text)] font-bold' : 'text-[var(--text-main)]'}>
                 {r.estoqueAtual}
               </span>
               <span className="text-[var(--text-muted)]"> / {r.estoqueMinimo}</span>
             </td>
-            <td className="py-3 px-5 text-right text-sm font-bold tabular-nums">
+            <td className="px-4 py-2.5 text-right font-bold tabular-nums">
               +{fmtNum(r.necessidade)}
             </td>
-            <td className="py-3 px-5 text-right text-sm font-semibold tabular-nums text-[var(--text-main)]">
+            <td className="px-4 py-2.5 text-right font-semibold tabular-nums text-[var(--text-main)]">
               {fmtBRL(r.custoReposicao)}
             </td>
-            <td className="py-3 px-5 text-center">
+            <td className="px-4 py-2.5 text-center">
               <span
                 className="inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
                 style={{
@@ -1080,9 +1362,9 @@ function TabelaReposicao({ itens }) {
 }
 
 function GraficoMovimentoInventario({ movimento, carregando }) {
-  if (carregando && !movimento) return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !movimento) return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!movimento || movimento.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Sem movimentações no período.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Sem movimentações no período.</div>;
   }
   const dadosGrafico = movimento.map((m) => ({
     ...m,
@@ -1090,7 +1372,7 @@ function GraficoMovimentoInventario({ movimento, carregando }) {
   }));
 
   return (
-    <div className="px-5 py-4">
+    <div className="px-4 py-4">
       <ResponsiveContainer width="100%" height={240}>
         <BarChart data={dadosGrafico}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-main)" />
@@ -1109,129 +1391,101 @@ function GraficoMovimentoInventario({ movimento, carregando }) {
   );
 }
 
-function BlocoCurvaABC({ curva, resumo, carregando }) {
-  if (carregando && !curva) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
-  if (!curva || curva.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Sem vendas no período.</div>;
-  }
-  const totalReceita = (resumo?.A?.receita || 0) + (resumo?.B?.receita || 0) + (resumo?.C?.receita || 0);
-  const corClasse = { A: 'var(--success)', B: 'var(--accent)', C: 'var(--text-muted)' };
+const COR_CLASSE = { A: 'var(--success)', B: 'var(--accent)', C: 'var(--text-muted)' };
 
+function SeloClasse({ classe }) {
   return (
-    <div className="px-5 py-4 space-y-4">
-      {/* Resumo das classes */}
-      <div className="grid grid-cols-3 gap-3">
-        {['A', 'B', 'C'].map((c) => {
-          const r = resumo[c] || { qtd: 0, receita: 0 };
-          const pct = totalReceita > 0 ? (r.receita / totalReceita) * 100 : 0;
-          return (
-            <div key={c} className="p-3 rounded-xl border border-[var(--border-main)]">
-              <div className="flex items-center gap-2">
-                <div
-                  className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-black text-[var(--text-on-primary)]"
-                  style={{ backgroundColor: corClasse[c] }}
-                >
-                  {c}
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-[var(--text-main)]">{r.qtd} produto{r.qtd === 1 ? '' : 's'}</div>
-                  <div className="text-[10px] text-[var(--text-muted)]">{fmtPct(pct)} da receita</div>
-                </div>
-              </div>
-              <div className="text-sm font-bold tabular-nums mt-2" style={{ color: corClasse[c] }}>
-                {fmtBRL(r.receita)}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+    <span
+      className="inline-flex items-center justify-center w-6 h-6 rounded text-[11px] font-black text-[var(--text-on-primary)] flex-shrink-0"
+      style={{ backgroundColor: COR_CLASSE[classe] }}
+    >
+      {classe}
+    </span>
+  );
+}
 
-      {/* Tabela */}
-      <div className="border-t border-[var(--border-main)] -mx-5">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-[var(--border-main)]">
-              <th className="text-center text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5 w-12">Classe</th>
-              <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Produto</th>
-              <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Receita</th>
-              <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Acumulado</th>
+// Tabela da curva ABC (o resumo por classe fica na coluna lateral).
+function BlocoCurvaABC({ curva, carregando }) {
+  if (carregando && !curva) return <div className="px-4 py-6 text-center text-[13px] text-[var(--text-muted)]">Calculando…</div>;
+  if (!curva || curva.length === 0) {
+    return <div className="px-4 py-12 text-center text-[13px] text-[var(--text-muted)]">Sem vendas no período.</div>;
+  }
+  return (
+    <>
+      <table className="w-full text-[13px]">
+        <thead>
+          <tr>
+            <th className={`${TH} text-center w-12`}>Classe</th>
+            <th className={`${TH} text-left`}>Produto</th>
+            <th className={`${TH} text-right`}>Receita</th>
+            <th className={`${TH} text-right`}>Acumulado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {curva.slice(0, 30).map((p) => (
+            <tr key={p.variacaoId} className="border-b border-[var(--border-subtle)] last:border-b-0">
+              <td className="px-4 py-2.5 text-center"><SeloClasse classe={p.classe} /></td>
+              <td className="px-4 py-2.5">
+                <div className="font-semibold text-[var(--text-main)]">{p.nome}</div>
+                {p.variacao && <div className="text-xs text-[var(--text-muted)]">{p.variacao}</div>}
+              </td>
+              <td className="px-4 py-2.5 text-right font-bold tabular-nums">{fmtBRL(p.receita)}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums text-[var(--text-muted)]">{fmtPct(p.pctAcumulado)}</td>
             </tr>
-          </thead>
-          <tbody>
-            {curva.slice(0, 30).map((p) => (
-              <tr key={p.variacaoId} className="border-b border-[var(--border-subtle)] last:border-b-0">
-                <td className="py-3 px-5 text-center">
-                  <span
-                    className="inline-flex items-center justify-center w-6 h-6 rounded text-[11px] font-black text-[var(--text-on-primary)]"
-                    style={{ backgroundColor: corClasse[p.classe] }}
-                  >
-                    {p.classe}
-                  </span>
-                </td>
-                <td className="py-3 px-5 text-sm">
-                  <div className="font-semibold text-[var(--text-main)]">{p.nome}</div>
-                  {p.variacao && <div className="text-[11px] text-[var(--text-muted)]">{p.variacao}</div>}
-                </td>
-                <td className="py-3 px-5 text-right text-sm font-bold tabular-nums">{fmtBRL(p.receita)}</td>
-                <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--text-muted)]">
-                  {fmtPct(p.pctAcumulado)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {curva.length > 30 && (
-          <div className="px-5 py-2 text-[10px] text-center text-[var(--text-muted)] border-t border-[var(--border-subtle)]">
-            +{curva.length - 30} produtos a mais (não exibidos)
-          </div>
-        )}
-      </div>
-    </div>
+          ))}
+        </tbody>
+      </table>
+      {curva.length > 30 && (
+        <div className="px-4 py-2 text-xs text-center text-[var(--text-muted)] border-t border-[var(--border-subtle)]">
+          +{curva.length - 30} produtos a mais (não exibidos)
+        </div>
+      )}
+    </>
   );
 }
 
 function TabelaMargem({ itens, carregando }) {
-  if (carregando && !itens) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !itens) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!itens || itens.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Cadastre produtos pra ver margens.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Cadastre produtos pra ver margens.</div>;
   }
   return (
-    <table className="w-full">
+    <table className="w-full text-[13px]">
       <thead>
-        <tr className="border-b border-[var(--border-main)]">
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5 w-28"></th>
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Produto</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Custo</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Venda</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Margem</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">%</th>
+        <tr>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap w-14"></th>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Produto</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Custo</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Venda</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Margem</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">%</th>
         </tr>
       </thead>
       <tbody>
         {itens.map((p) => (
           <tr key={p.variacaoId} className="border-b border-[var(--border-subtle)] last:border-b-0">
-            <td className="py-3 px-5">
+            <td className="px-4 py-2.5">
               {p.imagemUrl ? (
-                <img src={p.imagemUrl} alt="" className="w-24 h-24 object-contain" />
+                <img src={p.imagemUrl} alt="" className="w-10 h-10 object-contain" />
               ) : (
-                <div className="w-24 h-24 rounded-md bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)]">
-                  <ImageIcon size={28} />
+                <div className="w-10 h-10 rounded-md bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)]">
+                  <ImageIcon size={16} />
                 </div>
               )}
             </td>
-            <td className="py-3 px-5 text-sm">
+            <td className="px-4 py-2.5">
               <div className="font-semibold text-[var(--text-main)]">{p.nome}</div>
               <div className="text-[11px] text-[var(--text-muted)]">
                 {p.variacao && <span className="mr-2">{p.variacao}</span>}
                 <span>{p.categoria}</span>
               </div>
             </td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--text-secondary)]">{fmtBRL(p.precoCusto)}</td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--text-main)]">{fmtBRL(p.preco)}</td>
-            <td className="py-3 px-5 text-right text-sm font-bold tabular-nums text-[var(--success)]">{fmtBRL(p.margemAbsoluta)}</td>
-            <td className={`py-3 px-5 text-right text-sm tabular-nums font-bold ${
-              p.margemPercentual < 20 ? 'text-[var(--warning)]' :
-              p.margemPercentual >= 50 ? 'text-[var(--success)]' :
+            <td className="px-4 py-2.5 text-right tabular-nums text-[var(--text-secondary)]">{fmtBRL(p.precoCusto)}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums text-[var(--text-main)]">{fmtBRL(p.preco)}</td>
+            <td className="px-4 py-2.5 text-right font-bold tabular-nums text-[var(--success-text)]">{fmtBRL(p.margemAbsoluta)}</td>
+            <td className={`px-4 py-2.5 text-right tabular-nums font-bold ${
+              p.margemPercentual < 20 ? 'text-[var(--warning-text)]' :
+              p.margemPercentual >= 50 ? 'text-[var(--success-text)]' :
               'text-[var(--text-main)]'
             }`}>
               {fmtPct(p.margemPercentual)}
@@ -1244,53 +1498,53 @@ function TabelaMargem({ itens, carregando }) {
 }
 
 function TabelaEstoqueParado({ itens, carregando }) {
-  if (carregando && !itens) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !itens) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!itens || itens.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">🎉 Nenhum produto parado!</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">🎉 Nenhum produto parado!</div>;
   }
   const valorTotal = itens.reduce((acc, i) => acc + i.valorParado, 0);
   return (
     <>
-      <div className="px-5 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] flex items-baseline justify-between text-xs">
+      <div className="px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] flex items-baseline justify-between text-xs">
         <span className="text-[var(--text-muted)]">Capital travado em estoque parado:</span>
-        <span className="font-bold tabular-nums text-[var(--warning)]">{fmtBRL(valorTotal)}</span>
+        <span className="font-bold tabular-nums text-[var(--warning-text)]">{fmtBRL(valorTotal)}</span>
       </div>
-      <table className="w-full">
+      <table className="w-full text-[13px]">
         <thead>
-          <tr className="border-b border-[var(--border-main)]">
-            <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5 w-28"></th>
-            <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Produto</th>
-            <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Estoque</th>
-            <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Capital travado</th>
-            <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Tempo parado</th>
+          <tr>
+            <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap w-14"></th>
+            <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Produto</th>
+            <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Estoque</th>
+            <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Capital travado</th>
+            <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Tempo parado</th>
           </tr>
         </thead>
         <tbody>
           {itens.map((p) => (
             <tr key={p.variacaoId} className="border-b border-[var(--border-subtle)] last:border-b-0">
-              <td className="py-3 px-5">
+              <td className="px-4 py-2.5">
                 {p.imagemUrl ? (
-                  <img src={p.imagemUrl} alt="" className="w-24 h-24 object-contain" />
+                  <img src={p.imagemUrl} alt="" className="w-10 h-10 object-contain" />
                 ) : (
-                  <div className="w-24 h-24 rounded-md bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)]">
-                    <ImageIcon size={28} />
+                  <div className="w-10 h-10 rounded-md bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)]">
+                    <ImageIcon size={16} />
                   </div>
                 )}
               </td>
-              <td className="py-3 px-5 text-sm">
+              <td className="px-4 py-2.5">
                 <div className="font-semibold text-[var(--text-main)]">{p.nome}</div>
                 <div className="text-[11px] text-[var(--text-muted)]">
                   {p.variacao && <span className="mr-2">{p.variacao}</span>}
                   <span>{p.categoria}</span>
                 </div>
               </td>
-              <td className="py-3 px-5 text-right text-sm font-semibold tabular-nums">{fmtNum(p.estoqueAtual)}</td>
-              <td className="py-3 px-5 text-right text-sm font-bold tabular-nums text-[var(--warning)]">{fmtBRL(p.valorParado)}</td>
-              <td className="py-3 px-5 text-right text-sm tabular-nums">
+              <td className="px-4 py-2.5 text-right font-semibold tabular-nums">{fmtNum(p.estoqueAtual)}</td>
+              <td className="px-4 py-2.5 text-right font-bold tabular-nums text-[var(--warning-text)]">{fmtBRL(p.valorParado)}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums">
                 {p.diasParado === null ? (
-                  <span className="text-[var(--danger)] font-bold">Nunca movimentado</span>
+                  <span className="text-[var(--danger-text)] font-bold">Nunca movimentado</span>
                 ) : (
-                  <span className={p.diasParado > 180 ? 'text-[var(--danger)] font-bold' : 'text-[var(--text-secondary)]'}>
+                  <span className={p.diasParado > 180 ? 'text-[var(--danger-text)] font-bold' : 'text-[var(--text-secondary)]'}>
                     {p.diasParado} dias
                   </span>
                 )}
@@ -1312,14 +1566,24 @@ function AbaVendas({ intervalo }) {
   const [erro, setErro] = useState(null);
   const [filtros, setFiltros] = useState({ origem: '', metodoPagamento: '', filtroRapido: '' });
 
-  useEffect(() => {
-    let ativo = true;
+  // Periodo/filtros mudaram: liga o carregando e limpa o erro ja no render
+  // (guardando a chave da busca) em vez de setState sincrono no efeito.
+  const tIni = intervalo.inicio.getTime();
+  const tFim = intervalo.fim.getTime();
+  const chaveBusca = `${tIni}|${tFim}|${filtros.origem}|${filtros.metodoPagamento}`;
+  const [chaveBuscaAnterior, setChaveBuscaAnterior] = useState(null);
+  if (chaveBuscaAnterior !== chaveBusca) {
+    setChaveBuscaAnterior(chaveBusca);
     setCarregando(true);
     setErro(null);
+  }
+
+  useEffect(() => {
+    let ativo = true;
     api.get('/relatorios/vendas', {
       params: {
-        inicio: intervalo.inicio.toISOString(),
-        fim: intervalo.fim.toISOString(),
+        inicio: new Date(tIni).toISOString(),
+        fim: new Date(tFim).toISOString(),
         ...(filtros.origem ? { origem: filtros.origem } : {}),
         ...(filtros.metodoPagamento ? { metodoPagamento: filtros.metodoPagamento } : {}),
       },
@@ -1328,7 +1592,7 @@ function AbaVendas({ intervalo }) {
       .catch((e) => { if (ativo) setErro(e?.response?.data?.error || 'Erro ao carregar.'); })
       .finally(() => { if (ativo) setCarregando(false); });
     return () => { ativo = false; };
-  }, [intervalo.inicio.getTime(), intervalo.fim.getTime(), filtros.origem, filtros.metodoPagamento]);
+  }, [tIni, tFim, filtros.origem, filtros.metodoPagamento]);
 
   // Filtros rápidos das vendas — perguntas de negócio que o lojista faz.
   const aplicarRapido = (chave) => {
@@ -1416,13 +1680,13 @@ function AbaVendas({ intervalo }) {
     ],
   });
 
+  useExportarNoTopo(montarDados, dados);
+
   return (
-    <div className="space-y-5">
+    <>
       {erro && <ErroBox mensagem={erro} />}
 
-      <CabecalhoAba montarDados={montarDados} dados={dados} />
-
-      <BarraFiltros
+      <PainelFiltros
         contador={contador}
         filtrosAtivos={filtrosAtivos}
         onLimparTudo={limparTudo}
@@ -1454,96 +1718,74 @@ function AbaVendas({ intervalo }) {
             placeholder="Ex.: PIX, Cartão, Dinheiro..."
           />
         </div>
-      </BarraFiltros>
+      </PainelFiltros>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard icon={ShoppingCart} color="info" label="Vendas no período"
-          valor={fmtNum(dados?.kpis.totalVendas)}
-          subvalor={dados ? fmtBRL(dados.kpis.valorTotal) : null}
+      <FaixaNumeros min={200}>
+        <Numero destaque rotulo="Faturamento"
+          valor={fmtBRL(dados?.kpis.valorTotal)}
+          detalhe={dados ? `${fmtNum(dados.kpis.totalVendas)} venda(s) no período` : null}
           carregando={carregando} />
-        <KpiCard icon={DollarSign} color="success" label="Ticket médio"
-          info="Quanto cada cliente gasta em média por venda."
-          valor={fmtBRL(dados?.kpis.ticketMedio)} carregando={carregando} />
-        <KpiCard icon={TrendingUp} color="accent" label="Lucro bruto"
-          info="Vendas menos o custo dos produtos (não inclui despesas fixas)."
+        <Numero rotulo={rotuloInfo('Ticket médio', 'Quanto cada cliente gasta em média por venda.')}
+          valor={fmtBRL(dados?.kpis.ticketMedio)}
+          detalhe="por venda"
+          carregando={carregando} />
+        <Numero rotulo={rotuloInfo('Lucro bruto', 'Vendas menos o custo dos produtos (não inclui despesas fixas).')}
           valor={fmtBRL(dados?.kpis.lucroBruto)}
-          subvalor={dados ? `Margem ${fmtPct(dados.kpis.margemBruta)}` : null}
+          detalhe={dados ? `Margem ${fmtPct(dados.kpis.margemBruta)}` : null}
           carregando={carregando} />
-        <KpiCard icon={Users} color="warning" label="Clientes que compraram"
-          info="% dos novos clientes do período que viraram venda."
+        <Numero rotulo={rotuloInfo('Clientes que compraram', '% dos novos clientes do período que viraram venda.')}
           valor={dados?.kpis.taxaConversao !== null && dados?.kpis.taxaConversao !== undefined
             ? fmtPct(dados.kpis.taxaConversao) : '—'}
-          subvalor={dados ? `${dados.kpis.vendasComLead} de ${dados.kpis.leadsCriadosPeriodo} leads` : null}
+          detalhe={dados ? `${dados.kpis.vendasComLead} de ${dados.kpis.leadsCriadosPeriodo} leads` : null}
           carregando={carregando} />
-      </div>
+      </FaixaNumeros>
 
-      {/* Por canal */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Vendas por canal</div>
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">De onde veio o cliente de cada venda</div>
+      <ColunasPagina
+        lateral={(
+          <>
+            <Painel titulo="Vendas por canal" subtitulo="De onde veio o cliente de cada venda" semPadding>
+              <TabelaPorCanal porCanal={dados?.porCanal} carregando={carregando} />
+            </Painel>
+            <Painel titulo="Como pagaram" subtitulo="Por método de pagamento" semPadding>
+              <ListaBarras itens={itensPagamento(dados?.porMetodo)} carregando={carregando} vazio="Sem recebimentos no período." />
+            </Painel>
+          </>
+        )}
+      >
+        <Painel
+          titulo={<TituloSecao titulo="Quando você vende mais" info="Dias da semana e horários com mais movimento. Útil pra ajustar agenda, equipe e estoque." />}
+          subtitulo="Cor mais forte = mais vendas naquele horário"
+          semPadding
+        >
+          <Heatmap sazonalidade={dados?.sazonalidade} carregando={carregando} />
+        </Painel>
+
+        <Painel titulo="Vendas por categoria" subtitulo="Receita, custo, lucro e margem de cada categoria" semPadding corpoClassName="overflow-x-auto">
+          <TabelaCategoriasVendas itens={dados?.porCategoria} carregando={carregando} />
+        </Painel>
+
+        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
+          <Painel titulo="Vendas mais lucrativas" subtitulo="As 10 vendas que mais lucraram" semPadding corpoClassName="overflow-x-auto">
+            <TabelaTopVendas itens={dados?.top10MaisLucrativas} carregando={carregando} corLucro="success" />
+          </Painel>
+          <Painel titulo="Vendas com menor lucro" subtitulo="As 10 com menor lucro — avalie se o preço está certo" semPadding corpoClassName="overflow-x-auto">
+            <TabelaTopVendas itens={dados?.top10MenosLucrativas} carregando={carregando} corLucro="warning" />
+          </Painel>
         </div>
-        <TabelaPorCanal porCanal={dados?.porCanal} carregando={carregando} />
-      </Card>
-
-      {/* Sazonalidade — heatmap */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <TituloSecao titulo="Quando você vende mais" info="Dias da semana e horários com mais movimento. Útil pra ajustar agenda, equipe e estoque." />
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">Cor mais forte = mais vendas naquele horário</div>
-        </div>
-        <Heatmap sazonalidade={dados?.sazonalidade} carregando={carregando} />
-      </Card>
-
-      {/* Por categoria */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Vendas por categoria</div>
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">Receita, custo, lucro e margem de cada categoria</div>
-        </div>
-        <TabelaCategoriasVendas itens={dados?.porCategoria} carregando={carregando} />
-      </Card>
-
-      {/* Por metodo */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Por método de pagamento</div>
-        </div>
-        <TabelaMetodosPagamento itens={dados?.porMetodo} carregando={carregando} />
-      </Card>
-
-      {/* Top vendas mais lucrativas */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <Card padding="none">
-          <div className="px-5 py-4 border-b border-[var(--border-main)]">
-            <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Vendas mais lucrativas</div>
-            <div className="text-sm text-[var(--text-secondary)] mt-0.5">As 10 vendas que mais lucraram</div>
-          </div>
-          <TabelaTopVendas itens={dados?.top10MaisLucrativas} carregando={carregando} corLucro="success" />
-        </Card>
-
-        <Card padding="none">
-          <div className="px-5 py-4 border-b border-[var(--border-main)]">
-            <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Vendas com menor lucro</div>
-            <div className="text-sm text-[var(--text-secondary)] mt-0.5">As 10 com menor lucro — avalie se o preço está certo</div>
-          </div>
-          <TabelaTopVendas itens={dados?.top10MenosLucrativas} carregando={carregando} corLucro="warning" />
-        </Card>
-      </div>
-    </div>
+      </ColunasPagina>
+    </>
   );
 }
 
 // ====== Componentes da aba Vendas ======
 function TabelaPorCanal({ porCanal, carregando }) {
-  if (carregando && !porCanal) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !porCanal) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!porCanal || porCanal.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Nenhuma venda no período.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Nenhuma venda no período.</div>;
   }
   const totalValor = porCanal.reduce((acc, c) => acc + c.valor, 0);
   return (
-    <div className="px-5 py-4 space-y-3">
+    <div className="px-4 py-4 space-y-3">
       {porCanal.map((c) => {
         const pct = totalValor > 0 ? (c.valor / totalValor) * 100 : 0;
         return (
@@ -1556,7 +1798,7 @@ function TabelaPorCanal({ porCanal, carregando }) {
               <div className="flex items-baseline gap-3">
                 <span className="text-[var(--text-muted)] tabular-nums">{fmtPct(pct)}</span>
                 <span className="font-bold tabular-nums text-[var(--text-main)]">{fmtBRL(c.valor)}</span>
-                <span className="text-[var(--success)] tabular-nums text-[11px]">+{fmtBRL(c.lucro)}</span>
+                <span className="text-[var(--success-text)] tabular-nums text-[11px]">+{fmtBRL(c.lucro)}</span>
               </div>
             </div>
             <div className="h-1.5 bg-[var(--bg-subtle)] rounded-full overflow-hidden">
@@ -1572,13 +1814,13 @@ function TabelaPorCanal({ porCanal, carregando }) {
 const DIAS_SEMANA = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
 
 function Heatmap({ sazonalidade, carregando }) {
-  if (carregando && !sazonalidade) return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !sazonalidade) return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!sazonalidade || sazonalidade.celulas.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Sem vendas no período.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Sem vendas no período.</div>;
   }
   const max = sazonalidade.maxValor;
   if (max === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Sem vendas no período.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Sem vendas no período.</div>;
   }
 
   // Agrupa em matriz 7x24
@@ -1586,7 +1828,7 @@ function Heatmap({ sazonalidade, carregando }) {
   for (const c of sazonalidade.celulas) matriz[c.diaSemana][c.hora] = c;
 
   return (
-    <div className="px-5 py-4 overflow-x-auto">
+    <div className="px-4 py-4 overflow-x-auto">
       <div className="min-w-[720px]">
         {/* Cabecalho de horas */}
         <div className="flex gap-0.5 ml-10 mb-1">
@@ -1598,7 +1840,7 @@ function Heatmap({ sazonalidade, carregando }) {
         </div>
         {matriz.map((linha, d) => (
           <div key={d} className="flex items-center gap-0.5 mb-0.5">
-            <div className="w-9 text-[10px] text-[var(--text-muted)] font-bold uppercase">{DIAS_SEMANA[d]}</div>
+            <div className="w-9 text-xs text-[var(--text-muted)] font-bold uppercase">{DIAS_SEMANA[d]}</div>
             {linha.map((cel, h) => {
               const intensidade = cel.valor > 0 ? cel.valor / max : 0;
               const opacidade = intensidade === 0 ? 0 : Math.max(0.15, intensidade);
@@ -1625,7 +1867,7 @@ function Heatmap({ sazonalidade, carregando }) {
           </div>
         ))}
         {/* Legenda */}
-        <div className="flex items-center justify-end gap-2 mt-3 text-[10px] text-[var(--text-muted)]">
+        <div className="flex items-center justify-end gap-2 mt-3 text-xs text-[var(--text-muted)]">
           <span>Menos</span>
           {[0.15, 0.3, 0.5, 0.7, 0.9].map((op) => (
             <div
@@ -1642,32 +1884,32 @@ function Heatmap({ sazonalidade, carregando }) {
 }
 
 function TabelaCategoriasVendas({ itens, carregando }) {
-  if (carregando && !itens) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !itens) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!itens || itens.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Nenhuma venda no período.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Nenhuma venda no período.</div>;
   }
   return (
-    <table className="w-full">
+    <table className="w-full text-[13px]">
       <thead>
-        <tr className="border-b border-[var(--border-main)]">
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Categoria</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Qtd</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Receita</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">CMV</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Lucro</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Margem</th>
+        <tr>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Categoria</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Qtd</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Receita</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">CMV</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Lucro</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Margem</th>
         </tr>
       </thead>
       <tbody>
         {itens.map((c) => (
           <tr key={c.categoria} className="border-b border-[var(--border-subtle)] last:border-b-0">
-            <td className="py-3 px-5 text-sm font-semibold text-[var(--text-main)]">{c.categoria}</td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums">{fmtNum(c.qtd)}</td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--text-main)]">{fmtBRL(c.valor)}</td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--text-secondary)]">{fmtBRL(c.custo)}</td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums font-bold text-[var(--success)]">{fmtBRL(c.lucro)}</td>
-            <td className={`py-3 px-5 text-right text-sm tabular-nums font-bold ${
-              c.margem < 20 ? 'text-[var(--warning)]' : 'text-[var(--text-main)]'
+            <td className="px-4 py-2.5 font-semibold text-[var(--text-main)]">{c.categoria}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums">{fmtNum(c.qtd)}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums text-[var(--text-main)]">{fmtBRL(c.valor)}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums text-[var(--text-secondary)]">{fmtBRL(c.custo)}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums font-bold text-[var(--success-text)]">{fmtBRL(c.lucro)}</td>
+            <td className={`px-4 py-2.5 text-right tabular-nums font-bold ${
+              c.margem < 20 ? 'text-[var(--warning-text)]' : 'text-[var(--text-main)]'
             }`}>{fmtPct(c.margem)}</td>
           </tr>
         ))}
@@ -1677,18 +1919,18 @@ function TabelaCategoriasVendas({ itens, carregando }) {
 }
 
 function TabelaTopVendas({ itens, carregando, corLucro = 'success' }) {
-  if (carregando && !itens) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !itens) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!itens || itens.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Sem dados.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Sem dados.</div>;
   }
   const corLucroVar = corLucro === 'warning' ? 'var(--warning)' : 'var(--success)';
   return (
-    <table className="w-full text-xs">
+    <table className="w-full text-[13px]">
       <thead>
-        <tr className="border-b border-[var(--border-main)]">
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-2.5 px-4">Venda</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-2.5 px-4">Valor</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-2.5 px-4">Lucro</th>
+        <tr>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Venda</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Valor</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Lucro</th>
         </tr>
       </thead>
       <tbody>
@@ -1696,12 +1938,12 @@ function TabelaTopVendas({ itens, carregando, corLucro = 'success' }) {
           <tr key={v.id} className="border-b border-[var(--border-subtle)] last:border-b-0">
             <td className="py-2.5 px-4">
               <div className="font-semibold text-[var(--text-main)] truncate max-w-[200px]">{v.descricao}</div>
-              <div className="text-[10px] text-[var(--text-muted)]">{new Date(v.data).toLocaleDateString('pt-BR')}</div>
+              <div className="text-xs text-[var(--text-muted)]">{new Date(v.data).toLocaleDateString('pt-BR')}</div>
             </td>
             <td className="py-2.5 px-4 text-right tabular-nums">{fmtBRL(v.valor)}</td>
             <td className="py-2.5 px-4 text-right tabular-nums">
               <div className="font-bold" style={{ color: corLucroVar }}>{fmtBRL(v.lucro)}</div>
-              <div className="text-[10px] text-[var(--text-muted)]">{fmtPct(v.margem)}</div>
+              <div className="text-xs text-[var(--text-muted)]">{fmtPct(v.margem)}</div>
             </td>
           </tr>
         ))}
@@ -1712,7 +1954,7 @@ function TabelaTopVendas({ itens, carregando, corLucro = 'success' }) {
 
 // ====== Componentes da aba Financeiro ======
 function BlocoDRE({ dre, carregando }) {
-  if (carregando && !dre) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !dre) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!dre) return null;
 
   // Labels coloquiais (sem sinais matematicos "(−)" "(=)" — tooltip explica a
@@ -1756,7 +1998,7 @@ function BlocoDRE({ dre, carregando }) {
   ];
 
   return (
-    <div className="px-5 py-2 divide-y divide-[var(--border-main)]">
+    <div className="px-4 py-2 divide-y divide-[var(--border-main)]">
       {linhas.map((l) => (
         <div
           key={l.label}
@@ -1782,8 +2024,8 @@ function BlocoDRE({ dre, carregando }) {
               ficar alinhado horizontalmente com o label (sem o sublabel
               empurrar visualmente). */}
           <div className={`text-lg font-bold tabular-nums leading-none flex-shrink-0 ${
-            l.cor === 'success' ? 'text-[var(--success)]' :
-            l.cor === 'danger' ? 'text-[var(--danger)]' :
+            l.cor === 'success' ? 'text-[var(--success-text)]' :
+            l.cor === 'danger' ? 'text-[var(--danger-text)]' :
             'text-[var(--text-main)]'
           }`}>
             {l.valor < 0 ? '−' : ''}{fmtBRL(Math.abs(l.valor))}
@@ -1801,9 +2043,9 @@ function BlocoDRE({ dre, carregando }) {
 }
 
 function GraficoFluxoCaixa({ fluxo, carregando }) {
-  if (carregando && !fluxo) return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !fluxo) return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!fluxo || fluxo.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Sem movimentações no período.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Sem movimentações no período.</div>;
   }
   // Reformata a data pra DD/MM (mais legivel no eixo)
   const dadosGrafico = fluxo.map((f) => ({
@@ -1812,7 +2054,7 @@ function GraficoFluxoCaixa({ fluxo, carregando }) {
   }));
 
   return (
-    <div className="px-5 py-4">
+    <div className="px-4 py-4">
       <ResponsiveContainer width="100%" height={280}>
         <LineChart data={dadosGrafico}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-main)" />
@@ -1836,17 +2078,17 @@ function GraficoFluxoCaixa({ fluxo, carregando }) {
 }
 
 function BlocoAging({ aging, carregando }) {
-  if (carregando && !aging) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !aging) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!aging) return null;
   const total = aging.reduce((acc, a) => acc + a.valor, 0);
   if (total === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">🎉 Nenhum vencido. Tudo em dia!</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">🎉 Nenhum vencido. Tudo em dia!</div>;
   }
 
   const CORES = ['var(--warning)', 'var(--accent)', 'var(--danger)', 'var(--danger)'];
 
   return (
-    <div className="px-5 py-4 space-y-4">
+    <div className="px-4 py-4 space-y-4">
       {/* Grafico de barras das 4 faixas */}
       <ResponsiveContainer width="100%" height={180}>
         <BarChart data={aging}>
@@ -1872,11 +2114,11 @@ function BlocoAging({ aging, carregando }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {aging.map((bucket, idx) => (
           bucket.qtd > 0 && (
-            <div key={bucket.faixa} className="border border-[var(--border-main)] rounded-xl overflow-hidden">
+            <div key={bucket.faixa} className="border border-[var(--border-main)] rounded-[10px] overflow-hidden">
               <div className="px-3 py-2 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] flex items-center justify-between">
                 <div>
                   <div className="text-xs font-bold text-[var(--text-main)]">{bucket.faixa}</div>
-                  <div className="text-[10px] text-[var(--text-muted)]">{bucket.qtd} título(s)</div>
+                  <div className="text-xs text-[var(--text-muted)]">{bucket.qtd} título(s)</div>
                 </div>
                 <div className="text-sm font-bold tabular-nums" style={{ color: CORES[idx] }}>
                   {fmtBRL(bucket.valor)}
@@ -1887,16 +2129,16 @@ function BlocoAging({ aging, carregando }) {
                   <div key={item.id} className="px-3 py-2 flex items-baseline justify-between gap-2 text-xs">
                     <div className="min-w-0 flex-1">
                       <div className="font-semibold text-[var(--text-main)] truncate">{item.descricao}</div>
-                      {item.lead && <div className="text-[10px] text-[var(--text-muted)] truncate">{item.lead}</div>}
+                      {item.lead && <div className="text-xs text-[var(--text-muted)] truncate">{item.lead}</div>}
                     </div>
                     <div className="text-right flex-shrink-0">
                       <div className="font-bold tabular-nums">{fmtBRL(item.valor)}</div>
-                      <div className="text-[10px] text-[var(--text-muted)]">{item.diasAtraso}d atraso</div>
+                      <div className="text-xs text-[var(--text-muted)]">{item.diasAtraso}d atraso</div>
                     </div>
                   </div>
                 ))}
                 {bucket.qtd > bucket.itens.length && (
-                  <div className="px-3 py-1.5 text-[10px] text-[var(--text-muted)] text-center">
+                  <div className="px-3 py-1.5 text-xs text-[var(--text-muted)] text-center">
                     +{bucket.qtd - bucket.itens.length} a mais
                   </div>
                 )}
@@ -1910,14 +2152,14 @@ function BlocoAging({ aging, carregando }) {
 }
 
 function TabelaCategorias({ itens, cor = 'success', carregando }) {
-  if (carregando && !itens) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !itens) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!itens || itens.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Nenhum lançamento no período.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Nenhum lançamento no período.</div>;
   }
   const total = itens.reduce((acc, i) => acc + i.valor, 0);
   const corHex = cor === 'success' ? 'var(--success)' : 'var(--danger)';
   return (
-    <div className="px-5 py-4 space-y-2">
+    <div className="px-4 py-4 space-y-2">
       {itens.map((c) => {
         const pct = total > 0 ? (c.valor / total) * 100 : 0;
         return (
@@ -1942,46 +2184,19 @@ function TabelaCategorias({ itens, cor = 'success', carregando }) {
   );
 }
 
-function TabelaMetodosPagamento({ itens, carregando }) {
-  if (carregando && !itens) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
-  if (!itens || itens.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Sem recebimentos no período.</div>;
-  }
-  return (
-    <table className="w-full">
-      <thead>
-        <tr className="border-b border-[var(--border-main)]">
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Método</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Recebimentos</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {itens.map((m) => (
-          <tr key={m.metodo} className="border-b border-[var(--border-subtle)] last:border-b-0">
-            <td className="py-3 px-5 text-sm font-semibold text-[var(--text-main)]">{m.metodo}</td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums">{fmtNum(m.qtd)}</td>
-            <td className="py-3 px-5 text-right text-sm font-bold tabular-nums text-[var(--success)]">{fmtBRL(m.valor)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
 // ============================================================
 // COMPONENTES — funil
 // ============================================================
 function FunilEtapas({ funil, carregando }) {
-  if (carregando && !funil) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !funil) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!funil || funil.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Crie etapas no CRM pra ver o funil.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Crie etapas no CRM pra ver o funil.</div>;
   }
   // Etapa com mais leads = base (largura 100%). Outras proporcionais.
   const max = Math.max(1, ...funil.map((e) => e.leads));
 
   return (
-    <div className="px-5 py-4 space-y-2.5">
+    <div className="px-4 py-4 space-y-2.5">
       {funil.map((e, idx) => {
         const pct = (e.leads / max) * 100;
         const corBg = e.cor || 'var(--accent)';
@@ -1990,7 +2205,7 @@ function FunilEtapas({ funil, carregando }) {
             <div className="w-32 flex-shrink-0">
               <div className="text-sm font-semibold text-[var(--text-main)] truncate">{e.nome}</div>
               {idx < funil.length - 1 && e.taxaAvanco !== undefined && (
-                <div className="text-[10px] text-[var(--text-muted)] flex items-center gap-1">
+                <div className="text-xs text-[var(--text-muted)] flex items-center gap-1">
                   <TrendingDown size={9} /> {fmtPct(e.taxaAvanco)} segue adiante
                 </div>
               )}
@@ -2009,7 +2224,7 @@ function FunilEtapas({ funil, carregando }) {
             </div>
             <div className="w-32 flex-shrink-0 text-right">
               <div className="text-sm font-bold text-[var(--text-main)] tabular-nums">{fmtBRL(e.valor)}</div>
-              <div className="text-[10px] text-[var(--text-muted)]">potencial em vendas</div>
+              <div className="text-xs text-[var(--text-muted)]">potencial em vendas</div>
             </div>
           </div>
         );
@@ -2019,27 +2234,27 @@ function FunilEtapas({ funil, carregando }) {
 }
 
 function TabelaOrigens({ origens, carregando }) {
-  if (carregando && !origens) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !origens) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!origens || origens.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Nenhum lead no período.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Nenhum lead no período.</div>;
   }
   return (
-    <table className="w-full">
+    <table className="w-full text-[13px]">
       <thead>
-        <tr className="border-b border-[var(--border-main)]">
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Origem</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Leads</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Conversões</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Taxa</th>
+        <tr>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Origem</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Leads</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Conversões</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Taxa</th>
         </tr>
       </thead>
       <tbody>
         {origens.map((o) => (
           <tr key={o.origem} className="border-b border-[var(--border-subtle)] last:border-b-0">
-            <td className="py-3 px-5 text-sm font-semibold text-[var(--text-main)]">{o.origem}</td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums">{fmtNum(o.leads)}</td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--success)]">{fmtNum(o.conversoes)}</td>
-            <td className="py-3 px-5 text-right text-sm font-bold tabular-nums">
+            <td className="px-4 py-2.5 font-semibold text-[var(--text-main)]">{o.origem}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums">{fmtNum(o.leads)}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums text-[var(--success-text)]">{fmtNum(o.conversoes)}</td>
+            <td className="px-4 py-2.5 text-right font-bold tabular-nums">
               {o.taxaConversao !== null ? fmtPct(o.taxaConversao) : '—'}
             </td>
           </tr>
@@ -2050,28 +2265,28 @@ function TabelaOrigens({ origens, carregando }) {
 }
 
 function TabelaTempoEtapas({ tempos, carregando }) {
-  if (carregando && !tempos) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !tempos) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!tempos || tempos.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Sem movimentações suficientes ainda.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Sem movimentações suficientes ainda.</div>;
   }
   return (
-    <table className="w-full">
+    <table className="w-full text-[13px]">
       <thead>
-        <tr className="border-b border-[var(--border-main)]">
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Etapa</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Tempo médio</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Amostra</th>
+        <tr>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Etapa</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Tempo médio</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Amostra</th>
         </tr>
       </thead>
       <tbody>
         {tempos.map((t) => (
           <tr key={t.etapa} className="border-b border-[var(--border-subtle)] last:border-b-0">
-            <td className="py-3 px-5 text-sm font-semibold text-[var(--text-main)]">{t.etapa}</td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums font-bold">
+            <td className="px-4 py-2.5 font-semibold text-[var(--text-main)]">{t.etapa}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums font-bold">
               <Clock size={11} className="inline mr-1 -mt-0.5 text-[var(--text-muted)]" />
               {t.diasMedio.toFixed(1)} dias
             </td>
-            <td className="py-3 px-5 text-right text-xs text-[var(--text-muted)] tabular-nums">{t.amostra} leads</td>
+            <td className="px-4 py-2.5 text-right text-xs text-[var(--text-muted)] tabular-nums">{t.amostra} leads</td>
           </tr>
         ))}
       </tbody>
@@ -2080,43 +2295,43 @@ function TabelaTempoEtapas({ tempos, carregando }) {
 }
 
 function TabelaLeadsParados({ leads, carregando }) {
-  if (carregando && !leads) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !leads) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!leads || leads.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Tudo em dia! Nenhum lead parado.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Tudo em dia! Nenhum lead parado.</div>;
   }
   return (
-    <table className="w-full">
+    <table className="w-full text-[13px]">
       <thead>
-        <tr className="border-b border-[var(--border-main)]">
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Lead</th>
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Etapa</th>
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Origem</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Sem contato</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Valor</th>
+        <tr>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Lead</th>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Etapa</th>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Origem</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Sem contato</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Valor</th>
         </tr>
       </thead>
       <tbody>
         {leads.map((l) => (
           <tr key={l.id} className="border-b border-[var(--border-subtle)] last:border-b-0">
-            <td className="py-3 px-5">
+            <td className="px-4 py-2.5">
               <div className="text-sm font-semibold text-[var(--text-main)]">{l.nome}</div>
               <div className="text-[11px] text-[var(--text-muted)] flex items-center gap-2 mt-0.5">
                 {l.telefone && <span className="flex items-center gap-1"><Phone size={10} />{l.telefone}</span>}
                 {l.email && <span className="flex items-center gap-1"><Mail size={10} />{l.email}</span>}
               </div>
             </td>
-            <td className="py-3 px-5 text-xs">
-              <Badge variant="neutral" size="sm">{l.etapa}</Badge>
+            <td className="px-4 py-2.5 text-xs">
+              <Badge variant="neutral">{l.etapa}</Badge>
             </td>
-            <td className="py-3 px-5 text-xs text-[var(--text-secondary)]">{l.origem}</td>
-            <td className={`py-3 px-5 text-right text-sm font-bold tabular-nums ${
-              l.diasParado > 30 ? 'text-[var(--danger)]' :
-              l.diasParado > 14 ? 'text-[var(--warning)]' :
+            <td className="px-4 py-2.5 text-xs text-[var(--text-secondary)]">{l.origem}</td>
+            <td className={`px-4 py-2.5 text-right font-bold tabular-nums ${
+              l.diasParado > 30 ? 'text-[var(--danger-text)]' :
+              l.diasParado > 14 ? 'text-[var(--warning-text)]' :
               'text-[var(--text-secondary)]'
             }`}>
               {l.diasParado} dia{l.diasParado === 1 ? '' : 's'}
             </td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums">{fmtBRL(l.valor)}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums">{fmtBRL(l.valor)}</td>
           </tr>
         ))}
       </tbody>
@@ -2128,39 +2343,39 @@ function TabelaLeadsParados({ leads, carregando }) {
 // COMPONENTES — compartilhados
 // ============================================================
 function TabelaTopProdutos({ itens, carregando, colunas, mensagemVazia = 'Nenhuma venda no período.' }) {
-  if (carregando && !itens) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !itens) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!itens || itens.length === 0) {
     return (
-      <div className="px-5 py-12 text-center">
+      <div className="px-4 py-12 text-center">
         <Package className="mx-auto mb-2 text-[var(--text-muted)] opacity-50" size={32} />
         <div className="text-sm text-[var(--text-muted)]">{mensagemVazia}</div>
       </div>
     );
   }
   return (
-    <table className="w-full">
+    <table className="w-full text-[13px]">
       <thead>
-        <tr className="border-b border-[var(--border-main)]">
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5 w-28"></th>
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Produto</th>
+        <tr>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap w-14"></th>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Produto</th>
           {colunas.map((c) => (
-            <th key={c.label} className={`text-${c.align || 'right'} text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5`}>{c.label}</th>
+            <th key={c.label} className={`text-${c.align || 'right'} text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap`}>{c.label}</th>
           ))}
         </tr>
       </thead>
       <tbody>
         {itens.map((p, idx) => (
           <tr key={p.variacaoId} className="border-b border-[var(--border-subtle)] last:border-b-0">
-            <td className="py-3 px-5">
+            <td className="px-4 py-2.5">
               {p.imagemUrl ? (
-                <img src={p.imagemUrl} alt="" className="w-24 h-24 object-contain" />
+                <img src={p.imagemUrl} alt="" className="w-10 h-10 object-contain" />
               ) : (
-                <div className="w-24 h-24 rounded-md bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)]">
-                  <ImageIcon size={28} />
+                <div className="w-10 h-10 rounded-md bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)]">
+                  <ImageIcon size={16} />
                 </div>
               )}
             </td>
-            <td className="py-3 px-5">
+            <td className="px-4 py-2.5">
               <div className="text-sm font-semibold text-[var(--text-main)] tracking-tight">
                 <span className="text-[var(--text-muted)] mr-2">#{idx + 1}</span>
                 {p.nome}
@@ -2168,8 +2383,8 @@ function TabelaTopProdutos({ itens, carregando, colunas, mensagemVazia = 'Nenhum
               </div>
             </td>
             {colunas.map((c) => (
-              <td key={c.label} className={`py-3 px-5 text-${c.align || 'right'} text-sm tabular-nums ${
-                c.destaque === 'success' ? 'font-bold text-[var(--success)]' : 'text-[var(--text-main)]'
+              <td key={c.label} className={`px-4 py-2.5 text-${c.align || 'right'} tabular-nums ${
+                c.destaque === 'success' ? 'font-bold text-[var(--success-text)]' : 'text-[var(--text-main)]'
               }`}>{c.valor(p)}</td>
             ))}
           </tr>
@@ -2197,14 +2412,24 @@ function AbaBots({ intervalo }) {
     return () => { ativo = false; };
   }, []);
 
-  useEffect(() => {
-    let ativo = true;
+  // Periodo/filtros mudaram: liga o carregando e limpa o erro ja no render
+  // (guardando a chave da busca) em vez de setState sincrono no efeito.
+  const tIni = intervalo.inicio.getTime();
+  const tFim = intervalo.fim.getTime();
+  const chaveBusca = `${tIni}|${tFim}|${filtros.botId}|${filtros.canal}`;
+  const [chaveBuscaAnterior, setChaveBuscaAnterior] = useState(null);
+  if (chaveBuscaAnterior !== chaveBusca) {
+    setChaveBuscaAnterior(chaveBusca);
     setCarregando(true);
     setErro(null);
+  }
+
+  useEffect(() => {
+    let ativo = true;
     api.get('/relatorios/bots', {
       params: {
-        inicio: intervalo.inicio.toISOString(),
-        fim: intervalo.fim.toISOString(),
+        inicio: new Date(tIni).toISOString(),
+        fim: new Date(tFim).toISOString(),
         ...(filtros.botId ? { botId: filtros.botId } : {}),
         ...(filtros.canal ? { canal: filtros.canal } : {}),
       },
@@ -2213,68 +2438,66 @@ function AbaBots({ intervalo }) {
       .catch((e) => { if (ativo) setErro(e?.response?.data?.error || 'Erro ao carregar.'); })
       .finally(() => { if (ativo) setCarregando(false); });
     return () => { ativo = false; };
-  }, [intervalo.inicio.getTime(), intervalo.fim.getTime(), filtros.botId, filtros.canal]);
+  }, [tIni, tFim, filtros.botId, filtros.canal]);
 
   const fmtMs = (ms) => {
     if (!ms || ms < 1000) return `${ms || 0}ms`;
     return `${(ms / 1000).toFixed(1)}s`;
   };
 
+  const montarDados = () => ({
+    nome: 'relatorio-bots',
+    titulo: 'Relatório · Bots / IA',
+    secoes: [
+      {
+        titulo: 'Resumo',
+        colunas: [{ chave: 'indicador', label: 'Indicador' }, { chave: 'valor', label: 'Valor' }],
+        linhas: dados ? [
+          { indicador: 'Total de atendimentos', valor: fmtNum(dados.kpis.totalExecucoes) },
+          { indicador: 'Mensagens trocadas', valor: fmtNum(dados.kpis.totalMensagens) },
+          { indicador: 'Taxa de sucesso', valor: fmtPct(dados.kpis.taxaSucesso) },
+          { indicador: 'Tempo médio de atendimento', valor: fmtMs(dados.kpis.duracaoMediaMs) },
+          { indicador: 'Custo total de IA', valor: fmtBRL(dados.kpis.custoTotalIa) },
+        ] : [],
+      },
+      {
+        titulo: 'Por canal',
+        colunas: [
+          { chave: 'canal', label: 'Canal' },
+          { chave: 'recebidas', label: 'Recebidas' },
+          { chave: 'enviadas', label: 'Enviadas' },
+        ],
+        linhas: dados?.porCanal || [],
+      },
+      {
+        titulo: 'Ferramentas usadas pelo bot',
+        colunas: [
+          { chave: 'tool', label: 'Ação' },
+          { chave: 'qtd', label: 'Chamadas' },
+          { chave: 'duracaoMediaMs', label: 'Tempo médio', valor: (t) => fmtMs(t.duracaoMediaMs) },
+        ],
+        linhas: dados?.toolsUsadas || [],
+      },
+      {
+        titulo: 'Uso de IA por modelo',
+        colunas: [
+          { chave: 'modelo', label: 'Modelo' },
+          { chave: 'chamadas', label: 'Chamadas' },
+          { chave: 'tokensEntrada', label: 'Tokens entrada' },
+          { chave: 'tokensSaida', label: 'Tokens saída' },
+          { chave: 'custo', label: 'Custo', valor: (m) => fmtBRL(m.custo) },
+        ],
+        linhas: dados?.porModelo || [],
+      },
+    ],
+  });
+  useExportarNoTopo(montarDados, dados);
+
   return (
-    <div className="space-y-5">
+    <>
       {erro && <ErroBox mensagem={erro} />}
 
-      <CabecalhoAba
-        dados={dados}
-        montarDados={() => ({
-          nome: 'relatorio-bots',
-          titulo: 'Relatório · Bots / IA',
-          secoes: [
-            {
-              titulo: 'Resumo',
-              colunas: [{ chave: 'indicador', label: 'Indicador' }, { chave: 'valor', label: 'Valor' }],
-              linhas: dados ? [
-                { indicador: 'Total de atendimentos', valor: fmtNum(dados.kpis.totalExecucoes) },
-                { indicador: 'Mensagens trocadas', valor: fmtNum(dados.kpis.totalMensagens) },
-                { indicador: 'Taxa de sucesso', valor: fmtPct(dados.kpis.taxaSucesso) },
-                { indicador: 'Tempo médio de atendimento', valor: fmtMs(dados.kpis.duracaoMediaMs) },
-                { indicador: 'Custo total de IA', valor: fmtBRL(dados.kpis.custoTotalIa) },
-              ] : [],
-            },
-            {
-              titulo: 'Por canal',
-              colunas: [
-                { chave: 'canal', label: 'Canal' },
-                { chave: 'recebidas', label: 'Recebidas' },
-                { chave: 'enviadas', label: 'Enviadas' },
-              ],
-              linhas: dados?.porCanal || [],
-            },
-            {
-              titulo: 'Ferramentas usadas pelo bot',
-              colunas: [
-                { chave: 'tool', label: 'Ação' },
-                { chave: 'qtd', label: 'Chamadas' },
-                { chave: 'duracaoMediaMs', label: 'Tempo médio', valor: (t) => fmtMs(t.duracaoMediaMs) },
-              ],
-              linhas: dados?.toolsUsadas || [],
-            },
-            {
-              titulo: 'Uso de IA por modelo',
-              colunas: [
-                { chave: 'modelo', label: 'Modelo' },
-                { chave: 'chamadas', label: 'Chamadas' },
-                { chave: 'tokensEntrada', label: 'Tokens entrada' },
-                { chave: 'tokensSaida', label: 'Tokens saída' },
-                { chave: 'custo', label: 'Custo', valor: (m) => fmtBRL(m.custo) },
-              ],
-              linhas: dados?.porModelo || [],
-            },
-          ],
-        })}
-      />
-
-      <BarraFiltros
+      <PainelFiltros
         contador={dados?.kpis?.totalExecucoes !== undefined ? `${dados.kpis.totalExecucoes} atendimento(s)` : null}
         filtrosAtivos={[
           (() => {
@@ -2310,109 +2533,86 @@ function AbaBots({ intervalo }) {
             clearable
           />
         </div>
-      </BarraFiltros>
+      </PainelFiltros>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard icon={MessageSquare} color="info" label="Mensagens trocadas"
+      <FaixaNumeros min={200}>
+        <Numero destaque rotulo="Mensagens trocadas"
           valor={fmtNum(dados?.kpis.totalMsgs)}
-          subvalor={dados ? `${fmtNum(dados.kpis.msgsEntrada)} entrada · ${fmtNum(dados.kpis.msgsSaida)} saída` : null}
+          detalhe={dados ? `${fmtNum(dados.kpis.msgsEntrada)} entrada · ${fmtNum(dados.kpis.msgsSaida)} saída` : null}
           carregando={carregando} />
-        <KpiCard icon={Users} color="accent" label="Conversas ativas"
+        <Numero rotulo="Conversas ativas"
           valor={fmtNum(dados?.kpis.conversasAtivas)}
-          subvalor={dados ? `${dados.kpis.conversasComLead} vinculadas a lead` : null}
+          detalhe={dados ? `${dados.kpis.conversasComLead} vinculadas a lead` : null}
           carregando={carregando} />
-        <KpiCard icon={Bot} color="success" label="Atendimentos do bot"
-          info="Quantas vezes o bot atendeu um cliente de ponta a ponta."
+        <Numero rotulo={rotuloInfo('Atendimentos do bot', 'Quantas vezes o bot atendeu um cliente de ponta a ponta.')}
           valor={fmtNum(dados?.kpis.totalExec)}
-          subvalor={dados && dados.kpis.taxaSucesso !== null
+          detalhe={dados && dados.kpis.taxaSucesso !== null
             ? `${fmtPct(dados.kpis.taxaSucesso)} de sucesso` : null}
+          tomDetalhe="sucesso"
           carregando={carregando} />
-        <KpiCard icon={Sparkles} color="warning" label="Uso de IA"
-          info="Total consumido em chamadas pra inteligência artificial — impacta o custo do bot."
+        <Numero rotulo={rotuloInfo('Uso de IA', 'Total consumido em chamadas pra inteligência artificial — impacta o custo do bot.')}
           valor={fmtNum(dados?.kpis.tokensTotal)}
-          subvalor={dados ? `${fmtNum(dados.kpis.chamadasIA)} chamada(s) ao LLM` : null}
+          detalhe={dados ? `${fmtNum(dados.kpis.chamadasIA)} chamada(s) ao LLM` : null}
           carregando={carregando} />
-      </div>
+      </FaixaNumeros>
 
-      {/* Mensagens por dia */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Mensagens por dia</div>
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">Mensagens recebidas e enviadas pelo bot, dia a dia</div>
-        </div>
-        <GraficoMensagensPorDia mensagens={dados?.mensagensPorDia} carregando={carregando} />
-      </Card>
+      <ColunasPagina
+        lateral={(
+          <>
+            <Painel
+              titulo={<TituloSecao titulo="Atendimentos bem-sucedidos" info="Quantos atendimentos do bot terminaram sem erro vs. falharam ou foram interrompidos." />}
+              subtitulo={dados ? `Tempo médio de cada atendimento: ${fmtMs(dados.kpis.duracaoMediaMs)}` : '—'}
+              semPadding
+            >
+              <BlocoStatusExec
+                status={dados?.execucoes.status}
+                modo={dados?.execucoes.modo}
+                carregando={carregando}
+              />
+            </Painel>
+            <Painel titulo="Por canal" subtitulo="Volume de mensagens por canal" semPadding corpoClassName="overflow-x-auto">
+              <TabelaCanaisBot porCanal={dados?.porCanal} carregando={carregando} />
+            </Painel>
+          </>
+        )}
+      >
+        <Painel titulo="Mensagens por dia" subtitulo="Mensagens recebidas e enviadas pelo bot, dia a dia" semPadding>
+          <GraficoMensagensPorDia mensagens={dados?.mensagensPorDia} carregando={carregando} />
+        </Painel>
 
-      {/* Por canal + status execucao */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <Card padding="none">
-          <div className="px-5 py-4 border-b border-[var(--border-main)]">
-            <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Por canal</div>
-            <div className="text-sm text-[var(--text-secondary)] mt-0.5">Volume de mensagens por canal</div>
-          </div>
-          <TabelaCanaisBot porCanal={dados?.porCanal} carregando={carregando} />
-        </Card>
+        <Painel
+          titulo="Ferramentas usadas pelo bot"
+          subtitulo="Ações que o bot executou durante os atendimentos (criar cliente, enviar mensagem, etc.)"
+          semPadding
+          corpoClassName="overflow-x-auto"
+        >
+          <TabelaToolsUsadas itens={dados?.toolsUsadas} carregando={carregando} fmtMs={fmtMs} />
+        </Painel>
 
-        <Card padding="none">
-          <div className="px-5 py-4 border-b border-[var(--border-main)]">
-            <TituloSecao titulo="Atendimentos bem-sucedidos" info="Quantos atendimentos do bot terminaram sem erro vs. falharam ou foram interrompidos." />
-            <div className="text-sm text-[var(--text-secondary)] mt-0.5">
-              {dados ? `Tempo médio de cada atendimento: ${fmtMs(dados.kpis.duracaoMediaMs)}` : '—'}
-            </div>
-          </div>
-          <BlocoStatusExec
-            status={dados?.execucoes.status}
-            modo={dados?.execucoes.modo}
-            carregando={carregando}
-          />
-        </Card>
-      </div>
+        <Painel titulo="Uso de IA por modelo" subtitulo="Quanto cada modelo de IA foi usado (referência pra calcular custo)" semPadding corpoClassName="overflow-x-auto">
+          <TabelaModelosIA itens={dados?.ia.porModelo} carregando={carregando} />
+        </Painel>
 
-      {/* Tools mais usadas */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Ferramentas usadas pelo bot</div>
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">
-            Ações que o bot executou durante os atendimentos (criar cliente, enviar mensagem, etc.)
-          </div>
-        </div>
-        <TabelaToolsUsadas itens={dados?.toolsUsadas} carregando={carregando} fmtMs={fmtMs} />
-      </Card>
-
-      {/* Custo de IA por modelo */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Uso de IA por modelo</div>
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">Quanto cada modelo de IA foi usado (referência pra calcular custo)</div>
-        </div>
-        <TabelaModelosIA itens={dados?.ia.porModelo} carregando={carregando} />
-      </Card>
-
-      {/* Top conversas */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Top conversas mais ativas</div>
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">Maior volume total de mensagens</div>
-        </div>
-        <TabelaTopConversas itens={dados?.topConversas} carregando={carregando} />
-      </Card>
-    </div>
+        <Painel titulo="Top conversas mais ativas" subtitulo="Maior volume total de mensagens" semPadding corpoClassName="overflow-x-auto">
+          <TabelaTopConversas itens={dados?.topConversas} carregando={carregando} />
+        </Painel>
+      </ColunasPagina>
+    </>
   );
 }
 
 // ====== Componentes da aba Bots ======
 function GraficoMensagensPorDia({ mensagens, carregando }) {
-  if (carregando && !mensagens) return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !mensagens) return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!mensagens || mensagens.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Sem mensagens no período.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Sem mensagens no período.</div>;
   }
   const dadosGrafico = mensagens.map((m) => ({
     ...m,
     label: m.data.split('-').slice(1).reverse().join('/'),
   }));
   return (
-    <div className="px-5 py-4">
+    <div className="px-4 py-4">
       <ResponsiveContainer width="100%" height={240}>
         <LineChart data={dadosGrafico}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-main)" />
@@ -2440,14 +2640,24 @@ function AbaCaixa({ intervalo }) {
   const [erro, setErro] = useState(null);
   const [filtros, setFiltros] = useState({ origem: '', comDivergencia: '', filtroRapido: '' });
 
-  useEffect(() => {
-    let ativo = true;
+  // Periodo/filtros mudaram: liga o carregando e limpa o erro ja no render
+  // (guardando a chave da busca) em vez de setState sincrono no efeito.
+  const tIni = intervalo.inicio.getTime();
+  const tFim = intervalo.fim.getTime();
+  const chaveBusca = `${tIni}|${tFim}|${filtros.origem}|${filtros.comDivergencia}`;
+  const [chaveBuscaAnterior, setChaveBuscaAnterior] = useState(null);
+  if (chaveBuscaAnterior !== chaveBusca) {
+    setChaveBuscaAnterior(chaveBusca);
     setCarregando(true);
     setErro(null);
+  }
+
+  useEffect(() => {
+    let ativo = true;
     api.get('/relatorios/caixa', {
       params: {
-        inicio: intervalo.inicio.toISOString(),
-        fim: intervalo.fim.toISOString(),
+        inicio: new Date(tIni).toISOString(),
+        fim: new Date(tFim).toISOString(),
         ...(filtros.origem ? { origem: filtros.origem } : {}),
         ...(filtros.comDivergencia ? { comDivergencia: filtros.comDivergencia } : {}),
       },
@@ -2456,7 +2666,7 @@ function AbaCaixa({ intervalo }) {
       .catch((e) => { if (ativo) setErro(e?.response?.data?.error || 'Erro ao carregar.'); })
       .finally(() => { if (ativo) setCarregando(false); });
     return () => { ativo = false; };
-  }, [intervalo.inicio.getTime(), intervalo.fim.getTime(), filtros.origem, filtros.comDivergencia]);
+  }, [tIni, tFim, filtros.origem, filtros.comDivergencia]);
 
   const fmtTempo = (ms) => {
     if (!ms || ms === 0) return '—';
@@ -2547,13 +2757,15 @@ function AbaCaixa({ intervalo }) {
     ],
   });
 
+  useExportarNoTopo(montarDados, dados);
+
+  const dif = dados?.kpis.diferencaAcumulada || 0;
+
   return (
-    <div className="space-y-5">
+    <>
       {erro && <ErroBox mensagem={erro} />}
 
-      <CabecalhoAba montarDados={montarDados} dados={dados} />
-
-      <BarraFiltros
+      <PainelFiltros
         contador={contador}
         filtrosAtivos={filtrosAtivos}
         onLimparTudo={limparTudo}
@@ -2567,132 +2779,89 @@ function AbaCaixa({ intervalo }) {
             { chave: 'com-divergencia', label: 'Com diferença de saldo' },
           ]}
         />
-      </BarraFiltros>
+      </PainelFiltros>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard
-          icon={Wallet}
-          color="info"
-          label="Sessões fechadas"
-          valor={fmtNum(dados?.kpis.totalSessoes)}
-          subvalor={dados?.kpis.sessoesComDivergencia > 0 ? `${dados.kpis.sessoesComDivergencia} com divergência` : 'Tudo bate'}
-          carregando={carregando}
-          info="Quantas vezes o caixa foi fechado no período (manual ou pelo cron automático às 00:01)."
-        />
-        <KpiCard
-          icon={DollarSign}
-          color="success"
-          label="Vendas em dinheiro"
+      <FaixaNumeros min={200}>
+        <Numero destaque rotulo={rotuloInfo('Vendas em dinheiro', 'Soma das vendas pagas em dinheiro vivo no período (não inclui PIX, cartão, etc.).')}
           valor={fmtBRL(dados?.kpis.vendasDinheiro.valor)}
-          subvalor={dados ? `${dados.kpis.vendasDinheiro.qtd} venda(s)` : null}
-          carregando={carregando}
-          info="Soma das vendas pagas em dinheiro vivo no período (não inclui PIX, cartão, etc.)."
-        />
-        <KpiCard
-          icon={Wallet}
-          color="accent"
-          label="Saldo médio ao fechar"
+          detalhe={dados ? `${dados.kpis.vendasDinheiro.qtd} venda(s)` : null}
+          carregando={carregando} />
+        <Numero rotulo={rotuloInfo('Sessões fechadas', 'Quantas vezes o caixa foi fechado no período (manual ou pelo cron automático às 00:01).')}
+          valor={fmtNum(dados?.kpis.totalSessoes)}
+          detalhe={dados?.kpis.sessoesComDivergencia > 0 ? `${dados.kpis.sessoesComDivergencia} com divergência` : 'Tudo bate'}
+          tomDetalhe={dados?.kpis.sessoesComDivergencia > 0 ? 'alerta' : 'sucesso'}
+          carregando={carregando} />
+        <Numero rotulo={rotuloInfo('Saldo médio ao fechar', 'Em média, quanto sobrava no caixa físico em cada fechamento.')}
           valor={fmtBRL(dados?.kpis.saldoMedioDiario)}
-          carregando={carregando}
-          info="Em média, quanto sobrava no caixa físico em cada fechamento."
-        />
-        <KpiCard
-          icon={AlertCircle}
-          color={Math.abs(dados?.kpis.diferencaAcumulada || 0) > 0 ? 'warning' : 'success'}
-          label="Diferença acumulada"
+          carregando={carregando} />
+        <Numero rotulo={rotuloInfo('Diferença acumulada', 'Soma de todas as diferenças (real − esperado). Positivo = sobrou dinheiro no caixa; negativo = faltou.')}
           valor={fmtBRL(dados?.kpis.diferencaAcumulada)}
-          subvalor={dados?.kpis.diferencaAcumulada >= 0 ? 'Sobra (dinheiro a mais)' : 'Falta (dinheiro a menos)'}
-          carregando={carregando}
-          info="Soma de todas as diferenças (real − esperado). Positivo = sobrou dinheiro no caixa; negativo = faltou."
-        />
-        <KpiCard
-          icon={ArrowUpRight}
-          color="danger"
-          label="Retiradas"
-          valor={fmtBRL(dados?.kpis.totalSangrias)}
-          subvalor={dados ? `${dados.kpis.qtdSangrias} retirada(s)` : null}
-          carregando={carregando}
-          info="Total tirado do caixa físico no período (ex.: depósito no banco)."
-        />
-        <KpiCard
-          icon={ArrowDownRight}
-          color="success"
-          label="Entradas"
-          valor={fmtBRL(dados?.kpis.totalSuprimentos)}
-          subvalor={dados ? `${dados.kpis.qtdSuprimentos} entrada(s)` : null}
-          carregando={carregando}
-          info="Total colocado no caixa físico manualmente no período (ex.: troco extra)."
-        />
-        <KpiCard
-          icon={Clock}
-          color="info"
-          label="Tempo médio aberto"
-          valor={fmtTempo(dados?.kpis.tempoMedioMs)}
-          carregando={carregando}
-          info="Quanto tempo, em média, cada sessão ficou aberta entre abertura e fechamento."
-        />
-      </div>
+          tom={dif > 0 ? 'sucesso' : dif < 0 ? 'perigo' : 'neutro'}
+          detalhe={dados ? (dif >= 0 ? 'Sobra (dinheiro a mais)' : 'Falta (dinheiro a menos)') : null}
+          carregando={carregando} />
+      </FaixaNumeros>
 
-      {/* Tabela de sessões fechadas */}
-      <Card padding="none">
-        <div className="px-5 py-4 border-b border-[var(--border-main)]">
-          <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Sessões fechadas</div>
-          <div className="text-sm text-[var(--text-secondary)] mt-0.5">Histórico do período (mais recentes primeiro)</div>
-        </div>
-        <TabelaSessoesCaixa sessoes={dados?.sessoes} carregando={carregando} />
-      </Card>
+      <ColunasPagina
+        lateral={(
+          <>
+            <Painel titulo="Movimento do caixa" semPadding>
+              <LinhaInfo
+                rotulo={<span title="Total tirado do caixa físico no período (ex.: depósito no banco).">Retiradas{dados ? ` · ${dados.kpis.qtdSangrias}` : ''}</span>}
+                valor={dados ? fmtBRL(dados.kpis.totalSangrias) : '—'}
+              />
+              <LinhaInfo
+                rotulo={<span title="Total colocado no caixa físico manualmente no período (ex.: troco extra).">Entradas{dados ? ` · ${dados.kpis.qtdSuprimentos}` : ''}</span>}
+                valor={dados ? fmtBRL(dados.kpis.totalSuprimentos) : '—'}
+              />
+              <LinhaInfo
+                rotulo={<span title="Quanto tempo, em média, cada sessão ficou aberta entre abertura e fechamento.">Tempo médio aberto</span>}
+                valor={dados ? fmtTempo(dados.kpis.tempoMedioMs) : '—'}
+              />
+            </Painel>
+            <Painel titulo="Principais motivos de retirada" subtitulo="Onde o dinheiro saiu do caixa" semPadding>
+              <TabelaMotivosCaixa itens={dados?.topMotivosSangria} carregando={carregando} cor="danger" />
+            </Painel>
+            <Painel titulo="Principais motivos de entrada" subtitulo="Por que o dinheiro foi reforçado" semPadding>
+              <TabelaMotivosCaixa itens={dados?.topMotivosSuprimento} carregando={carregando} cor="success" />
+            </Painel>
+          </>
+        )}
+      >
+        <Painel titulo="Sessões fechadas" subtitulo="Histórico do período (mais recentes primeiro)" semPadding corpoClassName="overflow-x-auto">
+          <TabelaSessoesCaixa sessoes={dados?.sessoes} carregando={carregando} />
+        </Painel>
 
-      {/* Divergências */}
-      {dados?.divergencias?.length > 0 && (
-        <Card padding="none">
-          <div className="px-5 py-4 border-b border-[var(--border-main)] flex items-center justify-between">
-            <div>
-              <TituloSecao titulo="Sessões com divergência" info="Sessões que fecharam com diferença entre o saldo esperado (calculado pelo sistema) e o saldo real (contado fisicamente). Vale investigar." />
-              <div className="text-sm text-[var(--text-secondary)] mt-0.5">Saldo contado diferente do esperado</div>
-            </div>
-            <Badge variant="warning" size="sm">{dados.divergencias.length} sessão(ões)</Badge>
-          </div>
-          <TabelaDivergencias divergencias={dados.divergencias} />
-        </Card>
-      )}
-
-      {/* Top motivos lado a lado */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <Card padding="none">
-          <div className="px-5 py-4 border-b border-[var(--border-main)]">
-            <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Principais motivos de retirada</div>
-            <div className="text-sm text-[var(--text-secondary)] mt-0.5">Onde o dinheiro saiu do caixa</div>
-          </div>
-          <TabelaMotivosCaixa itens={dados?.topMotivosSangria} carregando={carregando} cor="danger" />
-        </Card>
-        <Card padding="none">
-          <div className="px-5 py-4 border-b border-[var(--border-main)]">
-            <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Principais motivos de entrada</div>
-            <div className="text-sm text-[var(--text-secondary)] mt-0.5">Por que o dinheiro foi reforçado</div>
-          </div>
-          <TabelaMotivosCaixa itens={dados?.topMotivosSuprimento} carregando={carregando} cor="success" />
-        </Card>
-      </div>
-    </div>
+        {dados?.divergencias?.length > 0 && (
+          <Painel
+            titulo={<TituloSecao titulo="Sessões com divergência" info="Sessões que fecharam com diferença entre o saldo esperado (calculado pelo sistema) e o saldo real (contado fisicamente). Vale investigar." />}
+            subtitulo="Saldo contado diferente do esperado"
+            acoes={<Badge variant="warning">{dados.divergencias.length} sessão(ões)</Badge>}
+            semPadding
+          >
+            <TabelaDivergencias divergencias={dados.divergencias} />
+          </Painel>
+        )}
+      </ColunasPagina>
+    </>
   );
 }
 
 function TabelaSessoesCaixa({ sessoes, carregando }) {
-  if (carregando && !sessoes) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !sessoes) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!sessoes || sessoes.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Nenhuma sessão fechada no período.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Nenhuma sessão fechada no período.</div>;
   }
   return (
-    <table className="w-full">
+    <table className="w-full text-[13px]">
       <thead>
-        <tr className="border-b border-[var(--border-main)]">
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Fechada em</th>
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Origem</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Fundo</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Esperado</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Real</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Diferença</th>
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Fechou</th>
+        <tr>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Fechada em</th>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Origem</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Fundo</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Esperado</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Real</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Diferença</th>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Fechou</th>
         </tr>
       </thead>
       <tbody>
@@ -2700,23 +2869,23 @@ function TabelaSessoesCaixa({ sessoes, carregando }) {
           const dif = Number(s.diferenca || 0);
           return (
             <tr key={s.id} className="border-b border-[var(--border-subtle)] last:border-b-0">
-              <td className="py-3 px-5 text-xs text-[var(--text-secondary)]">
+              <td className="px-4 py-2.5 text-xs text-[var(--text-secondary)]">
                 {s.fechadaEm ? new Date(s.fechadaEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
               </td>
-              <td className="py-3 px-5 text-xs">
-                <Badge variant={s.origem === 'AUTO_BOT' ? 'info' : 'neutral'} size="sm">
+              <td className="px-4 py-2.5 text-xs">
+                <Badge variant={s.origem === 'AUTO_BOT' ? 'info' : 'neutral'}>
                   {s.origem === 'AUTO_BOT' ? 'Automático (bot)' : 'Manual'}
                 </Badge>
               </td>
-              <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--text-secondary)]">{fmtBRL(s.fundoCaixa)}</td>
-              <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--text-main)]">{fmtBRL(s.saldoEsperado)}</td>
-              <td className="py-3 px-5 text-right text-sm tabular-nums font-semibold text-[var(--text-main)]">{fmtBRL(s.saldoReal)}</td>
-              <td className={`py-3 px-5 text-right text-sm tabular-nums font-bold ${
-                dif > 0 ? 'text-[var(--success)]' : dif < 0 ? 'text-[var(--danger)]' : 'text-[var(--text-muted)]'
+              <td className="px-4 py-2.5 text-right tabular-nums text-[var(--text-secondary)]">{fmtBRL(s.fundoCaixa)}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums text-[var(--text-main)]">{fmtBRL(s.saldoEsperado)}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-[var(--text-main)]">{fmtBRL(s.saldoReal)}</td>
+              <td className={`px-4 py-2.5 text-right tabular-nums font-bold ${
+                dif > 0 ? 'text-[var(--success-text)]' : dif < 0 ? 'text-[var(--danger-text)]' : 'text-[var(--text-muted)]'
               }`}>
                 {dif > 0 ? '+' : ''}{fmtBRL(dif)}
               </td>
-              <td className="py-3 px-5 text-xs text-[var(--text-muted)]">{s.usuarioFechouNome || '—'}</td>
+              <td className="px-4 py-2.5 text-xs text-[var(--text-muted)]">{s.usuarioFechouNome || '—'}</td>
             </tr>
           );
         })}
@@ -2727,7 +2896,7 @@ function TabelaSessoesCaixa({ sessoes, carregando }) {
 
 function TabelaDivergencias({ divergencias }) {
   return (
-    <div className="px-5 py-3 space-y-2">
+    <div className="px-4 py-3 space-y-2">
       {divergencias.map((d) => {
         const dif = Number(d.diferenca || 0);
         return (
@@ -2742,7 +2911,7 @@ function TabelaDivergencias({ divergencias }) {
               </div>
             </div>
             <div className={`text-sm font-bold tabular-nums flex-shrink-0 ${
-              dif > 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'
+              dif > 0 ? 'text-[var(--success-text)]' : 'text-[var(--danger-text)]'
             }`}>
               {dif > 0 ? '+' : ''}{fmtBRL(dif)}
             </div>
@@ -2754,20 +2923,20 @@ function TabelaDivergencias({ divergencias }) {
 }
 
 function TabelaMotivosCaixa({ itens, carregando, cor }) {
-  if (carregando && !itens) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !itens) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!itens || itens.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Nenhum motivo registrado.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Nenhum motivo registrado.</div>;
   }
   const total = itens.reduce((acc, i) => acc + i.valor, 0);
   return (
-    <div className="px-5 py-3 space-y-2">
+    <div className="px-4 py-3 space-y-2">
       {itens.map((i) => {
         const pct = total > 0 ? (i.valor / total) * 100 : 0;
         return (
           <div key={i.motivo} className="space-y-1">
             <div className="flex items-baseline justify-between gap-2 text-xs">
               <span className="font-semibold text-[var(--text-main)] truncate">{i.motivo}</span>
-              <span className={`font-bold tabular-nums flex-shrink-0 ${cor === 'danger' ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>
+              <span className={`font-bold tabular-nums flex-shrink-0 ${cor === 'danger' ? 'text-[var(--danger-text)]' : 'text-[var(--success-text)]'}`}>
                 {fmtBRL(i.valor)}
               </span>
             </div>
@@ -2785,27 +2954,27 @@ function TabelaMotivosCaixa({ itens, carregando, cor }) {
 }
 
 function TabelaCanaisBot({ porCanal, carregando }) {
-  if (carregando && !porCanal) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !porCanal) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!porCanal || porCanal.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Sem mensagens.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Sem mensagens.</div>;
   }
   return (
-    <table className="w-full">
+    <table className="w-full text-[13px]">
       <thead>
-        <tr className="border-b border-[var(--border-main)]">
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Canal</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Recebidas</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Enviadas</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Total</th>
+        <tr>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Canal</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Recebidas</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Enviadas</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Total</th>
         </tr>
       </thead>
       <tbody>
         {porCanal.map((c) => (
           <tr key={c.canal} className="border-b border-[var(--border-subtle)] last:border-b-0">
-            <td className="py-3 px-5 text-sm font-semibold text-[var(--text-main)]">{c.canal}</td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--info)]">{fmtNum(c.entrada)}</td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--accent)]">{fmtNum(c.saida)}</td>
-            <td className="py-3 px-5 text-right text-sm font-bold tabular-nums">{fmtNum(c.total)}</td>
+            <td className="px-4 py-2.5 font-semibold text-[var(--text-main)]">{c.canal}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums text-[var(--info-text)]">{fmtNum(c.entrada)}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums text-[var(--accent)]">{fmtNum(c.saida)}</td>
+            <td className="px-4 py-2.5 text-right font-bold tabular-nums">{fmtNum(c.total)}</td>
           </tr>
         ))}
       </tbody>
@@ -2814,12 +2983,12 @@ function TabelaCanaisBot({ porCanal, carregando }) {
 }
 
 function BlocoStatusExec({ status, modo, carregando }) {
-  if (carregando && !status) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !status) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!status) return null;
 
   const total = Object.values(status).reduce((a, b) => a + b, 0);
   if (total === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Nenhuma execução no período.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Nenhuma execução no período.</div>;
   }
 
   const corStatus = {
@@ -2831,9 +3000,9 @@ function BlocoStatusExec({ status, modo, carregando }) {
   };
 
   return (
-    <div className="px-5 py-4 space-y-4">
+    <div className="px-4 py-4 space-y-4">
       <div>
-        <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">Como terminaram</div>
+        <div className="text-xs font-semibold text-[var(--text-muted)] mb-2">Como terminaram</div>
         <div className="space-y-1.5">
           {Object.entries(status).filter(([, v]) => v > 0).map(([k, v]) => {
             const pct = (v / total) * 100;
@@ -2856,7 +3025,7 @@ function BlocoStatusExec({ status, modo, carregando }) {
       </div>
 
       <div>
-        <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2 flex items-center gap-1.5">
+        <div className="text-xs font-semibold text-[var(--text-muted)] mb-2 flex items-center gap-1.5">
           <span>Como o bot foi acionado</span>
           <InfoTooltip content="Se o atendimento foi disparado pelo cliente, por outro fluxo, ou automaticamente.">
             <HelpCircle size={11} strokeWidth={2} className="text-[var(--text-muted)] opacity-70 hover:opacity-100 cursor-help" />
@@ -2876,38 +3045,38 @@ function BlocoStatusExec({ status, modo, carregando }) {
 }
 
 function TabelaToolsUsadas({ itens, carregando, fmtMs }) {
-  if (carregando && !itens) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !itens) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!itens || itens.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Nenhuma ferramenta usada no período.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Nenhuma ferramenta usada no período.</div>;
   }
   return (
-    <table className="w-full">
+    <table className="w-full text-[13px]">
       <thead>
-        <tr className="border-b border-[var(--border-main)]">
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Ferramenta</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Chamadas</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Sucesso</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Erros</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Taxa</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Tempo médio</th>
+        <tr>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Ferramenta</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Chamadas</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Sucesso</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Erros</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Taxa</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Tempo médio</th>
         </tr>
       </thead>
       <tbody>
         {itens.map((t) => (
           <tr key={t.tool} className="border-b border-[var(--border-subtle)] last:border-b-0">
-            <td className="py-3 px-5">
+            <td className="px-4 py-2.5">
               <div className="flex items-center gap-2">
                 <Wrench size={14} className="text-[var(--text-muted)]" />
                 <span className="text-sm font-semibold text-[var(--text-main)] font-mono">{t.tool}</span>
               </div>
             </td>
-            <td className="py-3 px-5 text-right text-sm font-bold tabular-nums">{fmtNum(t.total)}</td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--success)]">{fmtNum(t.sucesso)}</td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--danger)]">{fmtNum(t.erro)}</td>
-            <td className={`py-3 px-5 text-right text-sm tabular-nums font-bold ${
-              t.taxaSucesso < 80 ? 'text-[var(--warning)]' : 'text-[var(--success)]'
+            <td className="px-4 py-2.5 text-right font-bold tabular-nums">{fmtNum(t.total)}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums text-[var(--success-text)]">{fmtNum(t.sucesso)}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums text-[var(--danger-text)]">{fmtNum(t.erro)}</td>
+            <td className={`px-4 py-2.5 text-right tabular-nums font-bold ${
+              t.taxaSucesso < 80 ? 'text-[var(--warning-text)]' : 'text-[var(--success-text)]'
             }`}>{fmtPct(t.taxaSucesso)}</td>
-            <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--text-muted)]">{fmtMs(t.duracaoMediaMs)}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums text-[var(--text-muted)]">{fmtMs(t.duracaoMediaMs)}</td>
           </tr>
         ))}
       </tbody>
@@ -2916,19 +3085,19 @@ function TabelaToolsUsadas({ itens, carregando, fmtMs }) {
 }
 
 function TabelaModelosIA({ itens, carregando }) {
-  if (carregando && !itens) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !itens) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!itens || itens.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Nenhuma chamada de IA no período.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Nenhuma chamada de IA no período.</div>;
   }
   const totalTokens = itens.reduce((a, m) => a + m.tokens, 0);
   return (
-    <table className="w-full">
+    <table className="w-full text-[13px]">
       <thead>
-        <tr className="border-b border-[var(--border-main)]">
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Modelo</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Chamadas</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Tokens</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">% do total</th>
+        <tr>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Modelo</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Chamadas</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Tokens</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">% do total</th>
         </tr>
       </thead>
       <tbody>
@@ -2936,13 +3105,13 @@ function TabelaModelosIA({ itens, carregando }) {
           const pct = totalTokens > 0 ? (m.tokens / totalTokens) * 100 : 0;
           return (
             <tr key={m.modelo} className="border-b border-[var(--border-subtle)] last:border-b-0">
-              <td className="py-3 px-5 text-sm font-semibold text-[var(--text-main)] font-mono">
+              <td className="px-4 py-2.5 font-semibold text-[var(--text-main)] font-mono">
                 <Sparkles size={12} className="inline mr-2 -mt-0.5 text-[var(--accent)]" />
                 {m.modelo}
               </td>
-              <td className="py-3 px-5 text-right text-sm tabular-nums">{fmtNum(m.chamadas)}</td>
-              <td className="py-3 px-5 text-right text-sm font-bold tabular-nums">{fmtNum(m.tokens)}</td>
-              <td className="py-3 px-5 text-right text-sm tabular-nums text-[var(--text-muted)]">{fmtPct(pct)}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums">{fmtNum(m.chamadas)}</td>
+              <td className="px-4 py-2.5 text-right font-bold tabular-nums">{fmtNum(m.tokens)}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums text-[var(--text-muted)]">{fmtPct(pct)}</td>
             </tr>
           );
         })}
@@ -2952,38 +3121,38 @@ function TabelaModelosIA({ itens, carregando }) {
 }
 
 function TabelaTopConversas({ itens, carregando }) {
-  if (carregando && !itens) return <div className="px-5 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
+  if (carregando && !itens) return <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">Calculando…</div>;
   if (!itens || itens.length === 0) {
-    return <div className="px-5 py-12 text-center text-sm text-[var(--text-muted)]">Nenhuma conversa no período.</div>;
+    return <div className="px-4 py-12 text-center text-sm text-[var(--text-muted)]">Nenhuma conversa no período.</div>;
   }
   return (
-    <table className="w-full">
+    <table className="w-full text-[13px]">
       <thead>
-        <tr className="border-b border-[var(--border-main)]">
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Canal</th>
-          <th className="text-left text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Identificador</th>
-          <th className="text-center text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Lead?</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Mensagens</th>
-          <th className="text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-3 px-5">Última</th>
+        <tr>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Canal</th>
+          <th className="text-left text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Identificador</th>
+          <th className="text-center text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Lead?</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Mensagens</th>
+          <th className="text-right text-xs font-semibold text-[var(--text-muted)] px-4 py-2.5 bg-[var(--bg-subtle)] border-b border-[var(--border-main)] whitespace-nowrap">Última</th>
         </tr>
       </thead>
       <tbody>
         {itens.map((c, idx) => (
           <tr key={c.id} className="border-b border-[var(--border-subtle)] last:border-b-0">
-            <td className="py-3 px-5">
-              <Badge variant="neutral" size="sm">{c.canal}</Badge>
+            <td className="px-4 py-2.5">
+              <Badge variant="neutral">{c.canal}</Badge>
             </td>
-            <td className="py-3 px-5 text-sm font-mono text-[var(--text-secondary)]">
+            <td className="px-4 py-2.5 font-mono text-[var(--text-secondary)]">
               <span className="text-[var(--text-muted)] mr-2">#{idx + 1}</span>
               {c.identificador}
             </td>
-            <td className="py-3 px-5 text-center">
+            <td className="px-4 py-2.5 text-center">
               {c.temLead
-                ? <CheckCircle2 size={14} className="inline text-[var(--success)]" />
+                ? <CheckCircle2 size={14} className="inline text-[var(--success-text)]" />
                 : <XCircle size={14} className="inline text-[var(--text-muted)]" />}
             </td>
-            <td className="py-3 px-5 text-right text-sm font-bold tabular-nums">{fmtNum(c.mensagens)}</td>
-            <td className="py-3 px-5 text-right text-xs tabular-nums text-[var(--text-muted)]">
+            <td className="px-4 py-2.5 text-right font-bold tabular-nums">{fmtNum(c.mensagens)}</td>
+            <td className="px-4 py-2.5 text-right text-xs tabular-nums text-[var(--text-muted)]">
               {c.ultimaMsg ? new Date(c.ultimaMsg).toLocaleString('pt-BR') : '—'}
             </td>
           </tr>
@@ -2993,67 +3162,29 @@ function TabelaTopConversas({ itens, carregando }) {
   );
 }
 
-function FiltroPeriodo({
-  preset, onPresetChange,
-  customInicio, customFim, onCustomInicio, onCustomFim,
-  intervalo,
-}) {
-  return (
-    <div className="flex flex-wrap items-end gap-2">
-      <div className="min-w-[180px]">
-        <Select
-          size="sm"
-          label=""
-          value={preset}
-          onChange={(e) => onPresetChange(e.target.value)}
-          options={PRESETS}
-          placeholder=""
-        />
-      </div>
-      {preset === 'custom' && (
-        <>
-          <Input size="sm" type="date" value={customInicio} onChange={(e) => onCustomInicio(e.target.value)} />
-          <Input size="sm" type="date" value={customFim} onChange={(e) => onCustomFim(e.target.value)} />
-        </>
-      )}
-      <div className="text-[10px] text-[var(--text-muted)] pb-2.5 flex items-center gap-1">
-        <Calendar size={11} />
-        {intervalo.inicio.toLocaleDateString('pt-BR')} a {intervalo.fim.toLocaleDateString('pt-BR')}
-      </div>
-    </div>
-  );
-}
-
-// KpiCard agora vem do ui/ (compartilhado).
-
-// Helper pra renderizar o titulo de uma secao com tooltip explicativo opcional.
-// Padrao visual identico ao que ja era usado inline (text-xs uppercase muted).
-// O icone HelpCircle so aparece se `info` for passado.
+// Título de seção com explicação opcional (usado dentro do h2 do Painel,
+// por isso só spans).
 function TituloSecao({ titulo, info }) {
   return (
-    <div className="flex items-center gap-1.5">
-      <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">{titulo}</div>
+    <span className="inline-flex items-center gap-1.5">
+      <span>{titulo}</span>
       {info && (
         <InfoTooltip content={info}>
-          <HelpCircle size={13} strokeWidth={2} className="text-[var(--text-muted)] opacity-70 hover:opacity-100 cursor-help" />
+          <HelpCircle size={13} strokeWidth={2} aria-label={info} className="text-[var(--text-muted)] opacity-70 hover:opacity-100 cursor-help" />
         </InfoTooltip>
       )}
-    </div>
+    </span>
   );
 }
 
 function ErroBox({ mensagem }) {
   return (
-    <Card padding="md">
-      <div className="flex items-center gap-2 text-sm text-[var(--danger)]">
-        <AlertCircle size={16} />
-        <span>{mensagem}</span>
-      </div>
-    </Card>
+    <div role="alert" className="flex items-center gap-2 rounded-[10px] border border-[var(--danger-soft)] bg-[var(--danger-soft)] px-4 py-2.5 text-[13px] font-medium text-[var(--danger-text)]">
+      <AlertCircle size={16} aria-hidden="true" />
+      <span>{mensagem}</span>
+    </div>
   );
 }
-
-// (BlocoFiltros legado removido — substituído por BarraFiltros do design system)
 
 // ============================================================
 // ABA: Fechamento mensal — lista snapshots persistidos
@@ -3068,17 +3199,21 @@ function AbaMensais() {
 
   const podeGerar = user?.perfil === 'CLIENT' || user?.perfil === 'ADMINISTRADOR';
 
+  // Busca sem setState sincrono (o estado ja nasce carregando e sem erro);
+  // o "carregar" das acoes liga o carregando e limpa o erro antes.
+  const buscarMensais = useCallback(() => relatorioMensalService.listar()
+    .then(setItens)
+    .catch(() => setErro('Não foi possível carregar os relatórios mensais.'))
+    .finally(() => setCarregando(false)), []);
+
   useEffect(() => {
-    carregar();
-  }, []);
+    buscarMensais();
+  }, [buscarMensais]);
 
   const carregar = () => {
     setCarregando(true);
     setErro(null);
-    relatorioMensalService.listar()
-      .then(setItens)
-      .catch(() => setErro('Não foi possível carregar os relatórios mensais.'))
-      .finally(() => setCarregando(false));
+    buscarMensais();
   };
 
   const onGerarAnterior = async () => {
@@ -3093,63 +3228,102 @@ function AbaMensais() {
     }
   };
 
+  useAcaoTopo(
+    podeGerar ? (
+      <Button size="sm" icon={RefreshCw} onClick={onGerarAnterior} loading={gerando} disabled={gerando}>
+        {gerando ? 'Gerando…' : 'Gerar mês anterior agora'}
+      </Button>
+    ) : null,
+    [podeGerar, gerando]
+  );
+
+  const ultimo = itens.reduce((m, r) => (!m || r.ano * 12 + r.mes > m.ano * 12 + m.mes ? r : m), null);
+  const automaticos = itens.filter((r) => r.geradoPor === 'CRON').length;
+
   return (
-    <div className="space-y-4">
+    <>
       {erro && <ErroBox mensagem={erro} />}
 
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-sm text-[var(--text-muted)]">
-          {itens.length === 0 && !carregando
-            ? 'Nenhum mês fechado ainda.'
-            : `${itens.length} mês(es) disponível(is)`}
-        </div>
-        {podeGerar && (
-          <button
-            type="button"
-            onClick={onGerarAnterior}
-            disabled={gerando}
-            className="text-xs font-semibold px-3 py-2 rounded-lg bg-[var(--primary)] text-[var(--text-on-primary)] hover:opacity-90 disabled:opacity-50 transition-opacity"
-          >
-            {gerando ? 'Gerando…' : 'Gerar mês anterior agora'}
-          </button>
-        )}
-      </div>
+      <FaixaNumeros min={200}>
+        <Numero destaque rotulo="Meses fechados" valor={fmtNum(itens.length)}
+          detalhe={itens.length === 0 && !carregando ? 'Nenhum mês fechado ainda' : 'disponíveis pra consulta'} carregando={carregando} />
+        <Numero rotulo="Último fechamento" valor={ultimo ? `${NOMES_MES_BR[ultimo.mes]}/${ultimo.ano}` : '—'}
+          detalhe={ultimo ? `Gerado em ${new Date(ultimo.geradoEm).toLocaleDateString('pt-BR')}` : null} carregando={carregando} />
+        <Numero rotulo="Gerados automaticamente" valor={fmtNum(automaticos)} detalhe="todo dia 7" carregando={carregando} />
+        <Numero rotulo="Gerados manualmente" valor={fmtNum(itens.length - automaticos)} carregando={carregando} />
+      </FaixaNumeros>
 
-      {carregando ? (
-        <Card padding="lg">
-          <div className="text-sm text-[var(--text-muted)] text-center py-6">Carregando…</div>
-        </Card>
-      ) : itens.length === 0 ? (
-        <Card padding="lg">
-          <div className="text-sm text-[var(--text-secondary)] text-center py-10">
-            <div className="font-semibold text-[var(--text-main)]">Sem relatórios mensais por aqui</div>
-            <div className="mt-1 text-[var(--text-muted)]">
-              O sistema gera automaticamente no dia 7 de cada mês. Você também pode gerar manualmente quando quiser.
+      <ColunasPagina
+        lateral={(
+          <Painel titulo="Como funciona" semPadding>
+            <LinhaInfo rotulo="Fechamento automático" valor="todo dia 7" />
+            <LinhaInfo rotulo="O que entra" valor="financeiro, caixa, vendas e clientes" />
+            <LinhaInfo rotulo="Depois de gerado" valor="não muda (snapshot)" />
+            <p className="m-0 px-4 py-3 text-xs text-[var(--text-muted)]">
+              {podeGerar
+                ? 'Precisa antes do dia 7? Use "Gerar mês anterior agora" no topo da tela.'
+                : 'Só o dono da conta ou um administrador pode gerar um fechamento manualmente.'}
+            </p>
+          </Painel>
+        )}
+      >
+        <Painel
+          titulo="Meses fechados"
+          subtitulo={itens.length === 0 && !carregando ? 'Nenhum mês fechado ainda.' : `${itens.length} mês(es) disponível(is)`}
+          semPadding
+          corpoClassName="overflow-x-auto"
+        >
+          {carregando ? (
+            <div className="px-4 py-8 text-center text-[13px] text-[var(--text-muted)]">Carregando…</div>
+          ) : itens.length === 0 ? (
+            <div className="px-4 py-10 text-center text-[13px] text-[var(--text-secondary)]">
+              <div className="font-semibold text-[var(--text-main)]">Sem relatórios mensais por aqui</div>
+              <div className="mt-1 text-[var(--text-muted)]">
+                O sistema gera automaticamente no dia 7 de cada mês. Você também pode gerar manualmente quando quiser.
+              </div>
             </div>
-          </div>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {itens.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              onClick={() => navigate(`/app/relatorios/mensais/${r.ano}-${String(r.mes).padStart(2, '0')}`)}
-              className="text-left rounded-2xl border border-[var(--border-main)] bg-[var(--bg-card)] p-5 hover:border-[var(--text-muted)] hover:bg-[var(--bg-subtle)] transition-colors"
-            >
-              <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Fechamento</div>
-              <div className="text-xl font-semibold tracking-tight text-[var(--text-main)] mt-1">
-                {NOMES_MES_BR[r.mes]} de {r.ano}
-              </div>
-              <div className="text-[11px] text-[var(--text-muted)] mt-3">
-                Gerado em {new Date(r.geradoEm).toLocaleDateString('pt-BR')}
-                {r.geradoPor === 'CRON' ? ' (automático)' : ' (manual)'}
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+          ) : (
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr>
+                  <th className={`${TH} text-left`}>Mês</th>
+                  <th className={`${TH} text-left`}>Gerado em</th>
+                  <th className={`${TH} text-left`}>Como</th>
+                  <th className={`${TH} text-right`}><span className="sr-only">Abrir</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {itens.map((r) => {
+                  const destino = `/app/relatorios/mensais/${r.ano}-${String(r.mes).padStart(2, '0')}`;
+                  return (
+                    <tr
+                      key={r.id}
+                      onClick={() => navigate(destino)}
+                      className="cursor-pointer hover:bg-[var(--bg-subtle)]"
+                    >
+                      <td className={`${TD} font-semibold text-[var(--text-main)]`}>{NOMES_MES_BR[r.mes]} de {r.ano}</td>
+                      <td className={`${TD} text-[var(--text-secondary)] tabular-nums`}>{new Date(r.geradoEm).toLocaleDateString('pt-BR')}</td>
+                      <td className={TD}>
+                        <Badge variant={r.geradoPor === 'CRON' ? 'info' : 'neutral'}>{r.geradoPor === 'CRON' ? 'Automático' : 'Manual'}</Badge>
+                      </td>
+                      <td className={`${TD} text-right`}>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); navigate(destino); }}
+                          className="inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--primary)] hover:underline"
+                        >
+                          Ver fechamento <ChevronRight size={14} aria-hidden="true" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </Painel>
+      </ColunasPagina>
+    </>
   );
 }
 

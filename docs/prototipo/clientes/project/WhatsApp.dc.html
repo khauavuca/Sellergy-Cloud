@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Sellergy — WhatsApp</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#136F4D}a:hover{color:#0C4F37}
+.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.nav{display:flex;align-items:center;gap:12px;padding:0 12px;min-height:42px;border-radius:9px;color:#3D434B;text-decoration:none;font-weight:500;font-size:14px}
+.nav:hover{background:#F1F2EF;color:#15171A}
+.nav.on{background:#E3F1EA;color:#0E5C34;font-weight:600}
+.bp,.bs,.bg{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:10px;font-weight:600;font-size:14px;text-decoration:none;cursor:pointer;font-family:inherit;box-sizing:border-box;white-space:nowrap}
+.bp{background:#136F4D;color:#fff;border:1px solid #136F4D}.bp:hover{background:#0F5C40;color:#fff}
+.bs{background:#fff;color:#15171A;border:1px solid #D5D8DC}.bs:hover{background:#F1F2EF;color:#15171A}
+.bg{background:transparent;color:#3D434B;border:1px solid transparent}.bg:hover{background:#F1F2EF}
+.tabs button{border:0;background:none;font:inherit;font-weight:600;font-size:14px;color:#4A5059;padding:12px 2px;border-bottom:2px solid transparent;cursor:pointer;min-height:44px}
+.tabs button.on{color:#15171A;border-color:#15171A}
+.conv{width:100%;display:flex;gap:10px;align-items:center;padding:12px 14px;border:0;border-top:1px solid #EEF0EC;background:#fff;font:inherit;text-align:left;cursor:pointer;color:#15171A}
+.conv.on{background:#EEF6F1}
+.ent{align-self:flex-start;max-width:72%;background:#fff;border-radius:4px 14px 14px 14px;padding:9px 12px;font-size:14px;line-height:1.45;box-shadow:0 1px 1px rgba(0,0,0,.05)}
+.sai{align-self:flex-end;max-width:72%;background:#D9F1E4;border-radius:14px 4px 14px 14px;padding:9px 12px;font-size:14px;line-height:1.45}
+.auto{align-self:flex-end;max-width:72%;background:#fff;border:1px dashed #A9C9B8;border-radius:14px 4px 14px 14px;padding:9px 12px;font-size:14px;line-height:1.45}
+.hr{display:block;text-align:right;font-size:11px;color:#5B616B;margin-top:2px}
+.rr{border:1px solid #D5D8DC;background:#fff;font:inherit;font-size:13px;font-weight:600;color:#3D434B;padding:0 12px;min-height:34px;border-radius:999px;cursor:pointer}
+.st{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;display:inline-flex}
+.st.ok{background:#E3F4EA;color:#0E5C34}.st.rasc{background:#E8EAED;color:#3D434B}.st.ag{background:#FDF0D9;color:#7A4A00}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #15171A; background: #F6F7F5; min-height: 1040px; display: flex; flex-wrap: wrap">
+
+<aside style="flex: 1 1 232px; background: #fff; border-right: 1px solid #E3E5E8; padding: 18px 14px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px">
+<a href="Main.dc.html" style="display: flex; align-items: center; gap: 10px; text-decoration: none; color: #15171A; padding: 4px 8px"><span style="width: 30px; height: 30px; border-radius: 9px; background: #136F4D; color: #fff; display: grid; place-items: center; font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 17px">S</span><span style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 19px">Sellergy</span></a>
+<nav aria-label="Menu principal" style="display: flex; flex-direction: column; gap: 2px">
+<a href="Inicio.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"></path></svg>Início</a>
+<a href="Agenda.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2"></rect><path d="M3 9.5h18M8 2.5v4M16 2.5v4"></path></svg>Agenda</a>
+<a href="PDV.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14l-1 13H6z"></path><path d="M9 8V6a3 3 0 0 1 6 0v2"></path></svg>Vendas</a>
+<a href="Pedidos.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8v3H8z"></path><path d="M16 5.5h2.5V21h-13V5.5H8"></path><path d="M9 12h6M9 16h4"></path></svg>Pedidos</a>
+<a href="Clientes.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"></circle><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"></path><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.8c1.9.7 3.1 2.4 3.5 5.2"></path></svg>Clientes</a>
+<a href="Estoque.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"></path><path d="M3 7.5 12 12l9-4.5M12 12v9"></path></svg>Estoque</a>
+<a href="Caixa.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2"></rect><circle cx="12" cy="12" r="2.5"></circle></svg>Caixa</a>
+<a href="WhatsApp.dc.html" class="nav on" aria-current="page"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"></path></svg>WhatsApp</a>
+<a href="NotasFiscais.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"></path><path d="M9 8h6M9 12h6"></path></svg>Notas fiscais</a>
+<a href="Financeiro.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h15a3 3 0 0 1 3 3v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="M3 7l12-3v3M16 13.5h2"></path></svg>Financeiro</a>
+<a href="Relatorios.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"></path></svg>Relatórios</a>
+</nav>
+<div style="margin-top: auto; display: flex; flex-direction: column; gap: 10px">
+<a href="Configuracoes.dc.html" class="nav"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>Configurações</a>
+<div style="display: flex; gap: 10px; align-items: center; padding: 12px; border-radius: 12px; background: #F6F7F5"><span style="width: 34px; height: 34px; border-radius: 50%; background: #F2C46B; display: grid; place-items: center; font-weight: 700; font-size: 13px; color: #4A3000">ML</span><span style="font-size: 13px; line-height: 1.3; min-width: 0"><span style="display: block; font-weight: 600">Clínica Lumi Estética</span><span style="color: #5B616B">Marina · dona</span></span></div>
+</div>
+</aside>
+
+<main style="flex: 999 1 560px; min-width: 0; padding: 24px 28px 32px; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap">
+<h1 style="margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 28px; letter-spacing: -0.02em">WhatsApp</h1>
+<span style="display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 999px; background: #E3F4EA; color: #0E5C34"><span style="width: 8px; height: 8px; border-radius: 50%; background: #137A3F"></span>Conectado por QR Code · (11) 98765-4321</span>
+<span style="display: inline-flex; font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 999px; background: #E8EAED; color: #3D434B">WhatsApp oficial: não configurado</span>
+</div>
+<div class="tabs" role="tablist" style="display: flex; gap: 24px; border-bottom: 1px solid #E3E5E8">
+<button type="button" role="tab" class="{{tabConv}}" onClick="{{verConv}}">Conversas</button>
+<button type="button" role="tab" class="{{tabCamp}}" onClick="{{verCamp}}">Campanhas e recompra</button>
+</div>
+
+<sc-if value="{{emConv}}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; flex-wrap: wrap; gap: 0; background: #fff; border: 1px solid #E3E5E8; border-radius: 16px; overflow: hidden; min-height: 760px">
+<section aria-label="Conversas" style="flex: 1 1 280px; border-right: 1px solid #E3E5E8; min-width: 0">
+<div style="padding: 12px 14px"><label for="bq" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Buscar conversa</label><input id="bq" type="search" placeholder="Buscar conversa" style="width: 100%; box-sizing: border-box; min-height: 40px; border: 1px solid #DADDD8; border-radius: 10px; padding: 0 12px; font: inherit; font-size: 14px"></div>
+<sc-for list="{{convs}}" as="c" hint-placeholder-count="6">
+<button type="button" class="{{c.cls}}" onClick="{{c.pick}}">
+<span style="width: 40px; height: 40px; border-radius: 50%; background: #EEF0EC; display: grid; place-items: center; font-weight: 700; font-size: 13px; flex-shrink: 0">{{c.ini}}</span>
+<span style="flex: 1; min-width: 0; line-height: 1.35"><span style="display: flex; justify-content: space-between; gap: 8px"><span style="font-weight: 600">{{c.nome}}</span><span style="font-size: 12px; color: #5B616B">{{c.h}}</span></span><span style="display: block; font-size: 13px; color: #5B616B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{c.prev}}</span></span>
+<sc-if value="{{c.temNao}}" hint-placeholder-val="{{ false }}"><span style="min-width: 22px; height: 22px; border-radius: 11px; background: #136F4D; color: #fff; font-size: 12px; font-weight: 700; display: grid; place-items: center">{{c.nao}}</span></sc-if>
+</button>
+</sc-for>
+</section>
+
+<section aria-label="Conversa aberta" style="flex: 999 1 420px; min-width: 0; display: flex; flex-direction: column; background: #F1F2EF">
+<div style="padding: 12px 18px; background: #fff; border-bottom: 1px solid #E3E5E8; display: flex; align-items: center; gap: 10px">
+<span style="font-weight: 600; flex: 1">{{sel.nome}} <span style="font-weight: 400; color: #5B616B; font-size: 13px">· {{sel.tel}}</span></span>
+<a href="Clientes.dc.html" class="bg" style="min-height: 36px; font-size: 13px">Ver ficha</a>
+<a href="Agenda.dc.html" class="bs" style="min-height: 36px; font-size: 13px">Agendar</a>
+</div>
+<div style="flex: 1; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px">
+<sc-for list="{{msgs}}" as="m" hint-placeholder-count="4">
+<div class="{{m.cls}}"><sc-if value="{{m.auto}}" hint-placeholder-val="{{ false }}"><span style="display: block; font-size: 11px; font-weight: 700; color: #136F4D; margin-bottom: 2px">Automático</span></sc-if>{{m.t}}<span class="hr">{{m.h}}</span></div>
+</sc-for>
+</div>
+<div style="padding: 10px 14px 14px; background: #fff; border-top: 1px solid #E3E5E8">
+<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px" aria-label="Respostas prontas">
+<sc-for list="{{rapidas}}" as="r" hint-placeholder-count="3"><button type="button" class="rr" onClick="{{r.usar}}">{{r.rot}}</button></sc-for>
+</div>
+<div style="display: flex; gap: 8px">
+<label for="cm" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Mensagem</label>
+<input id="cm" type="text" placeholder="Escreva uma mensagem" value="{{rascunho}}" onChange="{{digitar}}" style="flex: 1; min-height: 46px; border: 1px solid #DADDD8; border-radius: 12px; padding: 0 14px; font: inherit; font-size: 15px">
+<button type="button" class="bp" onClick="{{enviar}}" aria-label="Enviar">Enviar</button>
+</div>
+</div>
+</section>
+</div>
+</sc-if>
+
+<sc-if value="{{emCamp}}" hint-placeholder-val="{{ false }}">
+<div style="display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border-radius: 12px; background: #FDF0D9; color: #5A3700; font-size: 14px; line-height: 1.5; flex-wrap: wrap">
+<svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="margin-top: 2px"><path d="M12 3 2 20h20zM12 10v4M12 17h.01"></path></svg>
+<p style="margin: 0; flex: 1; min-width: 260px"><strong>Campanhas saem só pelo WhatsApp oficial.</strong> Mandar mensagem em massa pelo número do QR Code faz o WhatsApp bloquear o seu número. Lembretes e conversas continuam pelo QR Code.</p>
+<a href="Configuracoes.dc.html" class="bs" style="min-height: 38px">Configurar o oficial</a>
+</div>
+<div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+<section style="flex: 999 1 460px; min-width: 0; background: #fff; border: 1px solid #E3E5E8; border-radius: 16px; overflow: hidden" aria-labelledby="ca">
+<div style="padding: 16px 18px; display: flex; justify-content: space-between; align-items: center"><h2 id="ca" style="margin: 0; font-size: 16px">Campanhas</h2><a href="NovaCampanha.dc.html" class="bp"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Nova campanha</a></div>
+<div style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-top: 1px solid #EEF0EC; flex-wrap: wrap"><span style="flex: 1; min-width: 200px"><span style="display: block; font-weight: 600">Recompra de protetor solar</span><span style="font-size: 13px; color: #5B616B">Automática · quem comprou há 60 dias · 18 enviadas no mês, 5 voltaram</span></span><span class="st ok">Ligada</span></div>
+<div style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-top: 1px solid #EEF0EC; flex-wrap: wrap"><span style="flex: 1; min-width: 200px"><span style="display: block; font-weight: 600">Feliz aniversário com 10% off</span><span style="font-size: 13px; color: #5B616B">Automática · no dia do aniversário · 4 este mês</span></span><span class="st ok">Ligada</span></div>
+<div style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-top: 1px solid #EEF0EC; flex-wrap: wrap"><span style="flex: 1; min-width: 200px"><span style="display: block; font-weight: 600">Sentimos sua falta</span><span style="font-size: 13px; color: #5B616B">Uma vez · clientes sumidos há 60+ dias · 34 pessoas</span></span><span class="st rasc">Rascunho</span></div>
+<div style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-top: 1px solid #EEF0EC; flex-wrap: wrap"><span style="flex: 1; min-width: 200px"><span style="display: block; font-weight: 600">Black Friday skincare</span><span style="font-size: 13px; color: #5B616B">Agendada para 27/11, 10:00 · 212 pessoas</span></span><span class="st ag">Agendada</span></div>
+</section>
+<aside style="flex: 1 1 340px; background: #fff; border: 1px solid #E3E5E8; border-radius: 16px; padding: 20px; box-sizing: border-box" aria-labelledby="pv">
+<h2 id="pv" style="margin: 0; font-size: 16px">Prévia: Sentimos sua falta</h2>
+<p style="margin: 6px 0 0; font-size: 13px; color: #5B616B">Para 34 clientes · modelo aprovado pela Meta</p>
+<div style="margin-top: 14px; background: #F1F2EF; border-radius: 14px; padding: 14px">
+<div class="ent" style="max-width: 100%">Oi, Beatriz! Faz um tempinho que você não vem na Clínica Lumi. Que tal uma limpeza de pele esse mês? Toque abaixo e escolha o melhor horário.<span class="hr">prévia</span></div>
+<div style="display: flex; margin-top: 6px"><span style="flex: 1; text-align: center; background: #fff; border-radius: 10px; padding: 10px; font-weight: 600; color: #0B6A9E; font-size: 14px">Ver horários</span></div>
+</div>
+<p style="margin: 14px 0 0; font-size: 13px; color: #4A5059; line-height: 1.5">Custo estimado na Meta: cerca de R$ 0,35 por mensagem de marketing. Quem responder "parar" sai da lista sozinho.</p>
+<button type="button" class="bp" style="width: 100%; margin-top: 16px" disabled>Enviar (precisa do WhatsApp oficial)</button>
+</aside>
+</div>
+</sc-if>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1040}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { tab: 'conv', sel: 'renata', rascunho: '', extras: {} }; }
+  renderVals() {
+    const s = this.state;
+    const C = [
+      { id: 'renata', nome: 'Renata Dias', ini: 'RD', tel: '(11) 98455-6610', h: '16:12', nao: 1,
+        msgs: [{ cls: 'auto', auto: true, t: 'Olá, Renata! Passando para lembrar do seu horário na Clínica Lumi Estética: amanhã, terça (24/11), às 16:00. Você confirma? [Confirmar] [Remarcar]', h: 'seg 16:00' }, { cls: 'ent', t: 'Remarcar', h: 'seg 16:12' }, { cls: 'auto', auto: true, t: 'Tudo bem, Renata. Liberamos o horário. Escolha um novo por aqui: sellergycloud.com/agendar/clinica-lumi-estetica', h: 'seg 16:12' }, { cls: 'ent', t: 'Oi! Tem algum horário quinta à tarde com o Bruno? Pelo link não achei', h: 'seg 16:20' }] },
+      { id: 'paula', nome: 'Paula Rocha', ini: 'PR', tel: '(11) 98120-3377', h: '08:30', nao: 0,
+        msgs: [{ cls: 'auto', auto: true, t: 'Olá, Paula! Seu horário é hoje às 10:30 (Drenagem linfática com Bruno). Você confirma? [Confirmar] [Remarcar]', h: '08:30' }] },
+      { id: 'juliana', nome: 'Juliana Costa', ini: 'JC', tel: '(11) 98877-5544', h: 'seg', nao: 0,
+        msgs: [{ cls: 'auto', auto: true, t: 'Olá, Juliana! Lembrete do seu horário amanhã às 14:30. Você confirma?', h: 'seg 14:30' }, { cls: 'ent', t: 'Confirmar', h: 'seg 14:41' }, { cls: 'auto', auto: true, t: 'Presença confirmada! Te esperamos amanhã às 14:30.', h: 'seg 14:41' }] },
+      { id: 'camila', nome: 'Camila Freitas', ini: 'CF', tel: '(11) 99234-8870', h: 'seg', nao: 2,
+        msgs: [{ cls: 'ent', t: 'Oi, o preenchimento dói muito?', h: 'seg 19:02' }, { cls: 'ent', t: 'E precisa de retorno?', h: 'seg 19:03' }] },
+      { id: 'mariana', nome: 'Mariana Alves', ini: 'MA', tel: '(11) 99812-4410', h: 'dom', nao: 0,
+        msgs: [{ cls: 'ent', t: 'Vocês têm o protetor com cor?', h: 'dom 11:10' }, { cls: 'sai', t: 'Temos sim, Mariana! Separo um pra você amanhã?', h: 'dom 11:30' }, { cls: 'ent', t: 'Pode separar, obrigada', h: 'dom 11:32' }] },
+    ];
+    const a = C.find((c) => c.id === s.sel) || C[0];
+    const extras = s.extras[a.id] || [];
+    const msgs = a.msgs.concat(extras).map((m) => ({ ...m, auto: !!m.auto }));
+    const primeiro = a.nome.split(' ')[0];
+    const rapidas = [
+      { rot: 'Mandar link de agendamento', txt: 'Claro, ' + primeiro + '! Escolha o melhor horário aqui: sellergycloud.com/agendar/clinica-lumi-estetica' },
+      { rot: 'Endereço', txt: 'Estamos na Rua Harmonia, 412, Vila Madalena. Tem estacionamento conveniado na esquina.' },
+      { rot: 'Formas de pagamento', txt: 'Aceitamos Pix, cartão de crédito em até 3x, débito e dinheiro.' },
+    ];
+    return {
+      tabConv: s.tab === 'conv' ? 'on' : '', tabCamp: s.tab === 'camp' ? 'on' : '',
+      verConv: () => this.setState({ tab: 'conv' }), verCamp: () => this.setState({ tab: 'camp' }),
+      emConv: s.tab === 'conv', emCamp: s.tab === 'camp',
+      convs: C.map((c) => {
+        const ult = (s.extras[c.id] || []).slice(-1)[0] || c.msgs[c.msgs.length - 1];
+        return { ...c, prev: ult.t, temNao: c.nao > 0 && c.id !== s.sel, cls: c.id === s.sel ? 'conv on' : 'conv', pick: () => this.setState({ sel: c.id, rascunho: '' }) };
+      }),
+      sel: a, msgs,
+      rapidas: rapidas.map((r) => ({ ...r, usar: () => this.setState({ rascunho: r.txt }) })),
+      rascunho: s.rascunho,
+      digitar: (e) => this.setState({ rascunho: e.target.value }),
+      enviar: () => {
+        if (!s.rascunho.trim()) return;
+        const lista = (s.extras[a.id] || []).concat([{ cls: 'sai', t: s.rascunho, h: 'agora' }]);
+        this.setState({ extras: { ...s.extras, [a.id]: lista }, rascunho: '' });
+      },
+    };
+  }
+}
+</script>
+</body>
+</html>

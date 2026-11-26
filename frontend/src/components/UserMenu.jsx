@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { User, Settings, LogOut, Sun, Moon, ChevronDown } from 'lucide-react';
+import { User, Settings, LogOut, Sun, Moon, ChevronDown, Users, BadgeCheck, Upload } from 'lucide-react';
 import { useAuthStore } from '../store/auth.store';
 import { useUiStore } from '../store/ui.store';
 import { Avatar, Dropdown, DropdownItem, DropdownDivider, DropdownLabel } from './ui';
@@ -13,13 +13,18 @@ export default function UserMenu() {
   const { user, logout } = useAuthStore();
   const { theme, toggleTheme } = useUiStore();
 
-  const handleLogout = () => {
-    logout();
-    navigate(user?.perfil === 'ADMIN' ? '/admin/login' : '/app/login');
+  // Recarrega direto na tela de login certa. Com navigate() a sessao some
+  // antes da troca de rota e a protecao das telas redirecionava por conta propria.
+  const handleLogout = async () => {
+    const destino = user?.perfil === 'ADMIN' ? '/admin/login' : '/app/login';
+    await logout();
+    window.location.assign(destino);
   };
 
   const ehAdmin = user?.perfil === 'ADMIN';
-  const rotaConfig = ehAdmin ? '/admin/configuracoes' : '/app/configuracoes';
+  // Dono e administrador do negocio veem os atalhos da conta.
+  const donoOuAdmin = ['CLIENT', 'ADMINISTRADOR'].includes(user?.perfil);
+  const rotaConfig = '/app/configuracoes';
   const rotaPerfil = ehAdmin ? '/admin/configuracoes/perfil' : '/app/configuracoes/perfil';
 
   const tagPerfil = {
@@ -51,9 +56,24 @@ export default function UserMenu() {
       <DropdownItem icon={User} onClick={() => navigate(rotaPerfil)}>
         Meu perfil
       </DropdownItem>
-      <DropdownItem icon={Settings} onClick={() => navigate(rotaConfig)}>
-        Configuracoes
-      </DropdownItem>
+      {!ehAdmin && (
+        <DropdownItem icon={Settings} onClick={() => navigate(rotaConfig)}>
+          Configurações
+        </DropdownItem>
+      )}
+      {donoOuAdmin && (
+        <>
+          <DropdownItem icon={Users} onClick={() => navigate('/app/usuarios')}>
+            Equipe
+          </DropdownItem>
+          <DropdownItem icon={BadgeCheck} onClick={() => navigate('/app/plano')}>
+            Meu plano
+          </DropdownItem>
+          <DropdownItem icon={Upload} onClick={() => navigate('/app/importar')}>
+            Importar planilha
+          </DropdownItem>
+        </>
+      )}
       <DropdownDivider />
       <DropdownItem
         icon={theme === 'dark' ? Sun : Moon}

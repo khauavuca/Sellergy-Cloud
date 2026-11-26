@@ -1,59 +1,111 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { useEffect } from 'react';
+import { useEffect, lazy, Suspense } from 'react';
+import { NO_PAINEL, ADMIN_NESTE_SITE } from './utils/painel';
 import { useAuthStore } from './store/auth.store';
 import { useUiStore } from './store/ui.store';
 import { ToastProvider } from './components/ui';
 
-import LoginPage from './pages/LoginPage';
-import ClientLoginPage from './pages/ClientLoginPage';
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const ClientLoginPage = lazy(() => import('./pages/ClientLoginPage'));
 import LandingPage from './pages/LandingPage';
-import TrocaSenhaPage from './pages/TrocaSenhaPage';
+import AvisoCookies from './components/legal/AvisoCookies';
+const TrocaSenhaPage = lazy(() => import('./pages/TrocaSenhaPage'));
+const CadastroPage = lazy(() => import('./pages/CadastroPage'));
+const AgendarPage = lazy(() => import('./pages/AgendarPage'));
+const ConfirmarPage = lazy(() => import('./pages/ConfirmarPage'));
 
-import AdminLayout from './components/AdminLayout';
-import ClientLayout from './components/ClientLayout';
+const AdminLayout = lazy(() => import('./components/AdminLayout'));
+const ClientLayout = lazy(() => import('./components/ClientLayout'));
 
-import DashboardPage from './pages/DashboardPage';
-import ClientDashboardPage from './pages/ClientDashboardPage';
-import DesignShowcasePage from './pages/DesignShowcasePage';
-import PlaceholderPage from './pages/PlaceholderPage';
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const ClientDashboardPage = lazy(() => import('./pages/ClientDashboardPage'));
 
 // Paginas reais do cliente (Pacote 3) - jaa rodando.
 // Cliente
-import CRMPage from './pages/CRMPage';
-import AgendaPage from './pages/AgendaPage';
-import VendasPage from './pages/VendasPage';
-import DevolucoesPage from './pages/DevolucoesPage';
-import CatalogoPage from './pages/CatalogoPage';
-import EstoquePage from './pages/EstoquePage';
-import FornecedoresPage from './pages/FornecedoresPage';
-import EntradaNotaPage from './pages/EntradaNotaPage';
-import FinanceiroPage from './pages/FinanceiroPage';
-import CrmUsersPage from './pages/CrmUsersPage';
-import ConfiguracoesPage from './pages/ConfiguracoesPage';
-import PerfilPage from './pages/PerfilPage';
-import PagamentosPage from './pages/PagamentosPage';
-import FiscalPage from './pages/FiscalPage';
+const CRMPage = lazy(() => import('./pages/CRMPage'));
+const AgendaPage = lazy(() => import('./pages/AgendaPage'));
+const VendasPage = lazy(() => import('./pages/VendasPage'));
+const DevolucoesPage = lazy(() => import('./pages/DevolucoesPage'));
+const CatalogoPage = lazy(() => import('./pages/CatalogoPage'));
+const EstoquePage = lazy(() => import('./pages/EstoquePage'));
+const FornecedoresPage = lazy(() => import('./pages/FornecedoresPage'));
+const EntradaNotaPage = lazy(() => import('./pages/EntradaNotaPage'));
+const FinanceiroPage = lazy(() => import('./pages/FinanceiroPage'));
+const CrmUsersPage = lazy(() => import('./pages/CrmUsersPage'));
+const ConfiguracoesPage = lazy(() => import('./pages/ConfiguracoesPage'));
+const PerfilPage = lazy(() => import('./pages/PerfilPage'));
+const PagamentosPage = lazy(() => import('./pages/PagamentosPage'));
+const FiscalPage = lazy(() => import('./pages/FiscalPage'));
+const PlanoPage = lazy(() => import('./pages/PlanoPage'));
 
 // Admin
-import ClientsPage from './pages/ClientsPage';
-import AdminPermissoesClientePage from './pages/AdminPermissoesClientePage';
-import BotsPage from './pages/BotsPage';
-import BotCanalPage from './pages/BotCanalPage';
-import AlertsPage from './pages/AlertsPage';
-import ReportsPage from './pages/ReportsPage';
-import RelatoriosPage from './pages/RelatoriosPage';
-import RelatorioMensalDetalhePage from './pages/RelatorioMensalDetalhePage';
-import UsersPage from './pages/UsersPage';
-import ConfiguracoesAdminPage from './pages/ConfiguracoesAdminPage';
-import CampanhasPage from './pages/CampanhasPage';
-import BotsClientePage from './pages/BotsClientePage';
+const ClientsPage = lazy(() => import('./pages/ClientsPage'));
+const AdminPermissoesClientePage = lazy(() => import('./pages/AdminPermissoesClientePage'));
+const RelatoriosPage = lazy(() => import('./pages/RelatoriosPage'));
+const RelatorioMensalDetalhePage = lazy(() => import('./pages/RelatorioMensalDetalhePage'));
+const CampanhasPage = lazy(() => import('./pages/CampanhasPage'));
+const NovaCampanhaPage = lazy(() => import('./pages/NovaCampanhaPage'));
+const BotsClientePage = lazy(() => import('./pages/BotsClientePage'));
+const WhatsAppPage = lazy(() => import('./pages/WhatsAppPage'));
+const AdminAssinaturasPage = lazy(() => import('./pages/AdminAssinaturasPage'));
+const TermosPage = lazy(() => import('./pages/TermosPage'));
+const PrivacidadePage = lazy(() => import('./pages/PrivacidadePage'));
+// Fase 2
+const EncaixePage = lazy(() => import('./pages/EncaixePage'));
+const PacotesPage = lazy(() => import('./pages/PacotesPage'));
+const ComissoesPage = lazy(() => import('./pages/ComissoesPage'));
+const EncaixeRespostaPage = lazy(() => import('./pages/EncaixeRespostaPage'));
+const PedidosPage = lazy(() => import('./pages/PedidosPage'));
+const RecebimentosPage = lazy(() => import('./pages/RecebimentosPage'));
+const LojaPage = lazy(() => import('./pages/LojaPage'));
+const PedidoPublicoPage = lazy(() => import('./pages/PedidoPublicoPage'));
+const ImportarPage = lazy(() => import('./pages/ImportarPage'));
+const AssistenteFiscalPage = lazy(() => import('./pages/AssistenteFiscalPage'));
+const HojePage = lazy(() => import('./pages/HojePage'));
+const ConvitePage = lazy(() => import('./pages/ConvitePage'));
+const AdminSuportePage = lazy(() => import('./pages/AdminSuportePage'));
+const AdminSaudePage = lazy(() => import('./pages/AdminSaudePage'));
+const AdminComunicadosPage = lazy(() => import('./pages/AdminComunicadosPage'));
+const AdminUsoPage = lazy(() => import('./pages/AdminUsoPage'));
+const AdminEquipePage = lazy(() => import('./pages/AdminEquipePage'));
+const AdminPlanosPage = lazy(() => import('./pages/AdminPlanosPage'));
+const AdminIntegracoesPage = lazy(() => import('./pages/AdminIntegracoesPage'));
 
 // Bots do tenant: tela real BotsClientePage (conexao + FAQ), Frente 4.
 // `RelatoriosClientePlaceholder` removido — agora usa RelatoriosPage real.
 
+// Cada tela vira um arquivo separado (carrega so quando abre): a landing
+// nao baixa o app inteiro.
+function CarregandoPagina() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[var(--bg-app)]" role="status" aria-live="polite">
+      <div className="w-7 h-7 border-2 border-[var(--border-strong)] border-t-[var(--text-main)] rounded-full animate-spin" />
+      <span className="sr-only">Carregando</span>
+    </div>
+  );
+}
+
+// Painel admin so no endereco proprio: regra em utils/painel.js.
+
+const SoNoPainel = ({ children }) => (ADMIN_NESTE_SITE ? children : <Navigate to="/app/login" replace />);
+
+// No endereco do painel (crm.) so existe o admin: o site do cliente (landing,
+// /app, cadastro, links publicos) manda pro login do admin. Unica excecao: a
+// sessao de suporte, que abre a conta do cliente em /app aqui mesmo.
+const ROTAS_DO_PAINEL = /^\/(admin(\/|$)|trocar-senha$)/;
+const SoAdminNoPainel = ({ children }) => {
+  const { pathname } = useLocation();
+  const suporte = useAuthStore((s) => s.user?.suporte);
+  if (!NO_PAINEL || ROTAS_DO_PAINEL.test(pathname)) return children;
+  if (suporte && /^\/app(\/|$)/.test(pathname) && pathname !== '/app/login') return children;
+  return <Navigate to="/admin/login" replace />;
+};
+
 const ProtectedRoute = ({ children }) => {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  if (!isAuthenticated) return <Navigate to="/admin/login" replace />;
+  // Sem sessao vai sempre pro login do cliente: o do admin nao aparece pra
+  // quem so tentou abrir uma tela interna.
+  if (!isAuthenticated) return <Navigate to="/app/login" replace />;
   return children;
 };
 
@@ -69,6 +121,19 @@ const TrocaSenhaGate = ({ children }) => {
 const AdminOnly = ({ children }) => {
   const user = useAuthStore((s) => s.user);
   if (user?.perfil !== 'ADMIN') return <Navigate to="/app/dashboard" replace />;
+  return children;
+};
+
+// ADMIN_2FA_OBRIGATORIO ligado e sessao sem o segundo fator: o admin so usa a
+// tela do perfil (onde ativa o codigo). A API barra o resto com 403 tambem.
+const ROTA_PERFIL_ADMIN = '/admin/configuracoes/perfil';
+const Admin2faGate = ({ children }) => {
+  const user = useAuthStore((s) => s.user);
+  const location = useLocation();
+  const exige = user?.perfil === 'ADMIN' && user?.admin2faObrigatorio === true && user?.mfa !== true;
+  if (exige && location.pathname !== ROTA_PERFIL_ADMIN) {
+    return <Navigate to={`${ROTA_PERFIL_ADMIN}?aviso=2fa`} replace />;
+  }
   return children;
 };
 
@@ -108,12 +173,24 @@ export default function App() {
   return (
     <ToastProvider>
       <BrowserRouter>
+        <Suspense fallback={<CarregandoPagina />}>
+        <SoAdminNoPainel>
         <Routes>
           {/* Publicas */}
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/admin/login" element={<LoginPage isAdmin />} />
+          <Route path="/" element={NO_PAINEL ? <Navigate to="/admin/login" replace /> : <LandingPage />} />
+          <Route path="/admin/login" element={<SoNoPainel><LoginPage isAdmin /></SoNoPainel>} />
           <Route path="/app/login" element={<ClientLoginPage />} />
-          <Route path="/login" element={<Navigate to="/admin/login" replace />} />
+          <Route path="/cadastro" element={<CadastroPage />} />
+          {/* Publicas, sem login: agendamento pelo link e confirmacao do lembrete */}
+          <Route path="/agendar/:slug" element={<AgendarPage />} />
+          <Route path="/confirmar/:token" element={<ConfirmarPage />} />
+          <Route path="/termos" element={<TermosPage />} />
+          <Route path="/privacidade" element={<PrivacidadePage />} />
+          <Route path="/encaixe/:token" element={<EncaixeRespostaPage />} />
+          <Route path="/loja/:slug" element={<LojaPage />} />
+          <Route path="/pedido/:token" element={<PedidoPublicoPage />} />
+          <Route path="/convite/:token" element={<ConvitePage />} />
+          <Route path="/login" element={<Navigate to="/app/login" replace />} />
 
           {/* Troca de senha (autenticado, mas fora dos layouts) */}
           <Route
@@ -128,13 +205,17 @@ export default function App() {
           {/* ECOSSISTEMA ADMIN */}
           <Route
             element={
+              <SoNoPainel>
               <ProtectedRoute>
                 <TrocaSenhaGate>
                   <AdminOnly>
-                    <AdminLayout />
+                    <Admin2faGate>
+                      <AdminLayout />
+                    </Admin2faGate>
                   </AdminOnly>
                 </TrocaSenhaGate>
               </ProtectedRoute>
+              </SoNoPainel>
             }
           >
             <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
@@ -142,14 +223,15 @@ export default function App() {
             <Route path="/admin/clientes" element={<ClientsPage />} />
             <Route path="/admin/clientes/permissoes" element={<AdminPermissoesClientePage />} />
             <Route path="/admin/clientes/:id" element={<ClientsPage />} />
-            <Route path="/admin/bots" element={<BotsPage />} />
-            <Route path="/admin/bots/:botId/canal" element={<BotCanalPage />} />
-            <Route path="/admin/alertas" element={<AlertsPage />} />
-            <Route path="/admin/relatorios" element={<ReportsPage />} />
-            <Route path="/admin/usuarios" element={<UsersPage />} />
-            <Route path="/admin/configuracoes" element={<ConfiguracoesAdminPage />} />
+            <Route path="/admin/assinaturas" element={<AdminAssinaturasPage />} />
+            <Route path="/admin/suporte" element={<AdminSuportePage />} />
+            <Route path="/admin/saude" element={<AdminSaudePage />} />
+            <Route path="/admin/comunicados" element={<AdminComunicadosPage />} />
+            <Route path="/admin/uso" element={<AdminUsoPage />} />
+            <Route path="/admin/equipe" element={<AdminEquipePage />} />
+            <Route path="/admin/planos" element={<AdminPlanosPage />} />
+            <Route path="/admin/integracoes" element={<AdminIntegracoesPage />} />
             <Route path="/admin/configuracoes/perfil" element={<PerfilPage />} />
-            <Route path="/admin/_design" element={<DesignShowcasePage />} />
           </Route>
 
           {/* ECOSSISTEMA CLIENTE */}
@@ -183,17 +265,31 @@ export default function App() {
             <Route path="/app/relatorios/mensais/:periodo" element={<RelatorioMensalDetalhePage />} />
             <Route path="/app/relatorios/:aba" element={<RelatoriosPage />} />
             <Route path="/app/bots" element={<BotsClientePage />} />
+            <Route path="/app/whatsapp" element={<WhatsAppPage />} />
             <Route path="/app/campanhas" element={<CampanhasPage />} />
+            <Route path="/app/campanhas/nova" element={<NovaCampanhaPage />} />
             <Route path="/app/pagamentos" element={<PagamentosPage />} />
             <Route path="/app/fiscal" element={<FiscalPage />} />
             <Route path="/app/usuarios" element={<CrmUsersPage />} />
             <Route path="/app/configuracoes" element={<ConfiguracoesPage />} />
+            <Route path="/app/plano" element={<PlanoPage />} />
+            <Route path="/app/agenda/encaixe" element={<EncaixePage />} />
+            <Route path="/app/pacotes" element={<PacotesPage />} />
+            <Route path="/app/comissoes" element={<ComissoesPage />} />
+            <Route path="/app/pedidos" element={<PedidosPage />} />
+            <Route path="/app/recebimentos" element={<RecebimentosPage />} />
+            <Route path="/app/importar" element={<ImportarPage />} />
+            <Route path="/app/fiscal/ativar" element={<AssistenteFiscalPage />} />
+            <Route path="/app/hoje" element={<HojePage />} />
             <Route path="/app/configuracoes/perfil" element={<PerfilPage />} />
           </Route>
 
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </SoAdminNoPainel>
+        </Suspense>
+        <AvisoCookies />
       </BrowserRouter>
     </ToastProvider>
   );

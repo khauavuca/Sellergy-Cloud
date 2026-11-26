@@ -19,10 +19,10 @@ export default function TrocaSenhaPage() {
   const [salvando, setSalvando] = useState(false);
 
   const validacoes = [
-    { label: 'Pelo menos 6 caracteres', ok: novaSenha.length >= 6 },
+    { label: 'Pelo menos 8 caracteres', ok: novaSenha.length >= 8 && novaSenha.trim().length > 0 },
     { label: 'Diferente da senha atual', ok: novaSenha.length > 0 && novaSenha !== senhaAtual },
-    { label: 'Letra e numero', ok: /[a-zA-Z]/.test(novaSenha) && /\d/.test(novaSenha) },
-    { label: 'Confirmacao confere', ok: novaSenha.length > 0 && novaSenha === confirmar },
+    { label: 'Letra e número', ok: /[a-zA-Z]/.test(novaSenha) && /\d/.test(novaSenha) },
+    { label: 'Confirmação confere', ok: novaSenha.length > 0 && novaSenha === confirmar },
   ];
 
   const tudoOk = validacoes.every((v) => v.ok) && senhaAtual.length > 0;

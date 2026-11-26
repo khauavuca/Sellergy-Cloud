@@ -1,11 +1,91 @@
 const prisma = require('../prisma');
 const { calcularPreco } = require('../produto');
 const { parseNfe } = require('../utils/nfeSeguro');
+const { lerDinheiro, lerInteiro } = require('../utils/numero');
 
 const MAX_ITENS = 200;
 const NOME_CATEGORIA_COMPRA = 'Compra de mercadorias';
 
 const arredondar = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+const MAX_QTD_ITEM = 100000;
+const MAX_CUSTO_UNITARIO = 1000000; // R$ 1 milhao por unidade — teto de sanidade
+const MAX_NUMERO = 60;
+const MAX_OBS = 2000;
+const RE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ehUuid = (v) => typeof v === 'string' && RE_UUID.test(v);
+
+/** Data "AAAA-MM-DD[...]" valida de verdade (sem 31/02), ano 1900..2100. PURA. */
+function lerDataEstrita(valor) {
+  if (typeof valor !== 'string') return null;
+  const texto = valor.trim();
+  const m = texto.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|[T ])/);
+  if (!m) return null;
+  const ano = Number(m[1]);
+  const mes = Number(m[2]);
+  const dia = Number(m[3]);
+  if (ano < 1900 || ano > 2100 || mes < 1 || mes > 12 || dia < 1) return null;
+  if (dia > new Date(Date.UTC(ano, mes, 0)).getUTCDate()) return null;
+  const d = new Date(texto);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Custo medio ponderado. Saldo negativo ou zero nao entra na conta (nao ha
+ * unidade "a custo antigo" pra ponderar): o custo passa a ser o da nota.
+ * Ex.: -5 a R$ 50 + 10 a R$ 60 = R$ 60 (antes dava R$ 70). PURA.
+ */
+function custoMedio(estoqueAtual, custoAtual, quantidade, custoNota) {
+  const base = Math.max(0, Number(estoqueAtual) || 0);
+  if (base === 0) return arredondar(custoNota);
+  return arredondar((base * (Number(custoAtual) || 0) + quantidade * custoNota) / (base + quantidade));
+}
+
+/**
+ * Valida o corpo da nota manual. PURA.
+ * @returns {{dados:Object}|{erro:string, status?:number, campos?:string[]}}
+ */
+function validarNota(body) {
+  const b = body && typeof body === 'object' ? body : {};
+  const { itens } = b;
+  if (!Array.isArray(itens) || itens.length === 0) return { erro: 'Inclua ao menos um item na nota.', campos: ['itens'] };
+  if (itens.length > MAX_ITENS) return { erro: `Itens demais (limite de ${MAX_ITENS}).`, campos: ['itens'] };
+
+  const normalizados = [];
+  for (let i = 0; i < itens.length; i++) {
+    const it = itens[i] || {};
+    if (!it.variacaoId || typeof it.variacaoId !== 'string') return { erro: `Item ${i + 1}: produto inválido.`, campos: ['itens'] };
+    if (!ehUuid(it.variacaoId)) return { erro: 'Um dos produtos não foi encontrado.', status: 404 };
+    const q = lerInteiro(it.quantidade, { min: 1, max: MAX_QTD_ITEM });
+    if (!q.ok) return { erro: `Item ${i + 1}: quantidade deve ser um número inteiro de 1 a ${MAX_QTD_ITEM.toLocaleString('pt-BR')}.`, campos: ['quantidade'] };
+    const c = lerDinheiro(it.custoUnitario, { min: 0, max: MAX_CUSTO_UNITARIO });
+    if (!c.ok) return { erro: `Item ${i + 1}: custo unitário inválido (${c.erro.replace(/\.$/, '')}).`, campos: ['custoUnitario'] };
+    normalizados.push({ variacaoId: it.variacaoId, quantidade: q.valor, custoUnitario: c.valor });
+  }
+
+  let fornecedorId = null;
+  if (b.fornecedorId !== undefined && b.fornecedorId !== null && b.fornecedorId !== '') {
+    if (!ehUuid(b.fornecedorId)) return { erro: 'Fornecedor não encontrado.', status: 404 };
+    fornecedorId = b.fornecedorId;
+  }
+  let numero = null;
+  if (b.numero !== undefined && b.numero !== null && b.numero !== '') {
+    if (typeof b.numero !== 'string' && typeof b.numero !== 'number') return { erro: 'Número da nota inválido.', campos: ['numero'] };
+    numero = String(b.numero).trim().slice(0, MAX_NUMERO) || null;
+  }
+  let observacoes = null;
+  if (b.observacoes !== undefined && b.observacoes !== null && b.observacoes !== '') {
+    if (typeof b.observacoes !== 'string') return { erro: 'Observações inválidas.', campos: ['observacoes'] };
+    observacoes = b.observacoes.trim().slice(0, MAX_OBS) || null;
+  }
+  let emitidaEm = null;
+  if (b.emitidaEm !== undefined && b.emitidaEm !== null && b.emitidaEm !== '') {
+    emitidaEm = lerDataEstrita(b.emitidaEm);
+    if (!emitidaEm) return { erro: 'Data de emissão inválida.', status: 422, campos: ['emitidaEm'] };
+  }
+  const ehPago = b.pago !== false && b.pago !== 'false';
+  return { dados: { fornecedorId, numero, observacoes, emitidaEm, ehPago, normalizados } };
+}
 
 // Acha (ou cria) a categoria de despesa "Compra de mercadorias" do tenant.
 // É o termo contábil padrão pra entrada de mercadoria; despesa VARIAVEL (anda
@@ -43,33 +123,9 @@ class NotaCompraController {
       const { clienteId } = req.usuario;
       if (!clienteId) return res.status(403).json({ erro: 'Acesso negado: usuario sem tenant.' });
 
-      const { fornecedorId, numero, emitidaEm, observacoes, pago = true, itens } = req.body;
-
-      if (!Array.isArray(itens) || itens.length === 0) {
-        return res.status(400).json({ erro: 'Inclua ao menos um item na nota.' });
-      }
-      if (itens.length > MAX_ITENS) {
-        return res.status(400).json({ erro: `Itens demais (limite de ${MAX_ITENS}).` });
-      }
-
-      // Normaliza e valida cada item.
-      const normalizados = [];
-      for (let i = 0; i < itens.length; i++) {
-        const it = itens[i];
-        const variacaoId = it?.variacaoId;
-        const quantidade = parseInt(it?.quantidade, 10);
-        const custoUnitario = Number(it?.custoUnitario);
-        if (!variacaoId || typeof variacaoId !== 'string') {
-          return res.status(400).json({ erro: `Item ${i + 1}: produto inválido.` });
-        }
-        if (!Number.isFinite(quantidade) || quantidade <= 0) {
-          return res.status(400).json({ erro: `Item ${i + 1}: quantidade deve ser maior que zero.` });
-        }
-        if (!Number.isFinite(custoUnitario) || custoUnitario < 0) {
-          return res.status(400).json({ erro: `Item ${i + 1}: custo unitário inválido.` });
-        }
-        normalizados.push({ variacaoId, quantidade, custoUnitario: arredondar(custoUnitario) });
-      }
+      const v = validarNota(req.body);
+      if (v.erro) return res.status(v.status || 400).json({ erro: v.erro, ...(v.campos ? { campos: v.campos } : {}) });
+      const { fornecedorId, numero, emitidaEm, observacoes, ehPago, normalizados } = v.dados;
 
       // Fornecedor do tenant (se informado).
       let fornecedor = null;
@@ -102,24 +158,36 @@ class NotaCompraController {
           data: {
             clienteId,
             fornecedorId: fornecedor?.id || null,
-            numero: numero ? String(numero).slice(0, 60) : null,
+            numero,
             origem: 'MANUAL',
             valorTotal,
-            observacoes: observacoes ? String(observacoes).slice(0, 500) : null,
-            emitidaEm: emitidaEm ? new Date(emitidaEm) : null,
+            observacoes,
+            emitidaEm,
           },
         });
+
+        // Trava as variacoes da nota (ordem fixa, sem deadlock) e relê o saldo
+        // e o custo: duas notas/vendas ao mesmo tempo nao usam saldo velho.
+        const idsOrdenados = [...mapaVar.keys()].sort();
+        for (const id of idsOrdenados) {
+          await tx.$queryRaw`SELECT "id" FROM "variacoes_produto" WHERE "id" = ${id} FOR UPDATE`;
+        }
+        const frescas = await tx.variacaoProduto.findMany({
+          where: { id: { in: idsOrdenados } },
+          select: { id: true, estoqueAtual: true, precoCusto: true },
+        });
+        for (const f of frescas) {
+          const v = mapaVar.get(f.id);
+          v.estoqueAtual = f.estoqueAtual;
+          v.precoCusto = f.precoCusto;
+        }
 
         // Cada item: movimentação de entrada + recálculo de custo médio e preço.
         for (const n of normalizados) {
           const v = mapaVar.get(n.variacaoId);
           const estoqueAtual = v.estoqueAtual || 0;
-          const custoAtual = v.precoCusto || 0;
           const novaQtd = estoqueAtual + n.quantidade;
-          // Custo médio ponderado. Sem estoque anterior (ou negativo), usa o custo da nota.
-          const novoCusto = novaQtd > 0
-            ? arredondar((estoqueAtual * custoAtual + n.quantidade * n.custoUnitario) / novaQtd)
-            : arredondar(n.custoUnitario);
+          const novoCusto = custoMedio(estoqueAtual, v.precoCusto || 0, n.quantidade, n.custoUnitario);
           const novoPreco = calcularPreco(novoCusto, v.lucroTipo, v.lucroValor);
 
           await tx.movimentacaoEstoque.create({
@@ -149,7 +217,6 @@ class NotaCompraController {
 
         // Despesa "Compra de mercadorias" pelo total da nota.
         const cat = await categoriaCompra(tx, clienteId);
-        const ehPago = pago !== false && pago !== 'false';
         await tx.lancamentoFinanceiro.create({
           data: {
             clienteId,
@@ -244,6 +311,7 @@ class NotaCompraController {
   async buscarPorId(req, res) {
     try {
       const { clienteId } = req.usuario;
+      if (!ehUuid(req.params.id)) return res.status(404).json({ erro: 'Nota não encontrada.' });
       const nota = await prisma.notaCompra.findFirst({
         where: { id: req.params.id, clienteId },
         include: INCLUDE_NOTA,
@@ -257,4 +325,8 @@ class NotaCompraController {
   }
 }
 
-module.exports = new NotaCompraController();
+const instancia = new NotaCompraController();
+// Regras puras expostas pra teste.
+instancia.validarNota = validarNota;
+instancia.custoMedio = custoMedio;
+module.exports = instancia;

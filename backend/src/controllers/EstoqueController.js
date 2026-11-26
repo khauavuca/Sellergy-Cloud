@@ -1,69 +1,204 @@
 const prisma = require('../prisma');
+const { paraNumero, lerDinheiro, lerInteiro } = require('../utils/numero');
+
+// Tipos aceitos na movimentacao MANUAL. VENDA fica de fora: venda de verdade
+// passa por /vendas (numero, caixa, cupom, comissao, cancelamento). Uma
+// "venda" pelo estoque lancava receita sem venda nem caixa.
+const TIPOS_MANUAIS = ['AJUSTE', 'COMPRA_FORNECEDOR', 'DEVOLUCAO', 'RESERVA'];
+// Tipos que so podem tirar (saida) ou so podem pôr (entrada) no estoque.
+const SO_ENTRADA = ['COMPRA_FORNECEDOR', 'DEVOLUCAO'];
+const SO_SAIDA = ['RESERVA'];
+const MAX_QTD_MOV = 100000;
+const MAX_ESTOQUE = 1000000;
+const MAX_PRECO = 1000000;
+const MAX_MOTIVO = 500;
+const MAX_AJUSTES_LOTE = 500;
+
+const RE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ehUuid = (v) => typeof v === 'string' && RE_UUID.test(v);
+const centavos = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+/** Erro de entrada/regra do estoque (vira 4xx com mensagem propria). */
+class ErroEstoque extends Error {
+  constructor(mensagem, status = 422, campos) {
+    super(mensagem);
+    this.status = status;
+    if (campos) this.campos = campos;
+  }
+}
+
+function responderErro(res, e, rotulo) {
+  if (e instanceof ErroEstoque) {
+    return res.status(e.status).json({ erro: e.message, ...(e.campos ? { campos: e.campos } : {}) });
+  }
+  console.error(`[EstoqueController.${rotulo}]`, e);
+  // Texto generico: nunca devolve a mensagem do Prisma.
+  return res.status(500).json({ erro: 'Erro ao processar o estoque.' });
+}
+
+/**
+ * Valida o corpo de /estoque/movimentar. PURA (sem banco).
+ * @returns {{dados:Object}|{erro:string, campos:string[], status?:number}}
+ */
+function validarMovimentacao(body) {
+  const b = body || {};
+  if (!ehUuid(b.variacaoId)) return { erro: 'Produto não encontrado.', campos: ['variacaoId'], status: 404 };
+  if (b.tipo === 'VENDA') {
+    return { erro: 'Venda não se registra pelo estoque. Use "Registrar venda" na tela de Vendas (ela baixa o estoque e lança no caixa).', campos: ['tipo'] };
+  }
+  if (!TIPOS_MANUAIS.includes(b.tipo)) return { erro: 'Tipo de movimentação inválido.', campos: ['tipo'] };
+  const q = lerInteiro(b.quantidade, { min: -MAX_QTD_MOV, max: MAX_QTD_MOV });
+  if (!q.ok) return { erro: `Quantidade inválida: ${q.erro}`, campos: ['quantidade'] };
+  if (q.valor === 0) return { erro: 'A quantidade não pode ser zero.', campos: ['quantidade'] };
+  if (SO_ENTRADA.includes(b.tipo) && q.valor < 0) return { erro: 'Esse tipo de movimentação só aceita entrada (quantidade positiva).', campos: ['quantidade'] };
+  if (SO_SAIDA.includes(b.tipo) && q.valor > 0) return { erro: 'Reserva só tira do estoque (quantidade negativa).', campos: ['quantidade'] };
+
+  const dados = { variacaoId: b.variacaoId, tipo: b.tipo, quantidade: q.valor };
+  if (b.motivo !== undefined && b.motivo !== null && b.motivo !== '') {
+    if (typeof b.motivo !== 'string') return { erro: 'Motivo inválido.', campos: ['motivo'] };
+    dados.motivo = b.motivo.trim().slice(0, MAX_MOTIVO) || null;
+  }
+  for (const campo of ['precoCusto', 'precoVenda']) {
+    if (b[campo] === undefined || b[campo] === null || b[campo] === '') continue;
+    const p = lerDinheiro(b[campo], { min: 0, max: MAX_PRECO });
+    if (!p.ok) return { erro: `${campo === 'precoCusto' ? 'Preço de custo' : 'Preço de venda'} inválido: ${p.erro}`, campos: [campo] };
+    dados[campo] = p.valor;
+  }
+  if (b.vendaId !== undefined && b.vendaId !== null && b.vendaId !== '') {
+    if (!ehUuid(b.vendaId)) return { erro: 'Venda não encontrada.', campos: ['vendaId'], status: 404 };
+    dados.vendaId = b.vendaId;
+  }
+  if (b.categoriaId !== undefined && b.categoriaId !== null && b.categoriaId !== '') {
+    if (!ehUuid(b.categoriaId)) return { erro: 'Categoria não encontrada.', campos: ['categoriaId'], status: 404 };
+    dados.categoriaId = b.categoriaId;
+  }
+  return { dados };
+}
+
+/**
+ * Valida a lista de ajustes (lote ou balanco). Item ruim = erro claro, nunca
+ * "pulado em silencio". PURA.
+ * @returns {{itens:Array<{variacaoId:string, novo:number, motivo:string|null}>}|{erro:string}}
+ */
+function validarAjustes(ajustes, campoQtd) {
+  if (!Array.isArray(ajustes) || ajustes.length === 0) return { erro: 'Envie a lista de ajustes.' };
+  if (ajustes.length > MAX_AJUSTES_LOTE) return { erro: `No máximo ${MAX_AJUSTES_LOTE} ajustes por vez.` };
+  const itens = [];
+  const vistos = new Set();
+  for (let i = 0; i < ajustes.length; i++) {
+    const a = ajustes[i] || {};
+    if (!ehUuid(a.variacaoId)) return { erro: `Item ${i + 1}: produto não encontrado.`, status: 404 };
+    if (vistos.has(a.variacaoId)) return { erro: `Item ${i + 1}: o mesmo produto aparece mais de uma vez.` };
+    vistos.add(a.variacaoId);
+    const q = lerInteiro(a[campoQtd], { min: 0, max: MAX_ESTOQUE });
+    if (!q.ok) return { erro: `Item ${i + 1}: estoque inválido (${q.erro.replace(/\.$/, '')}; não pode ser negativo).` };
+    const motivo = typeof a.motivo === 'string' ? a.motivo.trim().slice(0, MAX_MOTIVO) || null : null;
+    itens.push({ variacaoId: a.variacaoId, novo: q.valor, motivo });
+  }
+  return { itens };
+}
+
+/**
+ * Grava ajustes absolutos (estoque passa a ser X). A troca e condicional ao
+ * saldo lido (se uma venda mexeu no meio, recusa em vez de apagar a venda da
+ * conta). Tudo ou nada.
+ */
+async function aplicarAjustes(clienteId, itens, motivoPadrao) {
+  return prisma.$transaction(async (tx) => {
+    const feitos = [];
+    for (const it of itens) {
+      const variacao = await tx.variacaoProduto.findFirst({
+        where: { id: it.variacaoId, produto: { clienteId } },
+        include: { produto: { select: { nome: true, tipo: true } } },
+      });
+      if (!variacao) throw new ErroEstoque('Um dos produtos do ajuste não foi encontrado.', 404);
+      const diferenca = it.novo - variacao.estoqueAtual;
+      if (diferenca === 0) continue;
+      const r = await tx.variacaoProduto.updateMany({
+        where: { id: variacao.id, estoqueAtual: variacao.estoqueAtual },
+        data: { estoqueAtual: it.novo },
+      });
+      if (r.count === 0) {
+        throw new ErroEstoque(`O estoque de ${variacao.produto.nome} mudou enquanto você ajustava. Atualize a tela e tente de novo.`, 409);
+      }
+      await tx.movimentacaoEstoque.create({
+        data: { variacaoId: variacao.id, tipo: 'AJUSTE', quantidade: diferenca, motivo: it.motivo || motivoPadrao },
+      });
+      feitos.push({ id: variacao.id, de: variacao.estoqueAtual, para: it.novo, diferenca });
+    }
+    return feitos;
+  });
+}
 
 class EstoqueController {
 
   async registrarMovimentacao(req, res) {
-    let { variacaoId, tipo, quantidade, motivo, vendaId, precoCusto, precoVenda, categoriaId } = req.body;
     const { clienteId } = req.usuario;
     if (!clienteId) return res.status(403).json({ error: 'Acesso negado: ID do cliente ausente.' });
 
-    // Converter para número
-    quantidade = parseInt(quantidade);
-
-    // Validações básicas
-    if (!variacaoId || !tipo || isNaN(quantidade)) {
-      return res.status(400).json({
-        error: 'Campos obrigatórios: variacaoId, tipo e quantidade (número).',
-        campos: ['variacaoId', 'tipo', 'quantidade']
-      });
-    }
+    const v = validarMovimentacao(req.body);
+    if (v.erro) return res.status(v.status || 422).json({ erro: v.erro, campos: v.campos });
+    const { variacaoId, tipo, quantidade, motivo, vendaId, precoCusto, precoVenda, categoriaId } = v.dados;
 
     try {
       const variacao = await prisma.variacaoProduto.findFirst({
         where: { id: variacaoId, produto: { clienteId } },
         include: { produto: true }
       });
+      if (!variacao) return res.status(404).json({ erro: 'Variação não encontrada.' });
 
-      if (!variacao) {
-        return res.status(404).json({ error: 'Variação não encontrada.' });
+      // ids de outras tabelas: so do mesmo negocio (outro negocio = 404).
+      if (vendaId) {
+        const venda = await prisma.venda.findFirst({ where: { id: vendaId, clienteId }, select: { id: true } });
+        if (!venda) return res.status(404).json({ erro: 'Venda não encontrada.', campos: ['vendaId'] });
       }
-
-      // Impedir estoque negativo em produtos físicos
-      if (variacao.produto.tipo === 'FISICO' && (variacao.estoqueAtual + quantidade) < 0) {
-        return res.status(422).json({
-          error: `Estoque insuficiente. Saldo atual: ${variacao.estoqueAtual}.`,
-          campos: ['quantidade']
-        });
+      if (categoriaId) {
+        const cat = await prisma.categoriaFinanceira.findFirst({ where: { id: categoriaId, clienteId }, select: { id: true } });
+        if (!cat) return res.status(404).json({ erro: 'Categoria não encontrada.', campos: ['categoriaId'] });
       }
 
       const resultado = await prisma.$transaction(async (tx) => {
-        // 1. Registra a movimentação
+        // 1. Saldo: saida de produto fisico so se ainda houver (condicional,
+        // a prova de saidas em paralelo).
+        let atualizada;
+        if (variacao.produto.tipo === 'FISICO' && quantidade < 0) {
+          const r = await tx.variacaoProduto.updateMany({
+            where: { id: variacaoId, estoqueAtual: { gte: -quantidade } },
+            data: { estoqueAtual: { increment: quantidade } },
+          });
+          if (r.count === 0) {
+            const atual = await tx.variacaoProduto.findUnique({ where: { id: variacaoId }, select: { estoqueAtual: true } });
+            throw new ErroEstoque(`Estoque insuficiente. Saldo atual: ${atual?.estoqueAtual ?? 0}.`, 422, ['quantidade']);
+          }
+        } else {
+          await tx.variacaoProduto.update({ where: { id: variacaoId }, data: { estoqueAtual: { increment: quantidade } } });
+        }
+
+        // 2. Precos (opcionais, ja validados).
+        const precos = {};
+        if (precoCusto !== undefined) precos.precoCusto = precoCusto;
+        if (precoVenda !== undefined) precos.preco = precoVenda;
+        if (Object.keys(precos).length) {
+          await tx.variacaoProduto.update({ where: { id: variacaoId }, data: precos });
+        }
+        atualizada = await tx.variacaoProduto.findUnique({ where: { id: variacaoId }, select: { estoqueAtual: true } });
+
+        // 3. Registro da movimentacao.
         const movimentacao = await tx.movimentacaoEstoque.create({
-          data: { variacaoId, tipo, quantidade, motivo, vendaId }
-        });
-
-        // 2. Atualiza saldo e preços na variação
-        const variacaoAtualizada = await tx.variacaoProduto.update({
-          where: { id: variacaoId },
           data: {
-            estoqueAtual: { increment: quantidade },
-            precoCusto: precoCusto !== undefined ? parseFloat(precoCusto) : undefined,
-            preco: precoVenda !== undefined ? parseFloat(precoVenda) : undefined
-          },
-          include: { produto: true }
+            variacaoId, tipo, quantidade, motivo: motivo || null, vendaId: vendaId || null,
+            ...(tipo === 'COMPRA_FORNECEDOR' ? { custoUnitario: precoCusto ?? variacao.precoCusto ?? null } : {}),
+          }
         });
 
-        // 3. Integração Financeira Automática
-        const pCusto = parseFloat(precoCusto || variacao.precoCusto || 0);
-        const pVenda = parseFloat(precoVenda || variacao.preco || 0);
-
-        if (tipo === 'COMPRA_FORNECEDOR' && quantidade > 0) {
-          // ENTRADA -> DESPESA
+        // 4. Compra de fornecedor vira DESPESA no financeiro.
+        if (tipo === 'COMPRA_FORNECEDOR') {
+          const pCusto = precoCusto ?? variacao.precoCusto ?? 0;
           await tx.lancamentoFinanceiro.create({
             data: {
               clienteId,
               descricao: `Entrada de estoque: ${variacao.produto.nome} (${variacao.nome})`,
-              valor: pCusto * quantidade,
+              valor: centavos(pCusto * quantidade),
               tipo: 'DESPESA',
               status: 'PAGO',
               dataVencimento: new Date(),
@@ -71,98 +206,43 @@ class EstoqueController {
               categoriaId: categoriaId || null,
             }
           });
-        } else if (tipo === 'VENDA' && quantidade < 0) {
-          // SAIDA -> RECEITA
-          await tx.lancamentoFinanceiro.create({
-            data: {
-              clienteId,
-              descricao: `Venda de estoque: ${variacao.produto.nome} (${variacao.nome})`,
-              valor: pVenda * Math.abs(quantidade),
-              tipo: 'RECEITA',
-              status: 'PAGO',
-              dataVencimento: new Date(),
-              dataPagamento: new Date(),
-              categoriaId: categoriaId || null,
-              vendaId: vendaId || null
-            }
-          });
         }
 
-        return { movimentacao, novoEstoque: variacaoAtualizada.estoqueAtual };
+        return { movimentacao, novoEstoque: atualizada.estoqueAtual };
       });
 
       return res.status(201).json({ success: true, data: resultado });
     } catch (error) {
-      console.error('[EstoqueController]', error);
-      return res.status(500).json({ error: 'Erro ao processar movimentação.' });
+      return responderErro(res, error, 'registrarMovimentacao');
     }
   }
 
   async ajusteLote(req, res) {
+    const { clienteId } = req.usuario;
+    if (!clienteId) return res.status(403).json({ error: 'Acesso negado: ID do cliente ausente.' });
+    const v = validarAjustes(req.body?.ajustes, 'novoEstoque');
+    if (v.erro) return res.status(v.status || 400).json({ erro: v.erro });
     try {
-      const { ajustes } = req.body; // Array de { variacaoId, novoEstoque, motivo }
-      const { clienteId } = req.usuario;
-      if (!clienteId) return res.status(403).json({ error: 'Acesso negado: ID do cliente ausente.' });
-
-      if (!Array.isArray(ajustes)) return res.status(400).json({ error: 'Array de ajustes obrigatório.' });
-
-      const resultado = await prisma.$transaction(async (tx) => {
-        const processados = [];
-        for (const item of ajustes) {
-          const variacao = await tx.variacaoProduto.findFirst({
-            where: { id: item.variacaoId, produto: { clienteId } },
-            include: { produto: true }
-          });
-          if (!variacao) throw new Error(`Variação ${item.variacaoId} não encontrada.`);
-
-          const novoEstoque = parseInt(item.novoEstoque);
-          if (isNaN(novoEstoque)) throw new Error(`Estoque inválido para a variação ${variacao.nome}.`);
-
-          // Impedir estoque negativo em produtos físicos
-          if (variacao.produto.tipo === 'FISICO' && novoEstoque < 0) {
-            throw new Error(`Estoque não pode ser negativo para o produto físico: ${variacao.produto.nome}.`);
-          }
-
-          const diferenca = novoEstoque - variacao.estoqueAtual;
-          if (diferenca === 0) continue;
-
-          const mov = await tx.movimentacaoEstoque.create({
-            data: {
-              variacaoId: item.variacaoId,
-              tipo: 'AJUSTE',
-              quantidade: diferenca,
-              motivo: item.motivo || 'Ajuste em lote'
-            }
-          });
-
-          await tx.variacaoProduto.update({
-            where: { id: item.variacaoId },
-            data: { estoqueAtual: novoEstoque }
-          });
-
-          processados.push(mov);
-        }
-        return processados;
-      });
-
-      res.json({ success: true, total: resultado.length });
+      const feitos = await aplicarAjustes(clienteId, v.itens, 'Ajuste em lote');
+      res.json({ success: true, total: feitos.length });
     } catch (error) {
-      res.status(400).json({ error: error.message });
+      return responderErro(res, error, 'ajusteLote');
     }
   }
 
   /**
-   * Conceito de Reserva (Soft Allocation): 
+   * Conceito de Reserva (Soft Allocation):
    * Bloqueia temporariamente um item enquanto o pedido está em andamento.
    */
   async reservarEstoque(req, res) {
-    const { variacaoId, quantidade, vendaId } = req.body;
-
-    // Na reserva, subtraímos do estoque com o tipo 'RESERVA'
-    req.body.tipo = 'RESERVA';
-    req.body.quantidade = -Math.abs(quantidade);
-    req.body.motivo = 'Reserva temporária para venda em andamento';
-
+    const q = paraNumero(req.body?.quantidade);
+    req.body = {
+      variacaoId: req.body?.variacaoId,
+      vendaId: req.body?.vendaId,
+      tipo: 'RESERVA',
+      quantidade: Number.isFinite(q) ? -Math.abs(q) : req.body?.quantidade,
+      motivo: 'Reserva temporária para venda em andamento',
+    };
     return this.registrarMovimentacao(req, res);
   }
   /**
@@ -295,71 +375,19 @@ class EstoqueController {
   }
 
   /**
-   * Ajuste de Balanço (Inventário Físico): Sobrescreve o estoque atual com o contado.
+   * Ajuste de Balanço (Inventário Físico): sobrescreve o estoque atual com o
+   * contado. Item inválido ou de outro negócio = erro claro (nada é gravado).
    */
   async ajusteBalanco(req, res) {
+    const { clienteId } = req.usuario;
+    if (!clienteId) return res.status(403).json({ error: 'Acesso negado: ID do cliente ausente.' });
+    const v = validarAjustes(req.body?.ajustes, 'estoqueReal');
+    if (v.erro) return res.status(v.status || 422).json({ erro: v.erro });
     try {
-      const { ajustes } = req.body; // Array de { variacaoId, estoqueReal, motivo }
-      const { clienteId } = req.usuario;
-      if (!clienteId) return res.status(403).json({ error: 'Acesso negado: ID do cliente ausente.' });
-
-      if (!Array.isArray(ajustes)) {
-        return res.status(400).json({ error: 'Array de ajustes é obrigatório.' });
-      }
-
-      const resultado = await prisma.$transaction(async (tx) => {
-        const logs = [];
-
-        for (const item of ajustes) {
-          const variacao = await tx.variacaoProduto.findFirst({
-            where: { id: item.variacaoId, produto: { clienteId } },
-            include: { produto: true }
-          });
-
-          if (!variacao) continue;
-
-          const estoqueReal = parseInt(item.estoqueReal);
-          if (isNaN(estoqueReal)) continue;
-
-          // Impedir estoque negativo em produtos físicos
-          if (variacao.produto.tipo === 'FISICO' && estoqueReal < 0) {
-            throw new Error(`Estoque não pode ser negativo para: ${variacao.produto.nome}.`);
-          }
-
-          const diferenca = estoqueReal - variacao.estoqueAtual;
-          if (diferenca === 0) continue;
-
-          // Registra a movimentação de ajuste
-          await tx.movimentacaoEstoque.create({
-            data: {
-              variacaoId: item.variacaoId,
-              tipo: 'AJUSTE',
-              quantidade: diferenca,
-              motivo: item.motivo || 'Ajuste de Balanço (Inventário Físico)'
-            }
-          });
-
-          // Atualiza o saldo real
-          await tx.variacaoProduto.update({
-            where: { id: item.variacaoId },
-            data: { estoqueAtual: estoqueReal }
-          });
-
-          logs.push({
-            id: variacao.id,
-            de: variacao.estoqueAtual,
-            para: estoqueReal,
-            diferenca
-          });
-        }
-
-        return logs;
-      });
-
-      res.json({ success: true, processados: resultado.length, detalhes: resultado });
+      const feitos = await aplicarAjustes(clienteId, v.itens, 'Ajuste de Balanço (Inventário Físico)');
+      res.json({ success: true, processados: feitos.length, detalhes: feitos });
     } catch (error) {
-      console.error('[EstoqueController.ajusteBalanco]', error);
-      res.status(400).json({ error: error.message });
+      return responderErro(res, error, 'ajusteBalanco');
     }
   }
 
@@ -371,6 +399,7 @@ class EstoqueController {
       const { variacaoId } = req.params;
       const { clienteId } = req.usuario;
       if (!clienteId) return res.status(403).json({ error: 'Acesso negado: ID do cliente ausente.' });
+      if (!ehUuid(variacaoId)) return res.status(404).json({ erro: 'Variação não encontrada.' });
 
       const variacao = await prisma.variacaoProduto.findFirst({
         where: {
@@ -397,4 +426,8 @@ class EstoqueController {
   }
 }
 
-module.exports = new EstoqueController();
+const instancia = new EstoqueController();
+// Regras puras expostas pra teste.
+instancia.validarMovimentacao = validarMovimentacao;
+instancia.validarAjustes = validarAjustes;
+module.exports = instancia;

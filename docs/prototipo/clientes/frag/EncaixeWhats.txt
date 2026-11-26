@@ -1,0 +1,40 @@
+@@phone
+@@title Oferta de encaixe
+@@main
+<div style="background: #075E54; color: #fff; padding: 14px 16px; display: flex; align-items: center; gap: 12px">
+<span style="width: 38px; height: 38px; border-radius: 50%; background: #F2C46B; color: #4A3000; display: grid; place-items: center; font-weight: 700; font-size: 14px">CL</span>
+<span style="line-height: 1.25"><strong style="display: block; font-size: 15px">Clínica Lumi Estética</strong><span style="font-size: 12px; opacity: .8">Conta comercial</span></span>
+</div>
+<div class="wa">
+<div class="msg">Oi, Renata! Você está na nossa fila pro <strong>peeling químico com a Carla</strong>.<br><br>Vagou um horário <strong>hoje às 16:00</strong>. Quer ficar com ele? Vale pra quem responder primeiro, até 14:35.<small>14:05</small>
+<sc-if value="{{pergunta}}" hint-placeholder-val="{{ true }}">
+<button type="button" class="wb" onClick="{{quero}}">Quero esse horário</button>
+<button type="button" class="wb" onClick="{{nao}}">Não posso, continuo na fila</button>
+</sc-if>
+</div>
+<sc-if value="{{aceitou}}" hint-placeholder-val="{{ false }}">
+<div class="msg me">Quero esse horário<small>14:09 ✓✓</small></div>
+<div class="msg">Pronto, é seu! <strong>Hoje, 16:00, peeling químico com Carla.</strong><br>Rua Harmonia, 412. Chegue 10 min antes, por favor.<small>14:09</small></div>
+</sc-if>
+<sc-if value="{{recusou}}" hint-placeholder-val="{{ false }}">
+<div class="msg me">Não posso, continuo na fila<small>14:08 ✓✓</small></div>
+<div class="msg">Tudo bem! Você continua na fila e avisamos no próximo horário que vagar.<small>14:08</small></div>
+</sc-if>
+<sc-if value="{{respondeu}}" hint-placeholder-val="{{ false }}">
+<button type="button" class="bg" onClick="{{reiniciar}}" style="margin-top: auto; background: rgba(255,255,255,.7); border-radius: 10px">Ver de novo</button>
+</sc-if>
+</div>
+<div style="background: #F0F0F0; padding: 10px 12px; display: flex; gap: 8px; align-items: center"><span style="flex: 1; min-height: 44px; border-radius: 22px; background: #fff; display: flex; align-items: center; padding: 0 16px; color: #8A9099; font-size: 15px">Mensagem</span></div>
+@@script
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { r: '' }; }
+  renderVals() {
+    const r = this.state.r;
+    return {
+      pergunta: !r, aceitou: r === 'sim', recusou: r === 'nao', respondeu: !!r,
+      quero: () => this.setState({ r: 'sim' }),
+      nao: () => this.setState({ r: 'nao' }),
+      reiniciar: () => this.setState({ r: '' }),
+    };
+  }
+}

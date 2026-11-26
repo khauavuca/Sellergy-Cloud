@@ -1,68 +1,104 @@
 import { useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Users, ShieldCheck, Bot, Bell, BarChart3,
-  Settings, Sparkles
+  LayoutDashboard, Users, ShieldCheck, CreditCard, LifeBuoy, Activity, Megaphone, Gauge, Tags, ScrollText, Plug
 } from 'lucide-react';
 import Sidebar from './Sidebar';
+import { useAuthStore } from '../store/auth.store';
+import { useUiStore } from '../store/ui.store';
+import { AcaoTopoContext } from '../hooks/useAcaoTopo';
 import Topbar from './Topbar';
+import { useResumoSuporte } from './suporte/useResumoSuporte';
 
 const SECTIONS = [
   {
     titulo: 'Geral',
     items: [
-      { to: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      { to: '/admin/dashboard', label: 'Visão geral', icon: LayoutDashboard, acao: 'painel.ver' },
     ],
   },
   {
     titulo: 'Clientes',
     items: [
-      { to: '/admin/clientes', label: 'Lista de clientes', icon: Users },
-      { to: '/admin/clientes/permissoes', label: 'Permissoes', icon: ShieldCheck },
+      { to: '/admin/clientes', label: 'Lista de clientes', icon: Users, acao: null },
+      { to: '/admin/clientes/permissoes', label: 'Permissoes', icon: ShieldCheck, acao: null },
+      { to: '/admin/assinaturas', label: 'Assinaturas', icon: CreditCard, acao: 'clientes.ver' },
+      { to: '/admin/planos', label: 'Planos e preços', icon: Tags, acao: 'precos.editar' },
+      { to: '/admin/uso', label: 'Uso e custos', icon: Gauge, acao: 'uso.ver' },
     ],
   },
   {
     titulo: 'Operacao',
     items: [
-      { to: '/admin/bots', label: 'Bots', icon: Bot },
-      { to: '/admin/alertas', label: 'Alertas', icon: Bell },
-      { to: '/admin/relatorios', label: 'Relatorios', icon: BarChart3 },
+      { to: '/admin/suporte', label: 'Suporte', icon: LifeBuoy, acao: 'suporte.ver' },
+      { to: '/admin/comunicados', label: 'Comunicados', icon: Megaphone, acao: 'comunicados.ver' },
+      { to: '/admin/saude', label: 'Saúde do sistema', icon: Activity, acao: 'saude.ver' },
     ],
   },
   {
     titulo: 'Sistema',
     items: [
-      { to: '/admin/usuarios', label: 'Equipe', icon: Users },
-      { to: '/admin/configuracoes', label: 'Configuracoes', icon: Settings },
+      { to: '/admin/integracoes', label: 'Integrações', icon: Plug, acao: null },
+      { to: '/admin/equipe', label: 'Equipe e auditoria', icon: ScrollText, acao: 'equipe.gerenciar' },
     ],
   },
 ];
 
 const TITULOS = {
-  '/admin/dashboard': { titulo: 'Visao geral', breadcrumb: 'Dashboard' },
+  '/admin/dashboard': { titulo: 'Visão geral', breadcrumb: 'Painel' },
   '/admin/clientes': { titulo: 'Clientes', breadcrumb: 'Gestao' },
   '/admin/clientes/permissoes': { titulo: 'Permissoes por cliente', breadcrumb: 'Gestao · Clientes' },
-  '/admin/bots': { titulo: 'Bots', breadcrumb: 'Operacao' },
-  '/admin/campanhas': { titulo: 'Campanhas', breadcrumb: 'Operacao' },
-  '/admin/alertas': { titulo: 'Alertas', breadcrumb: 'Operacao' },
-  '/admin/relatorios': { titulo: 'Relatorios', breadcrumb: 'Operacao' },
-  '/admin/usuarios': { titulo: 'Equipe', breadcrumb: 'Sistema' },
-  '/admin/configuracoes': { titulo: 'Configuracoes', breadcrumb: 'Sistema' },
-  '/admin/_design': { titulo: 'Design system', breadcrumb: 'Sistema' },
+  '/admin/assinaturas': { titulo: 'Assinaturas', breadcrumb: 'Gestão · Clientes' },
+  '/admin/planos': { titulo: 'Planos e preços', breadcrumb: 'Gestão · Clientes' },
+  '/admin/uso': { titulo: 'Uso e custos', breadcrumb: 'Gestão · Clientes' },
+  '/admin/suporte': { titulo: 'Suporte', breadcrumb: 'Operação' },
+  '/admin/comunicados': { titulo: 'Comunicados', breadcrumb: 'Operação' },
+  '/admin/saude': { titulo: 'Saúde do sistema', breadcrumb: 'Operação' },
+  '/admin/integracoes': { titulo: 'Integrações', breadcrumb: 'Sistema' },
+  '/admin/equipe': { titulo: 'Equipe e auditoria', breadcrumb: 'Sistema' },
+  '/admin/configuracoes/perfil': { titulo: 'Meu perfil', breadcrumb: 'Sistema' },
 };
+
+// Esconde do menu o que o papel nao pode (Suporte, Financeiro). acao null =
+// telas antigas do admin, so pro Dono. Quem barra de verdade e a API.
+function secoesDoPapel(user) {
+  const acoes = Array.isArray(user?.acoesAdmin) ? user.acoesAdmin : null;
+  const dono = !user?.papelAdmin || user.papelAdmin === 'DONO';
+  if (dono || !acoes) return SECTIONS;
+  return SECTIONS
+    .map((s) => ({ ...s, items: s.items.filter((i) => i.acao && acoes.includes(i.acao)) }))
+    .filter((s) => s.items.length > 0);
+}
 
 export default function AdminLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [acaoTopo, setAcaoTopo] = useState(null);
   const location = useLocation();
+  const user = useAuthStore((s) => s.user);
+  const podeVerSuporte = secoesDoPapel(user).some((s) => s.items.some((i) => i.to === '/admin/suporte'));
+  // Sem o 2FA (quando obrigatorio) a API barra a fila: nao consulta ate ativar.
+  const pendente2fa = user?.admin2faObrigatorio === true && user?.mfa !== true;
+  const resumoSuporte = useResumoSuporte(podeVerSuporte && !pendente2fa);
+  // Contador de chamados esperando resposta no item Suporte do menu.
+  const secoes = secoesDoPapel(user).map((s) => ({
+    ...s,
+    items: s.items.map((i) => (i.to === '/admin/suporte' && resumoSuporte?.esperando ? { ...i, badge: resumoSuporte.esperando } : i)),
+  }));
+  const menuAberto = useUiStore((s) => s.menuAberto);
+  const alternarMenu = useUiStore((s) => s.alternarMenu);
+  const atalhos = secoes.flatMap((sec) => sec.items.map((i) => ({ to: i.to, label: i.label, grupo: sec.titulo })));
 
   const meta = TITULOS[location.pathname] || resolveDinamico(location.pathname);
 
   return (
     <div className="min-h-screen bg-[var(--bg-app)]">
       <Sidebar
-        sections={SECTIONS}
+        sections={secoes}
+        aberto={menuAberto}
         mobileOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        onToggle={alternarMenu}
+        subtitulo="Painel Sellergy"
       />
 
       {sidebarOpen && (
@@ -72,16 +108,19 @@ export default function AdminLayout() {
         />
       )}
 
-      <div className="lg:pl-20 min-h-screen flex flex-col">
+      <div className={`min-h-screen flex flex-col transition-[padding] duration-200 ease-out ${menuAberto ? 'lg:pl-[240px]' : 'lg:pl-[68px]'}`}>
         <Topbar
           titulo={meta.titulo}
           breadcrumb={meta.breadcrumb}
           onMenuClick={() => setSidebarOpen(true)}
+          onToggleMenu={alternarMenu}
+          atalhos={atalhos}
+          actions={acaoTopo}
         />
-        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
-          <div className="max-w-[1400px] mx-auto">
+        <main className="flex-1 min-w-0 px-4 sm:px-6 py-5">
+          <AcaoTopoContext.Provider value={setAcaoTopo}>
             <Outlet />
-          </div>
+          </AcaoTopoContext.Provider>
         </main>
       </div>
     </div>
@@ -90,6 +129,5 @@ export default function AdminLayout() {
 
 function resolveDinamico(path) {
   if (path.startsWith('/admin/clientes/')) return { titulo: 'Detalhes do cliente', breadcrumb: 'Clientes' };
-  if (path.match(/^\/admin\/bots\/[^/]+\/canal$/)) return { titulo: 'Canal do bot', breadcrumb: 'Bots' };
   return { titulo: 'Sellergy Cloud', breadcrumb: 'Admin' };
 }

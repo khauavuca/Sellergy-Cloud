@@ -1,5 +1,18 @@
 const prisma = require('../prisma');
 const { lockClienteAdvisory } = require('../utils/locks');
+const R = require('../financeiro/regras');
+
+// Erro 4xx usa a mensagem; 5xx sai generico (o detalhe vai so pro log).
+function responderErro(res, e, rotulo, msg500) {
+  if (e?.status && e.status < 500) {
+    const payload = { erro: e.message };
+    if (e.codigo) payload.codigo = e.codigo;
+    if (e.extra) Object.assign(payload, e.extra);
+    return res.status(e.status).json(payload);
+  }
+  console.error(rotulo, e);
+  return res.status(500).json({ erro: msg500 });
+}
 
 // =====================================================================
 // CONTROLADOR DE CAIXA — SESSAO ABERTA/FECHADA
@@ -45,17 +58,19 @@ async function calcularSaldoEsperado(sessaoId, tx = prisma) {
 
   // Soma suprimentos (entram no caixa) e sangrias (saem).
   const movs = await tx.saldoHistorico.findMany({
-    where: { sessaoCaixaId: sessaoId, tipo: { in: ['SUPRIMENTO', 'SANGRIA'] } },
+    where: { sessaoCaixaId: sessaoId, tipo: { in: ['SUPRIMENTO', 'SANGRIA', 'AJUSTE'] } },
     select: { valor: true, tipo: true },
   });
   let totalSuprimentos = 0;
   let totalSangrias = 0;
+  let totalAjustes = 0; // AJUSTE e uma diferenca com sinal (POST /saldo-atual/ajuste)
   for (const m of movs) {
     if (m.tipo === 'SUPRIMENTO') totalSuprimentos += m.valor;
     else if (m.tipo === 'SANGRIA') totalSangrias += m.valor;
+    else if (m.tipo === 'AJUSTE') totalAjustes += m.valor;
   }
 
-  return sessao.fundoCaixa + totalVendas + totalSuprimentos - totalSangrias;
+  return Math.round((sessao.fundoCaixa + totalVendas + totalSuprimentos - totalSangrias + totalAjustes) * 100) / 100;
 }
 
 // Helper: snapshot do nome do usuario logado (JWT so traz id).
@@ -104,11 +119,12 @@ class CaixaController {
       const { clienteId, id: usuarioId } = req.usuario;
       if (!clienteId) return res.status(403).json({ error: 'Acesso negado.' });
 
-      const fundoCaixa = parseFloat(req.body.fundoCaixa);
-      if (Number.isNaN(fundoCaixa) || fundoCaixa < 0) {
-        return res.status(422).json({ error: 'Fundo de caixa inválido (precisa ser ≥ 0).' });
-      }
-      const observacao = typeof req.body.observacao === 'string' ? req.body.observacao.trim() : null;
+      const fundo = R.lerDinheiro(req.body?.fundoCaixa, { min: 0, max: 1_000_000 });
+      if (!fundo.ok) return res.status(422).json({ erro: `Fundo de caixa: ${fundo.erro}`, campos: ['fundoCaixa'] });
+      const fundoCaixa = fundo.valor;
+      const obs = R.lerTexto(req.body?.observacao, { rotulo: 'Observação', max: 2000 });
+      if (!obs.ok) return res.status(422).json({ erro: obs.erro, campos: ['observacao'] });
+      const observacao = obs.valor;
 
       const usuarioNome = await obterNomeUsuario(usuarioId);
 
@@ -154,9 +170,7 @@ class CaixaController {
 
       res.status(201).json({ sessao: resultado });
     } catch (e) {
-      const status = e?.status || 500;
-      console.error('[caixa/abrir]', e?.message);
-      res.status(status).json({ error: e?.message || 'Erro ao abrir caixa' });
+      return responderErro(res, e, '[caixa/abrir]', 'Erro ao abrir caixa');
     }
   }
 
@@ -167,11 +181,12 @@ class CaixaController {
       const { clienteId, id: usuarioId } = req.usuario;
       if (!clienteId) return res.status(403).json({ error: 'Acesso negado.' });
 
-      const saldoFinalReal = parseFloat(req.body.saldoFinalReal);
-      if (Number.isNaN(saldoFinalReal)) {
-        return res.status(422).json({ error: 'Informe o saldo real contado no caixa.' });
-      }
-      const observacao = typeof req.body.observacao === 'string' ? req.body.observacao.trim() : null;
+      const real = R.lerDinheiro(req.body?.saldoFinalReal, { min: 0, max: 10_000_000 });
+      if (!real.ok) return res.status(422).json({ erro: `Informe o saldo contado no caixa (${real.erro.toLowerCase()})`, campos: ['saldoFinalReal'] });
+      const saldoFinalReal = real.valor;
+      const obs = R.lerTexto(req.body?.observacao, { rotulo: 'Observação', max: 2000 });
+      if (!obs.ok) return res.status(422).json({ erro: obs.erro, campos: ['observacao'] });
+      const observacao = obs.valor;
       const usuarioNome = await obterNomeUsuario(usuarioId);
 
       const atualizada = await prisma.$transaction(async (tx) => {
@@ -190,6 +205,11 @@ class CaixaController {
 
         const saldoEsperado = await calcularSaldoEsperado(sessao.id, tx);
         const diferenca = Number((saldoFinalReal - saldoEsperado).toFixed(2));
+        // Diferenca acima de R$ 10 (sobra ou falta) precisa de explicacao.
+        const conf = R.checarFechamento(diferenca, observacao);
+        if (!conf.ok) {
+          throw Object.assign(new Error(conf.erro), { status: 422, codigo: conf.codigo, extra: { diferenca, saldoEsperado, campos: ['observacao'] } });
+        }
 
         return tx.sessaoCaixa.update({
           where: { id: sessao.id },
@@ -208,9 +228,7 @@ class CaixaController {
 
       res.json({ sessao: atualizada });
     } catch (e) {
-      const status = e?.status || 500;
-      console.error('[caixa/fechar]', e?.message);
-      res.status(status).json({ error: e?.message || 'Erro ao fechar caixa' });
+      return responderErro(res, e, '[caixa/fechar]', 'Erro ao fechar caixa');
     }
   }
 
@@ -229,14 +247,13 @@ class CaixaController {
       const { clienteId, id: usuarioId } = req.usuario;
       if (!clienteId) return res.status(403).json({ error: 'Acesso negado.' });
 
-      const valor = parseFloat(req.body.valor);
-      if (Number.isNaN(valor) || valor <= 0) {
-        return res.status(422).json({ error: 'Valor inválido (precisa ser > 0).' });
-      }
-      const motivo = typeof req.body.motivo === 'string' ? req.body.motivo.trim() : '';
-      if (motivo.length < 3) {
-        return res.status(422).json({ error: 'Informe o motivo (mínimo 3 caracteres).', campos: ['motivo'] });
-      }
+      const v = R.lerDinheiro(req.body?.valor, { min: 0.01, max: 1_000_000 });
+      if (!v.ok) return res.status(422).json({ erro: `Valor: ${v.erro}`, campos: ['valor'] });
+      const valor = v.valor;
+      const m = R.lerTexto(req.body?.motivo, { rotulo: 'Motivo', min: 3, max: 500, obrigatorio: true });
+      if (!m.ok) return res.status(422).json({ erro: m.erro, campos: ['motivo'] });
+      const motivo = m.valor;
+      const confirmarSaldoNegativo = req.body?.confirmarSaldoNegativo === true;
       const usuarioNome = await obterNomeUsuario(usuarioId);
 
       const movimentacao = await prisma.$transaction(async (tx) => {
@@ -254,6 +271,15 @@ class CaixaController {
           });
         }
 
+        // Retirada maior que o saldo esperado so com confirmacao explicita.
+        if (tipo === 'SANGRIA') {
+          const saldo = await calcularSaldoEsperado(sessao.id, tx);
+          const chk = R.checarRetirada(valor, saldo, confirmarSaldoNegativo);
+          if (!chk.ok) {
+            throw Object.assign(new Error(chk.erro), { status: 422, codigo: chk.codigo, extra: { saldoEsperado: saldo, saldoDepois: chk.saldoDepois } });
+          }
+        }
+
         return tx.saldoHistorico.create({
           data: {
             clienteId,
@@ -269,11 +295,7 @@ class CaixaController {
 
       res.status(201).json({ movimentacao });
     } catch (e) {
-      const status = e?.status || 500;
-      const payload = { error: e?.message || `Erro ao registrar ${tipo.toLowerCase()}` };
-      if (e?.codigo) payload.codigo = e.codigo;
-      console.error(`[caixa/${tipo.toLowerCase()}]`, e?.message);
-      res.status(status).json(payload);
+      return responderErro(res, e, `[caixa/${tipo.toLowerCase()}]`, tipo === 'SANGRIA' ? 'Erro ao registrar a retirada' : 'Erro ao registrar a entrada');
     }
   }
 
@@ -283,7 +305,7 @@ class CaixaController {
     try {
       const { clienteId } = req.usuario;
       if (!clienteId) return res.status(403).json({ error: 'Acesso negado.' });
-      const limite = Math.min(parseInt(req.query.limite, 10) || 30, 100);
+      const limite = R.lerInteiro(req.query.limite ?? 30, { min: 1, max: 100 }).valor || 30;
 
       const sessoes = await prisma.sessaoCaixa.findMany({
         where: { clienteId, status: 'FECHADA' },

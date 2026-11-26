@@ -1,0 +1,123 @@
+# Reverse proxy de produção com HTTPS automático (Let's Encrypt).
+# Os domínios vêm do .env (API_DOMINIO, MIDIA_DOMINIO), e o DNS de cada um
+# precisa apontar (registro A) pro IP da VPS ANTES de subir, senão o
+# certificado não sai.
+#
+# Só os hosts declarados aqui são atendidos: qualquer outro nome (ou acesso
+# direto pelo IP) não tem certificado e a conexão HTTPS é recusada; em HTTP
+# puro, o Caddy só redireciona os hosts conhecidos.
+{
+	# E-mail pros avisos do Let's Encrypt (vencimento, revogação). Opcional:
+	# descomente e troque pelo seu.
+	# email voce@sellergycloud.com
+
+	# API de administração só dentro do container (padrão), dita explícita.
+	admin localhost:2019
+
+	servers {
+		# Corta conexões lentas de propósito (slowloris) sem atrapalhar upload.
+		timeouts {
+			read_header 10s
+			read_body 60s
+			idle 2m
+		}
+		max_header_size 16KB
+
+		# --- OPÇÃO Cloudflare (descomente se o domínio estiver com proxy laranja) ---
+		# Faz o Caddy confiar no IP real do visitante que o Cloudflare manda em
+		# CF-Connecting-IP (senão o rate limit da API veria só o IP do Cloudflare).
+		# Faixas oficiais: https://www.cloudflare.com/ips/ (confira de vez em quando).
+		# trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+		# client_ip_headers CF-Connecting-IP
+	}
+}
+
+# Headers de segurança comuns aos dois hosts.
+(seguranca) {
+	header {
+		# Só HTTPS por 1 ano (inclui subdomínios). Não use "preload" sem antes
+		# garantir HTTPS em TODOS os subdomínios de sellergycloud.com.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+		X-Frame-Options "DENY"
+		Cross-Origin-Opener-Policy "same-origin"
+		# Não anuncia o servidor (nem a versão) pra quem está sondando.
+		-Server
+		-X-Powered-By
+		-Via
+	}
+
+	# Log de acesso (JSON no stdout; o Docker faz a rotação 10 MB x 3).
+	log {
+		output stdout
+	}
+}
+
+# --- OPÇÃO Cloudflare: aceitar SÓ conexões vindas do Cloudflare -------------
+# Com o domínio atrás do Cloudflare, ninguém deveria falar direto com o IP da
+# VPS. Descomente o bloco abaixo e o "import so_cloudflare" em cada site.
+# (O desafio do Let's Encrypt continua passando: ele chega pelo Cloudflare.)
+#
+# (so_cloudflare) {
+# 	@naoCloudflare not remote_ip 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+# 	abort @naoCloudflare
+# }
+
+# API (Express + Socket.io). O Caddy já repassa WebSocket sozinho.
+{$API_DOMINIO} {
+	import seguranca
+	# import so_cloudflare
+
+	header {
+		# A API só devolve JSON: nada dela pode virar página nem ir pra iframe.
+		# O ">" substitui a CSP que o helmet do backend manda (sem duplicar).
+		>Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+	}
+
+	# Maior upload aceito pelo backend é 5 MB (imagem); folga pro multipart.
+	request_body {
+		max_size 8MB
+	}
+
+	encode zstd gzip
+	reverse_proxy backend:3333 {
+		# Com Cloudflare + trusted_proxies, mande só o IP real (o Express usa
+		# `trust proxy 1` e olha o último salto do X-Forwarded-For):
+		# header_up X-Forwarded-For {client_ip}
+		header_down -X-Powered-By
+	}
+}
+
+# Mídias (MinIO). As URLs assinadas usam este host, e o Caddy repassa o Host
+# original, então a assinatura confere.
+{$MIDIA_DOMINIO} {
+	import seguranca
+	# import so_cloudflare
+
+	header {
+		# Mesmo que alguém consiga subir um HTML/SVG disfarçado, o navegador
+		# abre em sandbox, sem script, sem formulário e sem poder ir pra iframe.
+		>Content-Security-Policy "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox; frame-ancestors 'none'"
+		Cross-Origin-Resource-Policy "cross-origin"
+		-X-Amz-Request-Id
+		-X-Amz-Id-2
+	}
+
+	# O navegador só LÊ mídia por aqui (GET/HEAD com URL assinada). Upload e
+	# administração do bucket acontecem pela rede interna (backend -> minio:9000).
+	@naoLeitura not method GET HEAD OPTIONS
+	respond @naoLeitura "Metodo nao permitido" 405
+
+	request_body {
+		max_size 1KB
+	}
+
+	reverse_proxy minio:9000 {
+		header_down -Server
+	}
+}
+
+# Sites extras (ex.: o front servido pela VPS, ver sites/app.caddy.exemplo).
+import sites/*.caddy

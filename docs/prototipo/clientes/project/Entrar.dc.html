@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Sellergy — entrar</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#136F4D}a:hover{color:#0C4F37}
+.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.bp,.bs,.bl{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:0 22px;border-radius:10px;font-weight:600;font-size:15px;text-decoration:none;cursor:pointer;font-family:inherit;box-sizing:border-box}
+.bp{background:#136F4D;color:#fff;border:1px solid #136F4D}.bp:hover{background:#0F5C40;color:#fff}
+.bs{background:#fff;color:#15171A;border:1px solid #D5D8DC}.bs:hover{background:#F1F2EF;color:#15171A}
+.bl{background:none;border:0;color:#136F4D;padding:0;min-height:44px;text-decoration:underline}
+.campo{display:flex;flex-direction:column;gap:6px}
+.campo label{font-size:14px;font-weight:600}
+.campo input{font:inherit;font-size:16px;min-height:48px;padding:0 14px;border:1px solid #CDD1D6;border-radius:10px;background:#fff;color:#15171A;box-sizing:border-box;width:100%}
+.cod{width:52px;height:60px;text-align:center;font:inherit;font-size:24px;font-weight:700;border:1px solid #CDD1D6;border-radius:10px;box-sizing:border-box}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #15171A; background: #F6F7F5; min-height: 900px; display: flex; flex-wrap: wrap">
+<main style="flex: 999 1 560px; min-width: 0; padding: 40px 24px 56px; display: flex; justify-content: center">
+<div style="width: 100%; max-width: 440px">
+<a href="Main.dc.html" style="display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: #15171A">
+<span style="width: 32px; height: 32px; border-radius: 9px; background: #136F4D; color: #fff; display: grid; place-items: center; font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 18px">S</span>
+<span style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 20px">Sellergy</span>
+</a>
+
+<sc-if value="{{login}}" hint-placeholder-val="{{ true }}">
+<h1 style="font-family: 'Space Grotesk', sans-serif; font-size: 36px; letter-spacing: -0.025em; margin: 72px 0 0">Entrar</h1>
+<p style="margin: 8px 0 0; color: #4A5059">Bem-vinda de volta.</p>
+<div class="campo" style="margin-top: 28px"><label for="em">E-mail ou WhatsApp</label><input id="em" type="text" autocomplete="username" value="marina@clinicalumi.com.br"></div>
+<div class="campo" style="margin-top: 16px"><label for="sn">Senha</label><input id="sn" type="password" autocomplete="current-password" value="lumi2026!"></div>
+<div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; flex-wrap: wrap; gap: 8px">
+<label style="display: flex; gap: 8px; align-items: center; font-size: 14px; color: #4A5059; min-height: 44px"><input type="checkbox" checked style="width: 18px; height: 18px; accent-color: #136F4D; margin: 0">Manter conectada neste aparelho</label>
+<button type="button" class="bl" onClick="{{esqueci}}">Esqueci a senha</button>
+</div>
+<a href="Inicio.dc.html" class="bp" style="width: 100%; margin-top: 20px">Entrar</a>
+<p style="margin: 24px 0 0; font-size: 14px; color: #4A5059">Ainda não tem conta? <a href="Cadastro.dc.html">Teste grátis por 14 dias</a></p>
+<div style="margin-top: 40px; padding: 16px; border-radius: 12px; background: #EEF0EC; font-size: 14px; color: #3D434B; line-height: 1.5">Faz parte de uma equipe? Use o convite que chegou no seu WhatsApp para criar a sua senha no primeiro acesso.</div>
+</sc-if>
+
+<sc-if value="{{pedir}}" hint-placeholder-val="{{ false }}">
+<h1 style="font-family: 'Space Grotesk', sans-serif; font-size: 32px; letter-spacing: -0.02em; margin: 72px 0 0">Recuperar a senha</h1>
+<p style="margin: 8px 0 0; color: #4A5059; line-height: 1.5">Mandamos um código de 6 números para o WhatsApp cadastrado na conta.</p>
+<div class="campo" style="margin-top: 28px"><label for="rc">E-mail ou WhatsApp</label><input id="rc" type="text" value="(11) 98765-4321"></div>
+<button type="button" class="bp" style="width: 100%; margin-top: 20px" onClick="{{enviarCodigo}}">Enviar código</button>
+<button type="button" class="bl" style="margin-top: 12px" onClick="{{voltar}}">Voltar para entrar</button>
+</sc-if>
+
+<sc-if value="{{codigo}}" hint-placeholder-val="{{ false }}">
+<h1 style="font-family: 'Space Grotesk', sans-serif; font-size: 32px; letter-spacing: -0.02em; margin: 72px 0 0">Digite o código</h1>
+<p style="margin: 8px 0 0; color: #4A5059; line-height: 1.5">Enviado para o WhatsApp terminado em 4321. Vale por 10 minutos.</p>
+<div style="display: flex; gap: 8px; margin-top: 28px" role="group" aria-label="Código de 6 números">
+<input class="cod" aria-label="Número 1" value="4"><input class="cod" aria-label="Número 2" value="8"><input class="cod" aria-label="Número 3" value="1"><input class="cod" aria-label="Número 4" value="0"><input class="cod" aria-label="Número 5" value="7"><input class="cod" aria-label="Número 6" value="2">
+</div>
+<div class="campo" style="margin-top: 24px"><label for="ns">Nova senha</label><input id="ns" type="password" autocomplete="new-password" value="novaSenha26"></div>
+<button type="button" class="bp" style="width: 100%; margin-top: 20px" onClick="{{salvar}}">Salvar e entrar</button>
+<p style="margin: 14px 0 0; font-size: 14px; color: #5B616B">Não chegou? Reenviar em 0:42</p>
+</sc-if>
+
+<sc-if value="{{pronto}}" hint-placeholder-val="{{ false }}">
+<div style="margin-top: 96px; text-align: center">
+<span style="width: 64px; height: 64px; border-radius: 50%; background: #E3F4EA; color: #136F4D; display: inline-grid; place-items: center"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="width: 30px; height: 30px; stroke-width: 2.2"><path d="m5 12.5 4.5 4.5L19 7.5"></path></svg></span>
+<h1 style="font-family: 'Space Grotesk', sans-serif; font-size: 28px; margin: 18px 0 0">Senha trocada</h1>
+<p style="margin: 8px 0 0; color: #4A5059">Os outros aparelhos conectados foram desconectados por segurança.</p>
+<a href="Inicio.dc.html" class="bp" style="width: 100%; margin-top: 28px">Ir para o início</a>
+</div>
+</sc-if>
+</div>
+</main>
+<aside style="flex: 1 1 420px; background: #0F3D2C; color: #fff; padding: 56px 40px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; gap: 20px">
+<p style="margin: 0; font-size: 13px; font-weight: 600; color: #9FD6BC; text-transform: uppercase; letter-spacing: .08em">Enquanto você estava fora</p>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<div style="background: rgba(255,255,255,.08); border-radius: 14px; padding: 16px; display: flex; gap: 12px; align-items: center"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="color: #9FD6BC"><path d="m5 12.5 4.5 4.5L19 7.5"></path></svg><span style="font-size: 15px">5 clientes confirmaram o horário de amanhã</span></div>
+<div style="background: rgba(255,255,255,.08); border-radius: 14px; padding: 16px; display: flex; gap: 12px; align-items: center"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="color: #9FD6BC"><rect x="3" y="4.5" width="18" height="16" rx="2"></rect><path d="M3 9.5h18"></path></svg><span style="font-size: 15px">2 horários marcados pelo link de agendamento</span></div>
+<div style="background: rgba(255,255,255,.08); border-radius: 14px; padding: 16px; display: flex; gap: 12px; align-items: center"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="color: #F2C46B"><path d="M4 5h16v11H9l-5 4z"></path></svg><span style="font-size: 15px">3 conversas novas no WhatsApp</span></div>
+</div>
+<p style="margin: 0; font-size: 13px; color: #C6E6D6">Exemplo do resumo que aparece no início depois de entrar.</p>
+</aside>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { t: 'login' }; }
+  renderVals() {
+    const t = this.state.t;
+    const ir = (x) => () => this.setState({ t: x });
+    return {
+      login: t === 'login', pedir: t === 'pedir', codigo: t === 'codigo', pronto: t === 'pronto',
+      esqueci: ir('pedir'), voltar: ir('login'), enviarCodigo: ir('codigo'), salvar: ir('pronto'),
+    };
+  }
+}
+</script>
+</body>
+</html>

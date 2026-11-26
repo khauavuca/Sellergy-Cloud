@@ -1,0 +1,223 @@
+/* =====================================================================
+   Animacoes da landing (prefixo ld-). So CSS + IntersectionObserver:
+   nada de biblioteca pesada. Regra: o estilo BASE e sempre o estado final;
+   a animacao so "vem de" algum lugar. Assim, com movimento reduzido
+   (animation: none), tudo aparece pronto.
+   ===================================================================== */
+
+@property --ld-angulo {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* ---------- Revelar ao rolar ---------- */
+.ld-revelar {
+  transition:
+    opacity 0.8s cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+  transition-delay: var(--ld-atraso, 0ms);
+}
+.ld-revelar:not(.ld-visivel) {
+  opacity: 0;
+  transform: translateY(28px);
+}
+
+/* ---------- Entrada na carga (hero e mock) ---------- */
+@keyframes ld-entrar {
+  from { opacity: 0; transform: translateY(18px) scale(0.98); }
+}
+.ld-entrar {
+  animation: ld-entrar 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+  animation-delay: var(--ld-atraso, 0ms);
+}
+
+@keyframes ld-flutuar {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.ld-flutuar {
+  animation: ld-flutuar 6s ease-in-out infinite;
+  animation-delay: var(--ld-fase, 0s);
+}
+
+/* ---------- Fundo aurora ---------- */
+@keyframes ld-aurora {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(6%, -8%) scale(1.12); }
+  66% { transform: translate(-5%, 6%) scale(0.94); }
+}
+.ld-bolha {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(70px);
+  pointer-events: none;
+  animation: ld-aurora 18s ease-in-out infinite;
+}
+
+.ld-grade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(21, 23, 26, 0.09) 1px, transparent 1px);
+  background-size: 22px 22px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 35%, #000 30%, transparent 75%);
+}
+
+/* ---------- Texto com gradiente andando ---------- */
+@keyframes ld-gradiente {
+  to { background-position: 200% center; }
+}
+.ld-texto-vivo {
+  background: linear-gradient(90deg, #136F4D, #1FA672, #0E8A5F, #136F4D);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ld-gradiente 6s linear infinite;
+}
+.ld-texto-vivo-claro {
+  background: linear-gradient(90deg, #7FE0B4, #F2C46B, #7FE0B4);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ld-gradiente 6s linear infinite;
+}
+
+/* ---------- Ponto pulsando ---------- */
+@keyframes ld-ping {
+  75%, 100% { transform: scale(2.4); opacity: 0; }
+}
+.ld-ping { animation: ld-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite; }
+
+/* ---------- Brilho passando no botao ---------- */
+@keyframes ld-brilho {
+  0% { transform: translateX(-150%) skewX(-20deg); }
+  55%, 100% { transform: translateX(350%) skewX(-20deg); }
+}
+.ld-brilho { position: relative; overflow: hidden; isolation: isolate; }
+.ld-brilho::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 35%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  transform: translateX(-150%) skewX(-20deg);
+  animation: ld-brilho 3.6s 1.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* ---------- Faixa de recursos rolando ---------- */
+@keyframes ld-faixa {
+  to { transform: translateX(-50%); }
+}
+.ld-faixa {
+  display: flex;
+  width: max-content;
+  animation: ld-faixa 40s linear infinite;
+}
+.ld-faixa-moldura:hover .ld-faixa { animation-play-state: paused; }
+.ld-faixa-moldura {
+  mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+}
+
+/* ---------- Conversa do mock ---------- */
+@keyframes ld-aparecer { from { opacity: 0; transform: translateY(8px) scale(0.96); } }
+@keyframes ld-mostrar-some {
+  0% { opacity: 0; }
+  12%, 85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes ld-some { from { opacity: 1; } to { opacity: 0; } }
+@keyframes ld-pulinho {
+  0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-3px); }
+}
+@keyframes ld-pop {
+  0% { transform: scale(0.4); opacity: 0; }
+  70% { transform: scale(1.15); }
+}
+
+.ld-msg { animation: ld-aparecer 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; animation-delay: var(--ld-atraso, 0ms); }
+/* digitando: escondido no estado final; so aparece durante a animacao */
+.ld-digitando { opacity: 0; animation: ld-mostrar-some 1.1s ease both; animation-delay: var(--ld-atraso, 0ms); }
+.ld-digitando i {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: #fff;
+  animation: ld-pulinho 0.9s infinite;
+}
+.ld-digitando i:nth-child(2) { animation-delay: 0.15s; }
+.ld-digitando i:nth-child(3) { animation-delay: 0.3s; }
+/* status que troca: o antigo some (estado final invisivel) */
+/* (fill backwards: fica visivel durante o atraso, depois some) */
+.ld-status-antigo { opacity: 0; animation: ld-some 0.3s ease backwards; animation-delay: var(--ld-atraso, 0ms); }
+.ld-pop { animation: ld-pop 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; animation-delay: var(--ld-atraso, 0ms); }
+
+/* ---------- Riscar a dor ---------- */
+/* risco por background: funciona mesmo quando o texto quebra linha */
+.ld-risco {
+  background: linear-gradient(#C2410C, #C2410C) no-repeat 0 58% / 100% 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: background-size 0.8s cubic-bezier(0.6, 0, 0.2, 1);
+  transition-delay: calc(var(--ld-atraso, 0ms) + 400ms);
+}
+.ld-revelar:not(.ld-visivel) .ld-risco { background-size: 0% 2px; }
+
+/* ---------- Linha do tempo ---------- */
+.ld-linha-preenchida { transform-origin: top; transition: transform 0.15s linear; }
+.ld-marco {
+  transition: background-color 0.5s, box-shadow 0.5s, color 0.5s, border-color 0.5s;
+}
+
+/* ---------- Borda viva (plano recomendado) ---------- */
+@keyframes ld-girar { to { --ld-angulo: 360deg; } }
+.ld-borda-viva {
+  background: conic-gradient(from var(--ld-angulo), #136F4D, #7FE0B4, #F2C46B, #136F4D 60%, #136F4D);
+  animation: ld-girar 6s linear infinite;
+}
+
+/* ---------- Holofote que segue o mouse ---------- */
+.ld-holofote { position: relative; isolation: isolate; }
+.ld-holofote::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 0%), rgba(31, 166, 114, 0.12), transparent 45%);
+  opacity: 0;
+  transition: opacity 0.3s;
+  z-index: -1;
+}
+.ld-holofote:hover::before { opacity: 1; }
+
+/* ---------- Troca de valor (precos) ---------- */
+@keyframes ld-trocar { from { opacity: 0; transform: translateY(-10px); } }
+.ld-trocar { display: inline-block; animation: ld-trocar 0.35s cubic-bezier(0.2, 0.7, 0.2, 1); }
+
+/* ---------- Movimento reduzido: tudo parado e visivel ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .ld-raiz *,
+  .ld-raiz *::before,
+  .ld-raiz *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .ld-revelar:not(.ld-visivel) { opacity: 1; transform: none; }
+  .ld-revelar:not(.ld-visivel) .ld-risco { background-size: 100% 2px; }
+  .ld-brilho::after { display: none; }
+}
+
+/* ---------- Ancoras: compensa o cabecalho fixo e rola suave ---------- */
+.ld-raiz section[id] { scroll-margin-top: 72px; }
+@media (prefers-reduced-motion: no-preference) {
+  html:has(.ld-raiz) { scroll-behavior: smooth; }
+}
+
+/* linha que cresce em vez de subir */
+.ld-revelar.ld-crescer { transition-duration: 1.2s; }
+.ld-revelar.ld-crescer:not(.ld-visivel) { opacity: 1; transform: scaleX(0); }
